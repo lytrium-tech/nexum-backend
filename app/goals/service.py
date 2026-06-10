@@ -163,7 +163,10 @@ class GoalService:
         event = result.event
 
         if goal.target_amount > 0:
-            progress = min(round((goal.current_amount / goal.target_amount) * Decimal("100"), 2), Decimal("100"))
+            progress = min(
+                round((goal.current_amount / goal.target_amount) * Decimal("100"), 2),
+                Decimal("100"),
+            )
         else:
             progress = Decimal("0")
 
@@ -193,14 +196,17 @@ class GoalService:
         await self.repository.create_contribution(contribution)
 
         goal.current_amount += payload.amount
-        
+
         if goal.current_amount >= goal.target_amount:
             goal.status = "completed"
             goal.current_amount = goal.target_amount  # Ensure we don't exceed logically
-        
+
         # Recalculate progress for new amount
         if goal.target_amount > 0:
-            new_progress = min(round((goal.current_amount / goal.target_amount) * Decimal("100"), 2), Decimal("100"))
+            new_progress = min(
+                round((goal.current_amount / goal.target_amount) * Decimal("100"), 2),
+                Decimal("100"),
+            )
         else:
             new_progress = Decimal("0")
 

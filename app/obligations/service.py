@@ -45,7 +45,9 @@ class ObligationService:
             raise ObligationForbiddenError()
         return ObligationRead.model_validate(obligation)
 
-    async def create_obligation(self, auth_user_id: UUID, payload: ObligationCreate) -> ObligationRead:
+    async def create_obligation(
+        self, auth_user_id: UUID, payload: ObligationCreate
+    ) -> ObligationRead:
         norm_name = normalize_name(payload.name)
         if not norm_name:
             raise ValueError("El nombre no puede estar vacío.")

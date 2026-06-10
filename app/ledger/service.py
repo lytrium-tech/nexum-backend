@@ -44,8 +44,7 @@ class LedgerService:
         1. Si no viene period, lo genera basado en occurred_at o el current time.
         2. Delega al repository para persistencia e idempotencia.
         """
-        if not event_data.period:
-            event_data.period = generate_period_for_bogota(event_data.occurred_at)
+        # Period is handled by DB trigger, we don't set it here
 
         # La validación de ownership se delega al repositorio porque
         # requiere acceso a bases de datos (consultas cruzadas).

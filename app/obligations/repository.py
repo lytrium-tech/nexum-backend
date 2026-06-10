@@ -12,7 +12,9 @@ class ObligationRepository:
         self.session = session
 
     async def get_by_id(self, obligation_id: UUID) -> Obligation | None:
-        result = await self.session.execute(select(Obligation).where(Obligation.id == obligation_id))
+        result = await self.session.execute(
+            select(Obligation).where(Obligation.id == obligation_id)
+        )
         return result.scalar_one_or_none()
 
     async def get_by_id_for_update(self, obligation_id: UUID) -> Obligation | None:

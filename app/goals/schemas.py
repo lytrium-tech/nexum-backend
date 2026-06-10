@@ -37,7 +37,10 @@ class GoalRead(BaseModel):
     @computed_field
     def progress_percentage(self) -> Decimal:
         if self.target_amount > 0:
-            return min(round((self.current_amount / self.target_amount) * Decimal("100"), 2), Decimal("100"))
+            return min(
+                round((self.current_amount / self.target_amount) * Decimal("100"), 2),
+                Decimal("100"),
+            )
         return Decimal("0")
 
     @computed_field

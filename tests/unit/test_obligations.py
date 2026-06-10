@@ -81,7 +81,9 @@ async def test_delete_obligation_success(obligation_service, mock_obligation_rep
     user_id = uuid.uuid4()
     obligation_id = uuid.uuid4()
 
-    mock_obligation = Obligation(user_id=user_id, is_active=True, name="Test", amount=Decimal("100"))
+    mock_obligation = Obligation(
+        user_id=user_id, is_active=True, name="Test", amount=Decimal("100")
+    )
     mock_obligation_repo.get_by_id.return_value = mock_obligation
 
     await obligation_service.delete_obligation(user_id, obligation_id)
@@ -103,7 +105,7 @@ async def test_payment_success(
         user_id=user_id,
         is_active=True,
         amount=Decimal("100"),
-        frequency="monthly"
+        frequency="monthly",
     )
     mock_obligation_repo.get_by_id_for_update.return_value = mock_obligation
 
@@ -136,11 +138,7 @@ async def test_payment_success_once_deactivates(
     payload = ObligationPaymentCreate(account_id=account_id, amount=Decimal("100"))
 
     mock_obligation = Obligation(
-        id=obligation_id,
-        user_id=user_id,
-        is_active=True,
-        amount=Decimal("100"),
-        frequency="once"
+        id=obligation_id, user_id=user_id, is_active=True, amount=Decimal("100"), frequency="once"
     )
     mock_obligation_repo.get_by_id_for_update.return_value = mock_obligation
 

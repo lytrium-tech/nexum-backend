@@ -103,31 +103,37 @@ async def run_smoke():
 
         # 6. Crear meta con fecha a 10 meses
         from datetime import datetime, timedelta
-        target_date_10_months = (datetime.now(UTC) + timedelta(days=300)).strftime('%Y-%m-%d')
+
+        target_date_10_months = (datetime.now(UTC) + timedelta(days=300)).strftime("%Y-%m-%d")
         r = await client.post(
             f"{base_url}/api/v1/goals",
-            json={"name": "Meta Smoke Goals", "target_amount": "300", "target_date": target_date_10_months},
+            json={
+                "name": "Meta Smoke Goals",
+                "target_amount": "300",
+                "target_date": target_date_10_months,
+            },
             headers=headers,
         )
         r.raise_for_status()
         goal_data = r.json()
         goal_id = goal_data["id"]
         logger.info(f"Meta creada: {goal_id}")
-        
+
         # Validar proyección inicial
         assert goal_data["monthly_required"] == "30.00"
-        
+
         # Check initial snapshot
         engine = create_async_engine(settings.DATABASE_URL)
         try:
             async with engine.connect() as conn:
-                snap_res = await conn.execute(text("SELECT free_money FROM v_financial_snapshot_current_month"))
+                snap_res = await conn.execute(
+                    text("SELECT free_money FROM v_financial_snapshot_current_month")
+                )
                 snap_row = snap_res.fetchone()
                 initial_free_money = snap_row[0] if snap_row else 0
                 logger.info(f"Initial Free Money: {initial_free_money}")
         finally:
             await engine.dispose()
-
 
         # 7. Aporte 20
         cmd1 = str(uuid.uuid4())
@@ -145,19 +151,21 @@ async def run_smoke():
         )
         assert float(data["balance_after"]) == 480.0
         assert float(data["goal_current_amount"]) == 20.0
-        
+
         # Verify projections via GET
         r = await client.get(f"{base_url}/api/v1/goals/{goal_id}", headers=headers)
         r.raise_for_status()
         goal_data = r.json()
         assert float(goal_data["progress_percentage"]) == 6.67
         assert float(goal_data["monthly_required"]) == 28.00
-        
+
         # Check snapshot
         engine = create_async_engine(settings.DATABASE_URL)
         try:
             async with engine.connect() as conn:
-                snap_res = await conn.execute(text("SELECT free_money FROM v_financial_snapshot_current_month"))
+                snap_res = await conn.execute(
+                    text("SELECT free_money FROM v_financial_snapshot_current_month")
+                )
                 snap_row = snap_res.fetchone()
                 post_free_money = snap_row[0] if snap_row else 0
                 logger.info(f"Post-Contribution Free Money: {post_free_money}")

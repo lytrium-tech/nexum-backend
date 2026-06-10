@@ -52,8 +52,7 @@ async def create_obligation(
 
 @router.get("", response_model=list[ObligationRead])
 async def list_obligations(
-    current_user: CurrentUser, 
-    session: AsyncSession = Depends(get_db_session)
+    current_user: CurrentUser, session: AsyncSession = Depends(get_db_session)
 ) -> list[ObligationRead]:
     service = get_obligation_service(session)
     user_id = await resolve_user_id(current_user, session)
@@ -62,9 +61,7 @@ async def list_obligations(
 
 @router.get("/{obligation_id}", response_model=ObligationRead)
 async def get_obligation(
-    obligation_id: UUID,
-    current_user: CurrentUser,
-    session: AsyncSession = Depends(get_db_session)
+    obligation_id: UUID, current_user: CurrentUser, session: AsyncSession = Depends(get_db_session)
 ) -> ObligationRead:
     service = get_obligation_service(session)
     user_id = await resolve_user_id(current_user, session)

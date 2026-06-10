@@ -1,0 +1,162 @@
+import uuid
+
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db_session
+from app.core.security import CurrentUser
+from app.core.uow import UnitOfWork
+from app.credit.exceptions import (
+    CreditCardInactiveError,
+    CreditCardNotFoundError,
+    CreditLimitExceededError,
+    InvalidPaymentAmountError,
+)
+from app.credit.schemas import (
+    CreditCardCreate,
+    CreditCardPaymentCreate,
+    CreditCardPaymentResult,
+    CreditCardPurchaseCreate,
+    CreditCardPurchaseResult,
+    CreditCardRead,
+    CreditCardUpdate,
+)
+from app.credit.service import CreditCardService
+from app.users.repository import UserRepository
+from app.users.service import UserService
+
+router = APIRouter()
+
+
+def get_credit_service(session: AsyncSession = Depends(get_db_session)) -> CreditCardService:
+    return CreditCardService(session)
+
+
+async def resolve_user_id(current_user: CurrentUser, session: AsyncSession) -> uuid.UUID:
+    user_repo = UserRepository(session)
+    user_service = UserService(user_repo)
+    user = await user_service.get_current_user_profile(current_user)
+    return user.id
+
+
+@router.post("/cards", response_model=CreditCardRead, status_code=status.HTTP_201_CREATED)
+async def create_card(
+    payload: CreditCardCreate,
+    current_user: CurrentUser,
+    session: AsyncSession = Depends(get_db_session),
+):
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        user_id = await resolve_user_id(current_user, session)
+        service = get_credit_service(session)
+        return await service.create_card(user_id, payload)
+
+
+@router.get("/cards", response_model=list[CreditCardRead])
+async def list_cards(current_user: CurrentUser, session: AsyncSession = Depends(get_db_session)):
+    user_id = await resolve_user_id(current_user, session)
+    service = get_credit_service(session)
+    return await service.list_cards(user_id)
+
+
+@router.get("/cards/{card_id}", response_model=CreditCardRead)
+async def get_card(
+    card_id: uuid.UUID, current_user: CurrentUser, session: AsyncSession = Depends(get_db_session)
+):
+    user_id = await resolve_user_id(current_user, session)
+    service = get_credit_service(session)
+    try:
+        return await service.get_card(user_id, card_id)
+    except CreditCardNotFoundError:
+        raise HTTPException(status_code=404, detail="Credit card not found")
+
+
+@router.patch("/cards/{card_id}", response_model=CreditCardRead)
+async def update_card(
+    card_id: uuid.UUID,
+    payload: CreditCardUpdate,
+    current_user: CurrentUser,
+    session: AsyncSession = Depends(get_db_session),
+):
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        user_id = await resolve_user_id(current_user, session)
+        service = get_credit_service(session)
+        try:
+            return await service.update_card(user_id, card_id, payload)
+        except CreditCardNotFoundError:
+            raise HTTPException(status_code=404, detail="Credit card not found")
+
+
+@router.delete("/cards/{card_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_card(
+    card_id: uuid.UUID, current_user: CurrentUser, session: AsyncSession = Depends(get_db_session)
+):
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        user_id = await resolve_user_id(current_user, session)
+        service = get_credit_service(session)
+        try:
+            await service.delete_card(user_id, card_id)
+        except CreditCardNotFoundError:
+            raise HTTPException(status_code=404, detail="Credit card not found")
+
+
+@router.post("/cards/{card_id}/purchases", response_model=CreditCardPurchaseResult)
+async def create_purchase(
+    card_id: uuid.UUID,
+    payload: CreditCardPurchaseCreate,
+    current_user: CurrentUser,
+    idempotency_key: str = Header(..., alias="Idempotency-Key"),
+    session: AsyncSession = Depends(get_db_session),
+):
+    try:
+        command_id = uuid.UUID(idempotency_key)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid Idempotency-Key format")
+
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        user_id = await resolve_user_id(current_user, session)
+        service = get_credit_service(session)
+        try:
+            return await service.create_purchase(user_id, card_id, payload, command_id)
+        except CreditCardNotFoundError:
+            raise HTTPException(status_code=404, detail="Credit card not found")
+        except CreditCardInactiveError:
+            raise HTTPException(status_code=400, detail="Credit card is inactive")
+        except CreditLimitExceededError:
+            raise HTTPException(status_code=409, detail="Credit limit exceeded")
+
+
+@router.post("/cards/{card_id}/payments", response_model=CreditCardPaymentResult)
+async def create_payment(
+    card_id: uuid.UUID,
+    payload: CreditCardPaymentCreate,
+    current_user: CurrentUser,
+    idempotency_key: str = Header(..., alias="Idempotency-Key"),
+    session: AsyncSession = Depends(get_db_session),
+):
+    try:
+        command_id = uuid.UUID(idempotency_key)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid Idempotency-Key format")
+
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        user_id = await resolve_user_id(current_user, session)
+        service = get_credit_service(session)
+        try:
+            return await service.create_payment(user_id, card_id, payload, command_id)
+        except CreditCardNotFoundError:
+            raise HTTPException(status_code=404, detail="Credit card not found")
+        except CreditCardInactiveError:
+            raise HTTPException(status_code=400, detail="Credit card is inactive")
+        except ValueError as e:
+            if str(e) == "Account not found or inactive":
+                raise HTTPException(status_code=404, detail=str(e))
+            if str(e) == "Insufficient balance":
+                raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e))
+        except InvalidPaymentAmountError:
+            raise HTTPException(status_code=409, detail="Payment amount exceeds current debt")

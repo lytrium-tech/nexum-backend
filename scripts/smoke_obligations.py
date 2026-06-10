@@ -18,9 +18,7 @@ async def check_db_state(obligation_id: str, command_id: str):
     try:
         async with engine.connect() as conn:
             obl_res = await conn.execute(
-                text(
-                    "SELECT id, name, amount, is_active FROM public.obligations WHERE id = :oid"
-                ),
+                text("SELECT id, name, amount, is_active FROM public.obligations WHERE id = :oid"),
                 {"oid": obligation_id},
             )
             obl_row = obl_res.fetchone()
@@ -30,7 +28,9 @@ async def check_db_state(obligation_id: str, command_id: str):
                 )
 
             payments = await conn.execute(
-                text("SELECT id, amount, period FROM public.obligation_payments WHERE obligation_id = :oid"),
+                text(
+                    "SELECT id, amount, period FROM public.obligation_payments WHERE obligation_id = :oid"
+                ),
                 {"oid": obligation_id},
             )
             logger.info(f" -> Payments BD count: {len(payments.fetchall())}")
@@ -123,11 +123,15 @@ async def run_smoke():
         engine = create_async_engine(settings.DATABASE_URL)
         async with engine.connect() as conn:
             res = await conn.execute(
-                text("SELECT obligation_id, name, is_pending FROM public.v_pending_obligations_current_month WHERE obligation_id = :oid"),
-                {"oid": obl_id}
+                text(
+                    "SELECT obligation_id, name, is_pending FROM public.v_pending_obligations_current_month WHERE obligation_id = :oid"
+                ),
+                {"oid": obl_id},
             )
             row = res.fetchone()
-            logger.info(f"Vista Pending ANTES del pago -> is_pending: {row.is_pending if row else 'Not found'}")
+            logger.info(
+                f"Vista Pending ANTES del pago -> is_pending: {row.is_pending if row else 'Not found'}"
+            )
             assert row is not None and row.is_pending is True
 
         # 8. Pago exacto 100
@@ -145,11 +149,15 @@ async def run_smoke():
         # 8.5 Check pending obligations AFTER payment
         async with engine.connect() as conn:
             res = await conn.execute(
-                text("SELECT obligation_id, name, is_pending FROM public.v_pending_obligations_current_month WHERE obligation_id = :oid"),
-                {"oid": obl_id}
+                text(
+                    "SELECT obligation_id, name, is_pending FROM public.v_pending_obligations_current_month WHERE obligation_id = :oid"
+                ),
+                {"oid": obl_id},
             )
             row = res.fetchone()
-            logger.info(f"Vista Pending DESPUÉS del pago -> is_pending: {row.is_pending if row else 'Not found'} (Esperado False)")
+            logger.info(
+                f"Vista Pending DESPUÉS del pago -> is_pending: {row.is_pending if row else 'Not found'} (Esperado False)"
+            )
             assert row is not None and row.is_pending is False
         await engine.dispose()
 

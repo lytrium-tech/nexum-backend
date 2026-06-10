@@ -26,6 +26,17 @@ async def cleanup():
     try:
         async with engine.begin() as conn:
             res = await conn.execute(
+                text("DELETE FROM public.credit_card_transactions WHERE user_id = :id"),
+                {"id": dev_user_id},
+            )
+            logger.info(f"Credit Card Transactions eliminados: {res.rowcount}")
+
+            res = await conn.execute(
+                text("DELETE FROM public.credit_cards WHERE user_id = :id"), {"id": dev_user_id}
+            )
+            logger.info(f"Credit Cards eliminadas: {res.rowcount}")
+
+            res = await conn.execute(
                 text("DELETE FROM public.obligation_payments WHERE user_id = :id"),
                 {"id": dev_user_id},
             )

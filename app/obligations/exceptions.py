@@ -8,6 +8,7 @@ class ObligationNotFoundError(HTTPException):
             detail="Obligation not found",
         )
 
+
 class ObligationForbiddenError(HTTPException):
     def __init__(self) -> None:
         super().__init__(
@@ -15,12 +16,14 @@ class ObligationForbiddenError(HTTPException):
             detail="Not enough permissions to access this obligation",
         )
 
+
 class ObligationInactiveError(HTTPException):
     def __init__(self) -> None:
         super().__init__(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot pay an inactive obligation",
         )
+
 
 class ObligationAmountMismatchError(HTTPException):
     def __init__(self, required_amount: str) -> None:
