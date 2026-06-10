@@ -210,9 +210,6 @@ def test_cash_schemas_reject_zero_amount():
         CashIncomeCreate(account_id=uuid.uuid4(), amount=Decimal("0"))
 
 
-
-
-
 @pytest.mark.asyncio
 async def test_validate_category_global_accepted(
     cash_service, mock_account_repo, mock_ledger_repo, mock_category_repo
