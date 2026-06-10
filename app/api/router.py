@@ -26,6 +26,7 @@ from app.cash.router import router as cash_router
 from app.categories.router import router as categories_router
 from app.core.config import settings
 from app.goals.router import router as goals_router
+from app.obligations.router import router as obligations_router
 from app.users.router import router as users_router
 
 # ── Routers ───────────────────────────────────────────────────────────────────
@@ -81,6 +82,7 @@ v1_router.include_router(accounts_router)
 v1_router.include_router(categories_router)
 v1_router.include_router(cash_router)
 v1_router.include_router(goals_router)
+v1_router.include_router(obligations_router)
 # v1_router.include_router(ledger_router, prefix="/ledger", tags=["Ledger"])
 # v1_router.include_router(goals_router, prefix="/goals", tags=["Goals"])
 # v1_router.include_router(obligations_router, prefix="/obligations", tags=["Obligations"])

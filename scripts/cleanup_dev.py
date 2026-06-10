@@ -26,6 +26,17 @@ async def cleanup():
     try:
         async with engine.begin() as conn:
             res = await conn.execute(
+                text("DELETE FROM public.obligation_payments WHERE user_id = :id"),
+                {"id": dev_user_id},
+            )
+            logger.info(f"Obligation Payments eliminados: {res.rowcount}")
+
+            res = await conn.execute(
+                text("DELETE FROM public.obligations WHERE user_id = :id"), {"id": dev_user_id}
+            )
+            logger.info(f"Obligations eliminadas: {res.rowcount}")
+
+            res = await conn.execute(
                 text("DELETE FROM public.goal_contributions WHERE user_id = :id"),
                 {"id": dev_user_id},
             )

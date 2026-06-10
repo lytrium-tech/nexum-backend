@@ -1,8 +1,6 @@
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy.exc import IntegrityError
-
 from app.accounts.exceptions import AccountForbiddenError
 from app.accounts.repository import AccountRepository
 from app.cash.exceptions import InsufficientFundsError

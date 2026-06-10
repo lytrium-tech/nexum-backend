@@ -4,7 +4,6 @@ from decimal import Decimal
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy.exc import IntegrityError
 
 from app.accounts.models import Account
 from app.goals.exceptions import (
