@@ -27,6 +27,7 @@ from app.categories.router import router as categories_router
 from app.core.config import settings
 from app.credit.router import router as credit_router
 from app.goals.router import router as goals_router
+from app.intelligence.router import router as intelligence_router
 from app.obligations.router import router as obligations_router
 from app.users.router import router as users_router
 
@@ -88,7 +89,7 @@ v1_router.include_router(credit_router, prefix="/credit", tags=["Credit"])
 # v1_router.include_router(ledger_router, prefix="/ledger", tags=["Ledger"])
 # v1_router.include_router(goals_router, prefix="/goals", tags=["Goals"])
 # v1_router.include_router(obligations_router, prefix="/obligations", tags=["Obligations"])
-# v1_router.include_router(intelligence_router, prefix="/intelligence", tags=["Intelligence"])
+v1_router.include_router(intelligence_router)
 # v1_router.include_router(conversations_router, prefix="/conversations", tags=["Conversations"])
 
 api_router.include_router(v1_router)
