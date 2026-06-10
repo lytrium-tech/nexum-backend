@@ -210,9 +210,7 @@ def test_cash_schemas_reject_zero_amount():
         CashIncomeCreate(account_id=uuid.uuid4(), amount=Decimal("0"))
 
 
-@pytest.fixture
-def mock_category_repo():
-    return AsyncMock()
+
 
 
 @pytest.mark.asyncio

@@ -52,11 +52,10 @@ async def create_account(
     session: AsyncSession = Depends(get_db_session),
 ) -> AccountRead:
     uow = UnitOfWork(session)
-    async with uow:
+    async with uow.transaction():
         service = get_account_service(session)
         user_id = await resolve_user_id(current_user, service.user_service)
         result = await service.create_account(user_id, payload)
-        await uow.commit()
         return result
 
 
@@ -68,11 +67,10 @@ async def update_account(
     session: AsyncSession = Depends(get_db_session),
 ) -> AccountRead:
     uow = UnitOfWork(session)
-    async with uow:
+    async with uow.transaction():
         service = get_account_service(session)
         user_id = await resolve_user_id(current_user, service.user_service)
         result = await service.update_account(user_id, account_id, payload)
-        await uow.commit()
         return result
 
 
@@ -81,8 +79,7 @@ async def delete_account(
     account_id: UUID, current_user: CurrentUser, session: AsyncSession = Depends(get_db_session)
 ) -> None:
     uow = UnitOfWork(session)
-    async with uow:
+    async with uow.transaction():
         service = get_account_service(session)
         user_id = await resolve_user_id(current_user, service.user_service)
         await service.delete_account(user_id, account_id)
-        await uow.commit()

@@ -107,7 +107,8 @@ class LedgerRepository:
 
         # 3. Intentar el flush que dispara el INSERT.
         # En caso de estar usando UoW, flush pre-escribe a BD (sin hacer commit)
-        # Usamos begin_nested (Savepoint) para que el IntegrityError no aborte la transacción superior.
+        # Usamos begin_nested (Savepoint) para que el IntegrityError
+        # no aborte la transacción superior.
         try:
             async with self.session.begin_nested():
                 self.session.add(db_event)

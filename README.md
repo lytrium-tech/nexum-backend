@@ -116,3 +116,42 @@ La validación con Docker se realizará en la VPS, previa confirmación explíci
 ## Notas sobre n8n
 
 n8n actúa como **sistema legado temporal**. Su arquitectura, workflows y prompts no se replican en este backend. Solo se utilizan como referencia histórica para comprender el comportamiento actual del sistema.
+
+## Pruebas de Desarrollo E2E (Fase 6.5)
+
+Para probar el flujo transaccional de Cash contra Supabase localmente sin JWT:
+
+1. Crea o actualiza tu archivo `.env` manualmente:
+   ```ini
+   APP_ENV=development
+   AUTH_BYPASS_ENABLED=true
+   DEV_USER_ID=tu_uuid_aqui
+   DEV_USER_EMAIL=tu_email_aqui
+   DATABASE_URL=postgresql+asyncpg://postgres.[ID]:[PASSWORD]@[HOST]:5432/postgres
+   ```
+   *Nota: Se recomienda usar el puerto directo (5432) en desarrollo para evitar conflictos asíncronos con el pooler transaccional, a menos que Supabase requiera IPv4/6543.*
+
+2. Verifica tu conexión de base de datos de manera segura:
+   ```bash
+   python -m uv run python scripts/check_db.py
+   ```
+
+3. En una terminal nueva, levanta el servidor local:
+   ```bash
+   python -m uv run uvicorn app.main:app --reload
+   ```
+
+4. En la primera terminal, ejecuta el script de semilla (crea tu usuario dev):
+   ```bash
+   python -m uv run python scripts/seed_dev.py
+   ```
+
+5. Lanza la simulación completa del Cash Domain (crea cuenta, transacciona, falla a propósito y valida idempotencia):
+   ```bash
+   python -m uv run python scripts/smoke_cash.py
+   ```
+
+6. Una vez probados todos los flujos, limpia tu base de datos si lo deseas (borra transacciones y cuentas pero deja tu dev_user):
+   ```bash
+   python -m uv run python scripts/cleanup_dev.py
+   ```

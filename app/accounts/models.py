@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
@@ -11,7 +12,7 @@ from app.core.database import Base
 class Account(Base):
     __tablename__ = "accounts"
 
-    id: Mapped[UUID] = mapped_column(primary_key=True)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     name: Mapped[str | None] = mapped_column(Text, nullable=True)
     type: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -42,11 +42,10 @@ async def create_category(
     session: AsyncSession = Depends(get_db_session),
 ) -> CategoryRead:
     uow = UnitOfWork(session)
-    async with uow:
+    async with uow.transaction():
         service = get_category_service(session)
         user_id = await resolve_user_id(current_user, service.user_service)
         result = await service.create_category(user_id, payload)
-        await uow.commit()
         return result
 
 
@@ -58,11 +57,10 @@ async def update_category(
     session: AsyncSession = Depends(get_db_session),
 ) -> CategoryRead:
     uow = UnitOfWork(session)
-    async with uow:
+    async with uow.transaction():
         service = get_category_service(session)
         user_id = await resolve_user_id(current_user, service.user_service)
         result = await service.update_category(user_id, category_id, payload)
-        await uow.commit()
         return result
 
 
@@ -71,8 +69,7 @@ async def delete_category(
     category_id: UUID, current_user: CurrentUser, session: AsyncSession = Depends(get_db_session)
 ) -> None:
     uow = UnitOfWork(session)
-    async with uow:
+    async with uow.transaction():
         service = get_category_service(session)
         user_id = await resolve_user_id(current_user, service.user_service)
         await service.delete_category(user_id, category_id)
-        await uow.commit()
