@@ -1,7 +1,7 @@
 import uuid
 from decimal import Decimal
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
 class CreditCardBase(BaseModel):
@@ -38,8 +38,7 @@ class CreditCardRead(CreditCardBase):
     def estimated_available_credit(self) -> Decimal:
         return max(Decimal("0.00"), self.credit_limit - self.estimated_current_debt)
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class CreditCardPurchaseCreate(BaseModel):

@@ -45,7 +45,9 @@ class Settings(BaseSettings):
 
     # ── Gemini ────────────────────────────────────────────────────────────
     GEMINI_API_KEY: SecretStr = SecretStr("")
-    GEMINI_MODEL: str = "gemini-2.0-flash"
+    GEMINI_MODEL: str = "gemini-3.1-flash-lite"
+    GEMINI_FALLBACK_MODEL: str = "gemini-3.5-flash"
+    GEMINI_TIMEOUT_SECONDS: int = 10
 
     # ── Auth bypass (solo development y test) ─────────────────────────────
     AUTH_BYPASS_ENABLED: bool = True
