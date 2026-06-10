@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -34,3 +35,24 @@ class AccountRepository:
         self.session.add(account)
         await self.session.flush()
         return account
+
+    async def get_by_id_for_update(self, account_id: UUID) -> Account | None:
+        """
+        Bloquea la cuenta con SELECT FOR UPDATE para evitar condiciones de carrera.
+        Debe ejecutarse dentro de un UnitOfWork (transacción activa).
+        """
+        stmt = (
+            select(Account)
+            .where(Account.id == account_id, Account.is_active.is_(True))
+            .with_for_update()
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def update_balance(self, account: Account, amount_diff: Decimal) -> None:
+        """
+        Actualiza matemáticamente el balance de una cuenta en memoria.
+        Requiere que la cuenta haya sido bloqueada previamente con get_by_id_for_update.
+        """
+        account.balance += amount_diff
+        await self.session.flush()

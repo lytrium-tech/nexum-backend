@@ -105,16 +105,15 @@ class LedgerRepository:
         if event_data.occurred_at:
             db_event.occurred_at = event_data.occurred_at
 
-        self.session.add(db_event)
-
         # 3. Intentar el flush que dispara el INSERT.
         # En caso de estar usando UoW, flush pre-escribe a BD (sin hacer commit)
-        # permitiendo atrapar el error de Postgres aquí mismo.
+        # Usamos begin_nested (Savepoint) para que el IntegrityError no aborte la transacción superior.
         try:
-            await self.session.flush()
+            async with self.session.begin_nested():
+                self.session.add(db_event)
+                await self.session.flush()
         except IntegrityError as exc:
-            # Revertir la sub-transacción de inserción fallida
-            await self.session.rollback()
+            # begin_nested() automáticamente hace rollback al savepoint cuando hay excepción.
 
             constraint_name = getattr(exc.orig, "constraint_name", None)
             error_msg = str(exc.orig)
