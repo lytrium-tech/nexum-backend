@@ -56,14 +56,11 @@ async def test_create_goal_success(goal_service, mock_goal_repo):
         name="Viaje A Japón",
         target_amount=payload.target_amount,
         current_amount=Decimal("0"),
-        progress_percentage=Decimal("0"),
         target_date=payload.target_date,
         is_active=True,
         status="active",
         created_at=datetime.now(),
         updated_at=datetime.now(),
-        monthly_required=Decimal("0"),
-        daily_required=Decimal("0"),
     )
     mock_goal_repo.create.return_value = mock_goal
 
@@ -131,7 +128,6 @@ async def test_contribution_success(
         status="active",
         target_amount=Decimal("500"),
         current_amount=Decimal("100"),
-        progress_percentage=Decimal("20"),
     )
     mock_goal_repo.get_by_id_for_update.return_value = mock_goal
 
@@ -194,7 +190,6 @@ async def test_contribution_idempotent_retry(
         status="active",
         target_amount=Decimal("500"),
         current_amount=Decimal("100"),
-        progress_percentage=Decimal("20"),
     )
     mock_goal_repo.get_by_id_for_update.return_value = mock_goal
 

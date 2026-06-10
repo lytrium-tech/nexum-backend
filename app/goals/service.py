@@ -162,6 +162,11 @@ class GoalService:
         result = await self.ledger_repo.insert_event(event_create)
         event = result.event
 
+        if goal.target_amount > 0:
+            progress = min(round((goal.current_amount / goal.target_amount) * Decimal("100"), 2), Decimal("100"))
+        else:
+            progress = Decimal("0")
+
         if result.idempotent:
             # Idempotent retry
             return GoalContributionResult(
@@ -170,7 +175,7 @@ class GoalService:
                 amount=payload.amount,
                 balance_after=account.balance,
                 goal_current_amount=goal.current_amount,
-                progress_percentage=goal.progress_percentage,
+                progress_percentage=progress,
                 status="idempotent_retry",
             )
 
@@ -188,6 +193,17 @@ class GoalService:
         await self.repository.create_contribution(contribution)
 
         goal.current_amount += payload.amount
+        
+        if goal.current_amount >= goal.target_amount:
+            goal.status = "completed"
+            goal.current_amount = goal.target_amount  # Ensure we don't exceed logically
+        
+        # Recalculate progress for new amount
+        if goal.target_amount > 0:
+            new_progress = min(round((goal.current_amount / goal.target_amount) * Decimal("100"), 2), Decimal("100"))
+        else:
+            new_progress = Decimal("0")
+
         await self.repository.session.flush()
         await self.repository.session.refresh(goal)
 
@@ -197,7 +213,7 @@ class GoalService:
             amount=payload.amount,
             balance_after=account.balance,
             goal_current_amount=goal.current_amount,
-            progress_percentage=goal.progress_percentage,
+            progress_percentage=new_progress,
             status="success",
         )
 
