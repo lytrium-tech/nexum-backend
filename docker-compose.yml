@@ -1,0 +1,25 @@
+# ─────────────────────────────────────────────
+# Nexum Backend — docker-compose.yml
+# ─────────────────────────────────────────────
+# NOTA: Este archivo existe únicamente como parte del repositorio.
+# NO ejecutar localmente. La validación con Docker se realizará
+# en la VPS previa autorización explícita.
+# ─────────────────────────────────────────────
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nexum-backend
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
