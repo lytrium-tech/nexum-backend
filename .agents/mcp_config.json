@@ -10,6 +10,8 @@
       "headers": {
         "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJlNTUwMWE4YS1kOTY4LTQ4ODAtODdkZS0zMmNiODQ3MmYxOWQiLCJpc3MiOiJuOG4iLCJhdWQiOiJtY3Atc2VydmVyLWFwaSIsImp0aSI6IjlmZmQ2YjMwLTliNGYtNGNiYy05ZGE3LTBkNDUyNDEyODI4ZiIsImlhdCI6MTc4MDk3MDkyM30.26l8G5NLJyrcCaW3mv5WQNSY6_tgTG7efMpOwsTwD0c"
       }
+    },"notion": {
+      "serverUrl": "https://mcp.notion.com/mcp"
     }
   }
 }
