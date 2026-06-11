@@ -6,14 +6,11 @@ from app.categories.repository import CategoryRepository
 from app.categories.schemas import CategoryCreate, CategoryRead, CategoryUpdate
 from app.core.errors import NotFoundError
 from app.core.utils import clean_presentation_name, normalize_name
-from app.users.service import UserService
 
 
 class CategoryService:
-    def __init__(self, repository: CategoryRepository, user_service: UserService):
+    def __init__(self, repository: CategoryRepository):
         self.repository = repository
-        self.user_service = user_service
-
     async def list_categories(self, auth_user_id: UUID) -> list[CategoryRead]:
         categories = await self.repository.list_available(auth_user_id)
         return [CategoryRead.model_validate(c) for c in categories]

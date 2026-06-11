@@ -22,11 +22,6 @@ def mock_goal_repo():
 
 
 @pytest.fixture
-def mock_user_service():
-    return AsyncMock()
-
-
-@pytest.fixture
 def mock_account_repo():
     return AsyncMock()
 
@@ -37,8 +32,8 @@ def mock_ledger_repo():
 
 
 @pytest.fixture
-def goal_service(mock_goal_repo, mock_user_service, mock_account_repo, mock_ledger_repo):
-    return GoalService(mock_goal_repo, mock_user_service, mock_account_repo, mock_ledger_repo)
+def goal_service(mock_goal_repo, mock_account_repo, mock_ledger_repo):
+    return GoalService(mock_goal_repo, mock_account_repo, mock_ledger_repo)
 
 
 @pytest.mark.asyncio

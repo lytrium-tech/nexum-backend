@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
-from app.core.security import CurrentUser
+from app.users.dependencies import CurrentUserProfile
 from app.core.uow import UnitOfWork
 from app.credit.exceptions import (
     CreditCardInactiveError,
@@ -22,8 +22,6 @@ from app.credit.schemas import (
     CreditCardUpdate,
 )
 from app.credit.service import CreditCardService
-from app.users.repository import UserRepository
-from app.users.service import UserService
 
 router = APIRouter()
 
@@ -32,9 +30,7 @@ def get_credit_service(session: AsyncSession = Depends(get_db_session)) -> Credi
     return CreditCardService(session)
 
 
-async def resolve_user_id(current_user: CurrentUser, session: AsyncSession) -> uuid.UUID:
-    user_repo = UserRepository(session)
-    user_service = UserService(user_repo)
+async def resolve_user_id(current_profile: CurrentUserProfile, session: AsyncSession) -> uuid.UUID:
     user = await user_service.get_current_user_profile(current_user)
     return user.id
 
@@ -42,28 +38,28 @@ async def resolve_user_id(current_user: CurrentUser, session: AsyncSession) -> u
 @router.post("/cards", response_model=CreditCardRead, status_code=status.HTTP_201_CREATED)
 async def create_card(
     payload: CreditCardCreate,
-    current_user: CurrentUser,
+    current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
 ):
     uow = UnitOfWork(session)
     async with uow.transaction():
-        user_id = await resolve_user_id(current_user, session)
+        user_id = current_profile.id
         service = get_credit_service(session)
         return await service.create_card(user_id, payload)
 
 
 @router.get("/cards", response_model=list[CreditCardRead])
-async def list_cards(current_user: CurrentUser, session: AsyncSession = Depends(get_db_session)):
-    user_id = await resolve_user_id(current_user, session)
+async def list_cards(current_profile: CurrentUserProfile, session: AsyncSession = Depends(get_db_session)):
+    user_id = current_profile.id
     service = get_credit_service(session)
     return await service.list_cards(user_id)
 
 
 @router.get("/cards/{card_id}", response_model=CreditCardRead)
 async def get_card(
-    card_id: uuid.UUID, current_user: CurrentUser, session: AsyncSession = Depends(get_db_session)
+    card_id: uuid.UUID, current_profile: CurrentUserProfile, session: AsyncSession = Depends(get_db_session)
 ):
-    user_id = await resolve_user_id(current_user, session)
+    user_id = current_profile.id
     service = get_credit_service(session)
     try:
         return await service.get_card(user_id, card_id)
@@ -75,12 +71,12 @@ async def get_card(
 async def update_card(
     card_id: uuid.UUID,
     payload: CreditCardUpdate,
-    current_user: CurrentUser,
+    current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
 ):
     uow = UnitOfWork(session)
     async with uow.transaction():
-        user_id = await resolve_user_id(current_user, session)
+        user_id = current_profile.id
         service = get_credit_service(session)
         try:
             return await service.update_card(user_id, card_id, payload)
@@ -90,11 +86,11 @@ async def update_card(
 
 @router.delete("/cards/{card_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_card(
-    card_id: uuid.UUID, current_user: CurrentUser, session: AsyncSession = Depends(get_db_session)
+    card_id: uuid.UUID, current_profile: CurrentUserProfile, session: AsyncSession = Depends(get_db_session)
 ):
     uow = UnitOfWork(session)
     async with uow.transaction():
-        user_id = await resolve_user_id(current_user, session)
+        user_id = current_profile.id
         service = get_credit_service(session)
         try:
             await service.delete_card(user_id, card_id)
@@ -106,7 +102,7 @@ async def delete_card(
 async def create_purchase(
     card_id: uuid.UUID,
     payload: CreditCardPurchaseCreate,
-    current_user: CurrentUser,
+    current_profile: CurrentUserProfile,
     idempotency_key: str = Header(..., alias="Idempotency-Key"),
     session: AsyncSession = Depends(get_db_session),
 ):
@@ -117,7 +113,7 @@ async def create_purchase(
 
     uow = UnitOfWork(session)
     async with uow.transaction():
-        user_id = await resolve_user_id(current_user, session)
+        user_id = current_profile.id
         service = get_credit_service(session)
         try:
             return await service.create_purchase(user_id, card_id, payload, command_id)
@@ -133,7 +129,7 @@ async def create_purchase(
 async def create_payment(
     card_id: uuid.UUID,
     payload: CreditCardPaymentCreate,
-    current_user: CurrentUser,
+    current_profile: CurrentUserProfile,
     idempotency_key: str = Header(..., alias="Idempotency-Key"),
     session: AsyncSession = Depends(get_db_session),
 ):
@@ -144,7 +140,7 @@ async def create_payment(
 
     uow = UnitOfWork(session)
     async with uow.transaction():
-        user_id = await resolve_user_id(current_user, session)
+        user_id = current_profile.id
         service = get_credit_service(session)
         try:
             return await service.create_payment(user_id, card_id, payload, command_id)

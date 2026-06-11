@@ -25,8 +25,8 @@ def mock_user_service():
 
 
 @pytest.fixture
-def service(mock_repo, mock_user_service):
-    return CategoryService(mock_repo, mock_user_service)
+def service(mock_repo):
+    return CategoryService(mock_repo)
 
 
 @pytest.mark.asyncio

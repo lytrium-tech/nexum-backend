@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.repository import AccountRepository
 from app.core.database import get_db_session
-from app.core.security import CurrentUser
+from app.users.dependencies import CurrentUserProfile
 from app.core.uow import UnitOfWork
 from app.goals.repository import GoalRepository
 from app.goals.schemas import (
@@ -17,30 +17,24 @@ from app.goals.schemas import (
 )
 from app.goals.service import GoalService
 from app.ledger.repository import LedgerRepository
-from app.users.repository import UserRepository
-from app.users.service import UserService
 
 router = APIRouter(prefix="/goals", tags=["goals"])
 
 
 def get_goal_service(session: AsyncSession = Depends(get_db_session)) -> GoalService:
     repo = GoalRepository(session)
-    user_repo = UserRepository(session)
-    user_service = UserService(user_repo)
     account_repo = AccountRepository(session)
     ledger_repo = LedgerRepository(session)
-    return GoalService(repo, user_service, account_repo, ledger_repo)
+    return GoalService(repo, account_repo, ledger_repo)
 
 
-async def resolve_user_id(current_user: CurrentUser, user_service: UserService) -> UUID:
-    user = await user_service.get_current_user_profile(current_user)
-    return user.id
+
 
 
 @router.post("", response_model=GoalRead, status_code=status.HTTP_201_CREATED)
 async def create_goal(
     payload: GoalCreate,
-    current_user: CurrentUser,
+    current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
 ) -> GoalRead:
     uow = UnitOfWork(session)
@@ -52,7 +46,7 @@ async def create_goal(
 
 @router.get("", response_model=list[GoalRead])
 async def list_goals(
-    current_user: CurrentUser, service: GoalService = Depends(get_goal_service)
+    current_profile: CurrentUserProfile, service: GoalService = Depends(get_goal_service)
 ) -> list[GoalRead]:
     user_id = await resolve_user_id(current_user, service.user_service)
     return await service.list_goals(user_id)
@@ -61,7 +55,7 @@ async def list_goals(
 @router.get("/{goal_id}", response_model=GoalRead)
 async def get_goal(
     goal_id: UUID,
-    current_user: CurrentUser,
+    current_profile: CurrentUserProfile,
     service: GoalService = Depends(get_goal_service),
 ) -> GoalRead:
     user_id = await resolve_user_id(current_user, service.user_service)
@@ -72,7 +66,7 @@ async def get_goal(
 async def update_goal(
     goal_id: UUID,
     payload: GoalUpdate,
-    current_user: CurrentUser,
+    current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
 ) -> GoalRead:
     uow = UnitOfWork(session)
@@ -85,7 +79,7 @@ async def update_goal(
 @router.delete("/{goal_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_goal(
     goal_id: UUID,
-    current_user: CurrentUser,
+    current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
 ) -> None:
     uow = UnitOfWork(session)
@@ -99,7 +93,7 @@ async def delete_goal(
 async def create_contribution(
     goal_id: UUID,
     payload: GoalContributionCreate,
-    current_user: CurrentUser,
+    current_profile: CurrentUserProfile,
     idempotency_key: str | None = Header(None),
     session: AsyncSession = Depends(get_db_session),
 ) -> GoalContributionResult:

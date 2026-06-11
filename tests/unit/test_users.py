@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.errors import NotFoundError
-from app.core.security import AuthenticatedUser
+from app.core.security import AuthenticatedIdentity
 from app.users.models import User
 from app.users.repository import UserRepository
 from app.users.service import UserService
@@ -28,7 +28,7 @@ async def test_get_current_user_profile_dev_bypass_success(service, mock_repo):
     )
     mock_repo.get_by_id.return_value = mock_user
 
-    auth_user = AuthenticatedUser(user_id=str(user_id), is_dev=True)
+    auth_user = AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
     result = await service.get_current_user_profile(auth_user)
 
     assert result.id == user_id
@@ -50,7 +50,7 @@ async def test_get_current_user_profile_auth_success(service, mock_repo):
     )
     mock_repo.get_by_auth_id.return_value = mock_user
 
-    auth_user = AuthenticatedUser(user_id=str(auth_id), is_dev=False)
+    auth_user = AuthenticatedIdentity(user_id=str(auth_id), is_dev=False)
     result = await service.get_current_user_profile(auth_user)
 
     assert result.id == internal_id
@@ -61,7 +61,7 @@ async def test_get_current_user_profile_auth_success(service, mock_repo):
 @pytest.mark.asyncio
 async def test_get_current_user_profile_not_found(service, mock_repo):
     mock_repo.get_by_auth_id.return_value = None
-    auth_user = AuthenticatedUser(user_id=str(uuid.uuid4()), is_dev=False)
+    auth_user = AuthenticatedIdentity(user_id=str(uuid.uuid4()), is_dev=False)
 
     with pytest.raises(NotFoundError):
         await service.get_current_user_profile(auth_user)

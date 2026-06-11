@@ -12,3 +12,24 @@ class UserRead(BaseModel):
     status: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class UserOnboardingRequest(BaseModel):
+    name: str | None = None
+    timezone: str = "America/Bogota"
+    currency: str = "COP"
+
+
+class UserOnboardingResponse(BaseModel):
+    created: bool
+    onboarding_completed: bool
+    profile: UserRead
+    next_step: str
+
+
+class UserMeResponse(BaseModel):
+    profile: UserRead
+    onboarding_completed: bool
+    has_accounts: bool
+    next_step: str
+

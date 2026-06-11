@@ -5,7 +5,7 @@ import pytest
 
 from app.conversations.schemas import ConversationalRequest
 from app.conversations.service import ConversationsService
-from app.core.security import AuthenticatedUser
+from app.core.security import AuthenticatedIdentity
 
 
 @pytest.fixture
@@ -58,7 +58,7 @@ def conversations_service(mock_repo, mock_intel_service, mock_cash_service, mock
 @pytest.mark.asyncio
 async def test_handle_message_deduplication(conversations_service, mock_repo):
     user_id = uuid.uuid4()
-    auth_user = AuthenticatedUser(user_id=str(user_id))
+    auth_user = AuthenticatedIdentity(user_id=str(user_id))
     trace_id = uuid.uuid4()
     req = ConversationalRequest(message="Hola", channel="api", external_message_id="ext-123")
     
@@ -75,7 +75,7 @@ async def test_handle_message_deduplication(conversations_service, mock_repo):
 @patch("app.conversations.service.gemini_client")
 async def test_handle_message_read_intent(mock_gemini, conversations_service, mock_intel_service, mock_repo):
     user_id = uuid.uuid4()
-    auth_user = AuthenticatedUser(user_id=str(user_id))
+    auth_user = AuthenticatedIdentity(user_id=str(user_id))
     trace_id = uuid.uuid4()
     msg_id = uuid.uuid4()
     req = ConversationalRequest(message="¿Cuánto tengo?", channel="api")

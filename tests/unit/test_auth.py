@@ -2,7 +2,7 @@ import pytest
 import jwt
 from unittest.mock import patch, MagicMock
 from fastapi.security import HTTPAuthorizationCredentials
-from app.core.security import get_current_user, AuthenticatedUser
+from app.core.security import get_current_user, AuthenticatedIdentity
 from app.core.errors import AuthenticationError
 
 @pytest.fixture

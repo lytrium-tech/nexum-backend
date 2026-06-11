@@ -112,9 +112,9 @@ async def get_current_user(
         raise AuthenticationError(message="Token expirado.")
     except jwt.InvalidTokenError as e:
         raise AuthenticationError(message=f"Token inválido: {str(e)}")
-    except Exception as e:
+    except Exception:
         raise AuthenticationError(message="Error validando la firma del token.")
 
 
 # Alias tipado para usar como Depends en routers de dominio
-CurrentUser = Annotated[AuthenticatedUser, Depends(get_current_user)]
+AuthenticatedIdentity = Annotated[AuthenticatedUser, Depends(get_current_user)]

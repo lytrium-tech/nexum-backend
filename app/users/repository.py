@@ -21,3 +21,9 @@ class UserRepository:
         stmt = select(User).where(User.id == user_id, User.status == "active")
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def create_user(self, user: User) -> User:
+        self.session.add(user)
+        await self.session.flush()
+        await self.session.refresh(user)
+        return user

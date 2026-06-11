@@ -6,14 +6,11 @@ from app.accounts.repository import AccountRepository
 from app.accounts.schemas import AccountCreate, AccountRead, AccountUpdate
 from app.core.errors import NotFoundError
 from app.core.utils import clean_presentation_name, normalize_name
-from app.users.service import UserService
 
 
 class AccountService:
-    def __init__(self, repository: AccountRepository, user_service: UserService):
+    def __init__(self, repository: AccountRepository):
         self.repository = repository
-        self.user_service = user_service
-
     async def list_accounts(self, auth_user_id: UUID) -> list[AccountRead]:
         accounts = await self.repository.list_by_user(auth_user_id)
         return [AccountRead.model_validate(a) for a in accounts]

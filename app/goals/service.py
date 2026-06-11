@@ -26,19 +26,16 @@ from app.goals.schemas import (
 from app.ledger.enums import Direction, EventType
 from app.ledger.repository import LedgerRepository
 from app.ledger.schemas import LedgerEventCreate
-from app.users.service import UserService
 
 
 class GoalService:
     def __init__(
         self,
         repository: GoalRepository,
-        user_service: UserService,
         account_repo: AccountRepository,
         ledger_repo: LedgerRepository,
     ):
         self.repository = repository
-        self.user_service = user_service
         self.account_repo = account_repo
         self.ledger_repo = ledger_repo
 
