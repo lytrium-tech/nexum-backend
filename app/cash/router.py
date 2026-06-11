@@ -8,9 +8,9 @@ from app.cash.schemas import CashExpenseCreate, CashIncomeCreate, CashOperationR
 from app.cash.service import CashService
 from app.categories.repository import CategoryRepository
 from app.core.database import get_db_session
-from app.core.security import AuthenticatedUser, get_current_user
 from app.core.uow import UnitOfWork
 from app.ledger.repository import LedgerRepository
+from app.users.dependencies import CurrentUserProfile
 
 router = APIRouter(prefix="/cash", tags=["cash"])
 
@@ -31,14 +31,14 @@ def get_cash_service(session: AsyncSession = Depends(get_db_session)) -> CashSer
 @router.post("/income", response_model=CashOperationResult)
 async def create_income(
     payload: CashIncomeCreate,
+    current_profile: CurrentUserProfile,
     idempotency_key: UUID = Header(
         ..., description="UUID único para identificar la transacción de negocio"
     ),
-    auth_user: AuthenticatedUser = Depends(get_current_user),
     service: CashService = Depends(get_cash_service),
 ) -> CashOperationResult:
     return await service.create_income(
-        auth_user=auth_user,
+        user_id=current_profile.id,
         payload=payload,
         command_id=idempotency_key,
     )
@@ -47,14 +47,14 @@ async def create_income(
 @router.post("/expense", response_model=CashOperationResult)
 async def create_expense(
     payload: CashExpenseCreate,
+    current_profile: CurrentUserProfile,
     idempotency_key: UUID = Header(
         ..., description="UUID único para identificar la transacción de negocio"
     ),
-    auth_user: AuthenticatedUser = Depends(get_current_user),
     service: CashService = Depends(get_cash_service),
 ) -> CashOperationResult:
     return await service.create_expense(
-        auth_user=auth_user,
+        user_id=current_profile.id,
         payload=payload,
         command_id=idempotency_key,
     )

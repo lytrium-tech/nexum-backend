@@ -51,11 +51,13 @@ class HealthResponse(BaseModel):
     service: str
 
 
-from sqlalchemy import text
-from app.core.database import get_db_session
-from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db_session
 from app.core.errors import InfrastructureError
+
 
 @api_router.get(
     "/health",

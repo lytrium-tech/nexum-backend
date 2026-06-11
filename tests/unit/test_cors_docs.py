@@ -1,8 +1,11 @@
+from unittest.mock import patch
+
 import pytest
 from httpx import ASGITransport, AsyncClient
-from app.main import create_app
+
 from app.core.config import settings
-from unittest.mock import patch
+from app.main import create_app
+
 
 @pytest.mark.asyncio
 async def test_cors_preflight_allowed():

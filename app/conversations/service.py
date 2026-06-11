@@ -23,7 +23,6 @@ from app.conversations.schemas import (
     ConversationalResponse,
     PendingActionRead,
 )
-from app.core.security import AuthenticatedUser
 from app.credit.schemas import CreditCardPurchaseCreate
 from app.credit.service import CreditCardService
 from app.goals.service import GoalService
@@ -52,9 +51,8 @@ class ConversationsService:
         self.credit_service = credit_service
 
     async def handle_message(
-        self, auth_user: AuthenticatedUser, request: ConversationalRequest, trace_id: uuid.UUID
+        self, user_id: uuid.UUID, request: ConversationalRequest, trace_id: uuid.UUID
     ) -> ConversationalResponse:
-        user_id = uuid.UUID(auth_user.user_id)
         
         # 1. Deduplicación por external_message_id
         if request.external_message_id:
@@ -69,7 +67,7 @@ class ConversationsService:
         
         # 2. Verificar contexto de pending_action_id
         if request.pending_action_id:
-            return await self._handle_pending_action_flow(auth_user, request, trace_id)
+            return await self._handle_pending_action_flow(user_id, request, trace_id)
 
         # 3. Guardar inbound message
         inbound_msg_id = await self.repo.save_message(
@@ -273,9 +271,8 @@ class ConversationsService:
         return "Voy a registrar esta operación. ¿Confirmas?"
 
     async def _handle_pending_action_flow(
-        self, auth_user: AuthenticatedUser, request: ConversationalRequest, trace_id: uuid.UUID
+        self, user_id: uuid.UUID, request: ConversationalRequest, trace_id: uuid.UUID
     ) -> ConversationalResponse:
-        user_id = uuid.UUID(auth_user.user_id)
         action = await self.repo.get_pending_action(request.pending_action_id)
         if not action or action.user_id != user_id:
             return ConversationalResponse(
@@ -320,7 +317,7 @@ class ConversationsService:
         if text_lower in ["si", "sí", "ok", "confirmo", "dale", "claro"]:
             if action.status == "awaiting_confirmation":
                 # Ejecutar
-                await self._execute_financial_action(auth_user, action)
+                await self._execute_financial_action(user_id, action)
                 await self.repo.update_pending_action_status(action.id, "executed")
                 return await self._build_and_save_response(
                     user_id, msg_id, request, "¡Operación registrada con éxito!",
@@ -333,7 +330,7 @@ class ConversationsService:
             action.intent, "cancelled", trace_id
         )
 
-    async def _execute_financial_action(self, auth_user: AuthenticatedUser, action: PendingActionRead):
+    async def _execute_financial_action(self, user_id: uuid.UUID, action: PendingActionRead):
         intent = action.intent
         data = action.data
         command_id = action.command_id
@@ -345,7 +342,7 @@ class ConversationsService:
                 category_id=uuid.UUID(data["category_id"]) if "category_id" in data else None,
                 description=data.get("description"),
             )
-            await self.cash_service.create_expense(auth_user, dto, command_id)
+            await self.cash_service.create_expense(user_id, dto, command_id)
         elif intent == "create_income":
             dto = CashIncomeCreate(
                 amount=Decimal(str(data["amount"])),
@@ -353,13 +350,13 @@ class ConversationsService:
                 category_id=uuid.UUID(data["category_id"]) if "category_id" in data else None,
                 description=data.get("description"),
             )
-            await self.cash_service.create_income(auth_user, dto, command_id)
+            await self.cash_service.create_income(user_id, dto, command_id)
         elif intent == "create_credit_card_purchase":
             dto = CreditCardPurchaseCreate(
                 amount=Decimal(str(data["amount"])),
                 installments_total=data.get("installments_total", 1)
             )
-            await self.credit_service.create_purchase(uuid.UUID(auth_user.user_id), uuid.UUID(data["credit_card_id"]), dto, str(command_id))
+            await self.credit_service.create_purchase(user_id, uuid.UUID(data["credit_card_id"]), dto, str(command_id))
         # Add other intents...
 
     async def _build_and_save_response(

@@ -72,7 +72,7 @@ async def test_create_income_success(cash_service, mock_account_repo, mock_ledge
         account_id=account_id, amount=Decimal("50.5"), source=EventSource.API
     )
 
-    result = await cash_service.create_income(auth_user, payload, command_id)
+    result = await cash_service.create_income(user_id, payload, command_id)
 
     assert result.status == "created"
     mock_account_repo.update_balance.assert_awaited_once_with(mock_account, Decimal("50.5"))
@@ -98,7 +98,7 @@ async def test_create_expense_success(cash_service, mock_account_repo, mock_ledg
 
     payload = CashExpenseCreate(account_id=account_id, amount=Decimal("40"), source=EventSource.API)
 
-    result = await cash_service.create_expense(auth_user, payload, command_id)
+    result = await cash_service.create_expense(user_id, payload, command_id)
 
     assert result.status == "created"
     mock_account_repo.update_balance.assert_awaited_once_with(mock_account, Decimal("-40"))
@@ -126,7 +126,7 @@ async def test_create_expense_insufficient_funds(cash_service, mock_account_repo
     )
 
     with pytest.raises(InsufficientFundsError):
-        await cash_service.create_expense(auth_user, payload, command_id)
+        await cash_service.create_expense(user_id, payload, command_id)
 
     mock_account_repo.update_balance.assert_not_awaited()
 
@@ -154,7 +154,7 @@ async def test_create_income_idempotent(cash_service, mock_account_repo, mock_le
         amount=Decimal("50"),
     )
 
-    result = await cash_service.create_income(auth_user, payload, command_id)
+    result = await cash_service.create_income(user_id, payload, command_id)
 
     assert result.status == "idempotent_retry"
     # Balance should not be updated again
@@ -179,12 +179,12 @@ async def test_create_expense_account_forbidden(cash_service, mock_account_repo)
     )
 
     with pytest.raises(ForbiddenError):
-        await cash_service.create_expense(auth_user, payload, command_id)
+        await cash_service.create_expense(user_id, payload, command_id)
 
 
 @pytest.mark.asyncio
 async def test_create_income_account_not_found(cash_service, mock_account_repo):
-    auth_user = AuthenticatedIdentity(user_id=str(uuid.uuid4()), is_dev=True)
+    user_id = uuid.uuid4()
     mock_account_repo.get_by_id_for_update.return_value = None
 
     payload = CashIncomeCreate(
@@ -193,7 +193,7 @@ async def test_create_income_account_not_found(cash_service, mock_account_repo):
     )
 
     with pytest.raises(NotFoundError):
-        await cash_service.create_income(auth_user, payload, uuid.uuid4())
+        await cash_service.create_income(user_id, payload, uuid.uuid4())
 
 
 def test_cash_schemas_reject_negative_amount():
@@ -236,7 +236,7 @@ async def test_validate_category_global_accepted(
     payload = CashIncomeCreate(
         account_id=uuid.uuid4(), amount=Decimal("10"), category_id=category_id
     )
-    await cash_service.create_income(auth_user, payload, uuid.uuid4())
+    await cash_service.create_income(user_id, payload, uuid.uuid4())
     mock_category_repo.get_by_id.assert_awaited_once_with(category_id)
 
 
@@ -266,7 +266,7 @@ async def test_validate_category_private_own_accepted(
     payload = CashIncomeCreate(
         account_id=uuid.uuid4(), amount=Decimal("10"), category_id=category_id
     )
-    await cash_service.create_income(auth_user, payload, uuid.uuid4())
+    await cash_service.create_income(user_id, payload, uuid.uuid4())
 
 
 @pytest.mark.asyncio
@@ -289,7 +289,7 @@ async def test_validate_category_private_other_rejected(
         account_id=uuid.uuid4(), amount=Decimal("10"), category_id=category_id
     )
     with pytest.raises(ForbiddenError) as exc:
-        await cash_service.create_income(auth_user, payload, uuid.uuid4())
+        await cash_service.create_income(user_id, payload, uuid.uuid4())
     assert "No tienes permisos sobre esta categoría privada" in exc.value.message
 
 
@@ -311,7 +311,7 @@ async def test_validate_category_not_found_rejected(
         account_id=uuid.uuid4(), amount=Decimal("10"), category_id=category_id
     )
     with pytest.raises(NotFoundError) as exc:
-        await cash_service.create_income(auth_user, payload, uuid.uuid4())
+        await cash_service.create_income(user_id, payload, uuid.uuid4())
     assert "Categoría no encontrada" in exc.value.message
 
 
@@ -334,5 +334,5 @@ async def test_validate_category_none_accepted(
     mock_ledger_repo.insert_event.return_value = mock_ledger_result
 
     payload = CashIncomeCreate(account_id=uuid.uuid4(), amount=Decimal("10"), category_id=None)
-    await cash_service.create_income(auth_user, payload, uuid.uuid4())
+    await cash_service.create_income(user_id, payload, uuid.uuid4())
     mock_category_repo.get_by_id.assert_not_awaited()

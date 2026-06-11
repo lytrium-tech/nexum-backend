@@ -7,8 +7,8 @@ from app.categories.repository import CategoryRepository
 from app.categories.schemas import CategoryCreate, CategoryRead, CategoryUpdate
 from app.categories.service import CategoryService
 from app.core.database import get_db_session
-from app.users.dependencies import CurrentUserProfile
 from app.core.uow import UnitOfWork
+from app.users.dependencies import CurrentUserProfile
 
 router = APIRouter(prefix="/categories", tags=["categories"])
 
@@ -25,7 +25,7 @@ def get_category_service(session: AsyncSession = Depends(get_db_session)) -> Cat
 async def list_categories(
     current_profile: CurrentUserProfile, service: CategoryService = Depends(get_category_service)
 ) -> list[CategoryRead]:
-    user_id = await resolve_user_id(current_user, service.user_service)
+    user_id = current_profile.id
     return await service.list_categories(user_id)
 
 
@@ -38,7 +38,7 @@ async def create_category(
     uow = UnitOfWork(session)
     async with uow.transaction():
         service = get_category_service(session)
-        user_id = await resolve_user_id(current_user, service.user_service)
+        user_id = current_profile.id
         result = await service.create_category(user_id, payload)
         return result
 
@@ -53,7 +53,7 @@ async def update_category(
     uow = UnitOfWork(session)
     async with uow.transaction():
         service = get_category_service(session)
-        user_id = await resolve_user_id(current_user, service.user_service)
+        user_id = current_profile.id
         result = await service.update_category(user_id, category_id, payload)
         return result
 
@@ -65,5 +65,5 @@ async def delete_category(
     uow = UnitOfWork(session)
     async with uow.transaction():
         service = get_category_service(session)
-        user_id = await resolve_user_id(current_user, service.user_service)
+        user_id = current_profile.id
         await service.delete_category(user_id, category_id)

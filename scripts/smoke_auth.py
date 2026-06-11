@@ -1,7 +1,9 @@
 import asyncio
-import httpx
+
 from httpx import ASGITransport, AsyncClient
+
 from app.main import app
+
 
 async def run_smoke():
     print("=== Iniciando Smoke Test Auth Local ===")

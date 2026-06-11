@@ -1,12 +1,13 @@
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
+
 from app.core.errors import NotFoundError
 from app.core.security import AuthenticatedIdentity
-from app.users.repository import UserRepository
-from app.users.schemas import UserRead, UserOnboardingRequest, UserOnboardingResponse
-from app.users.models import User
 from app.core.utils import clean_presentation_name
-from sqlalchemy.exc import IntegrityError
+from app.users.models import User
+from app.users.repository import UserRepository
+from app.users.schemas import UserOnboardingRequest, UserOnboardingResponse, UserRead
 
 
 class UserService:

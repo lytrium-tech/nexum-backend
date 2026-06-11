@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.repository import AccountRepository
 from app.core.database import get_db_session
-from app.users.dependencies import CurrentUserProfile
 from app.core.uow import UnitOfWork
 from app.goals.repository import GoalRepository
 from app.goals.schemas import (
@@ -17,6 +16,7 @@ from app.goals.schemas import (
 )
 from app.goals.service import GoalService
 from app.ledger.repository import LedgerRepository
+from app.users.dependencies import CurrentUserProfile
 
 router = APIRouter(prefix="/goals", tags=["goals"])
 
@@ -40,7 +40,7 @@ async def create_goal(
     uow = UnitOfWork(session)
     async with uow.transaction():
         service = get_goal_service(session)
-        user_id = await resolve_user_id(current_user, service.user_service)
+        user_id = current_profile.id
         return await service.create_goal(user_id, payload)
 
 
@@ -48,7 +48,7 @@ async def create_goal(
 async def list_goals(
     current_profile: CurrentUserProfile, service: GoalService = Depends(get_goal_service)
 ) -> list[GoalRead]:
-    user_id = await resolve_user_id(current_user, service.user_service)
+    user_id = current_profile.id
     return await service.list_goals(user_id)
 
 
@@ -58,7 +58,7 @@ async def get_goal(
     current_profile: CurrentUserProfile,
     service: GoalService = Depends(get_goal_service),
 ) -> GoalRead:
-    user_id = await resolve_user_id(current_user, service.user_service)
+    user_id = current_profile.id
     return await service.get_goal(user_id, goal_id)
 
 
@@ -72,7 +72,7 @@ async def update_goal(
     uow = UnitOfWork(session)
     async with uow.transaction():
         service = get_goal_service(session)
-        user_id = await resolve_user_id(current_user, service.user_service)
+        user_id = current_profile.id
         return await service.update_goal(user_id, goal_id, payload)
 
 
@@ -85,7 +85,7 @@ async def delete_goal(
     uow = UnitOfWork(session)
     async with uow.transaction():
         service = get_goal_service(session)
-        user_id = await resolve_user_id(current_user, service.user_service)
+        user_id = current_profile.id
         await service.delete_goal(user_id, goal_id)
 
 
@@ -100,5 +100,5 @@ async def create_contribution(
     uow = UnitOfWork(session)
     async with uow.transaction():
         service = get_goal_service(session)
-        user_id = await resolve_user_id(current_user, service.user_service)
+        user_id = current_profile.id
         return await service.create_contribution(user_id, goal_id, payload, idempotency_key)

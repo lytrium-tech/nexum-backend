@@ -1,9 +1,12 @@
-import pytest
+from unittest.mock import MagicMock, patch
+
 import jwt
-from unittest.mock import patch, MagicMock
+import pytest
 from fastapi.security import HTTPAuthorizationCredentials
-from app.core.security import get_current_user, AuthenticatedIdentity
+
 from app.core.errors import AuthenticationError
+from app.core.security import get_current_user
+
 
 @pytest.fixture
 def mock_settings():

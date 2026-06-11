@@ -1,8 +1,11 @@
+from unittest.mock import AsyncMock
+
 import pytest
 from httpx import ASGITransport, AsyncClient
-from app.main import app
+
 from app.core.database import get_db_session
-from unittest.mock import AsyncMock
+from app.main import app
+
 
 @pytest.mark.asyncio
 async def test_readiness_returns_200():

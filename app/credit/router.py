@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
-from app.users.dependencies import CurrentUserProfile
 from app.core.uow import UnitOfWork
 from app.credit.exceptions import (
     CreditCardInactiveError,
@@ -22,17 +21,13 @@ from app.credit.schemas import (
     CreditCardUpdate,
 )
 from app.credit.service import CreditCardService
+from app.users.dependencies import CurrentUserProfile
 
 router = APIRouter()
 
 
 def get_credit_service(session: AsyncSession = Depends(get_db_session)) -> CreditCardService:
     return CreditCardService(session)
-
-
-async def resolve_user_id(current_profile: CurrentUserProfile, session: AsyncSession) -> uuid.UUID:
-    user = await user_service.get_current_user_profile(current_user)
-    return user.id
 
 
 @router.post("/cards", response_model=CreditCardRead, status_code=status.HTTP_201_CREATED)

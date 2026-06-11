@@ -9,7 +9,6 @@ from app.cash.service import CashService
 from app.conversations.schemas import ConversationalRequest, ConversationalResponse
 from app.conversations.service import ConversationsService
 from app.core.database import get_db_session
-from app.core.security import AuthenticatedUser, get_current_user
 from app.credit.router import get_credit_service
 from app.credit.service import CreditCardService
 from app.goals.router import get_goal_service
@@ -18,6 +17,7 @@ from app.intelligence.router import get_intelligence_service
 from app.intelligence.service import IntelligenceService
 from app.obligations.router import get_obligation_service
 from app.obligations.service import ObligationService
+from app.users.dependencies import CurrentUserProfile
 
 router = APIRouter(prefix="/conversations", tags=["Conversational"])
 
@@ -41,7 +41,7 @@ def get_conversations_service(
 @router.post("/message", response_model=ConversationalResponse)
 async def process_message(
     request: ConversationalRequest,
-    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    current_profile: CurrentUserProfile,
     service: Annotated[ConversationsService, Depends(get_conversations_service)],
     db: Annotated[AsyncSession, Depends(get_db_session)],
     trace_id: Annotated[str | None, Header(alias="X-Trace-Id")] = None,
@@ -52,7 +52,7 @@ async def process_message(
     eff_trace_id = uuid.UUID(trace_id) if trace_id else uuid.uuid4()
     
     response = await service.handle_message(
-        auth_user=current_user,
+        user_id=current_profile.id,
         request=request,
         trace_id=eff_trace_id
     )

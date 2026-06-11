@@ -7,8 +7,8 @@ from app.accounts.repository import AccountRepository
 from app.accounts.schemas import AccountCreate, AccountRead, AccountUpdate
 from app.accounts.service import AccountService
 from app.core.database import get_db_session
-from app.users.dependencies import CurrentUserProfile
 from app.core.uow import UnitOfWork
+from app.users.dependencies import CurrentUserProfile
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
@@ -25,7 +25,7 @@ def get_account_service(session: AsyncSession = Depends(get_db_session)) -> Acco
 async def list_accounts(
     current_profile: CurrentUserProfile, service: AccountService = Depends(get_account_service)
 ) -> list[AccountRead]:
-    user_id = await resolve_user_id(current_user, service.user_service)
+    user_id = current_profile.id
     return await service.list_accounts(user_id)
 
 
@@ -35,7 +35,7 @@ async def get_account(
     current_profile: CurrentUserProfile,
     service: AccountService = Depends(get_account_service),
 ) -> AccountRead:
-    user_id = await resolve_user_id(current_user, service.user_service)
+    user_id = current_profile.id
     return await service.get_account(user_id, account_id)
 
 
@@ -48,7 +48,7 @@ async def create_account(
     uow = UnitOfWork(session)
     async with uow.transaction():
         service = get_account_service(session)
-        user_id = await resolve_user_id(current_user, service.user_service)
+        user_id = current_profile.id
         result = await service.create_account(user_id, payload)
         return result
 
@@ -63,7 +63,7 @@ async def update_account(
     uow = UnitOfWork(session)
     async with uow.transaction():
         service = get_account_service(session)
-        user_id = await resolve_user_id(current_user, service.user_service)
+        user_id = current_profile.id
         result = await service.update_account(user_id, account_id, payload)
         return result
 
@@ -75,5 +75,5 @@ async def delete_account(
     uow = UnitOfWork(session)
     async with uow.transaction():
         service = get_account_service(session)
-        user_id = await resolve_user_id(current_user, service.user_service)
+        user_id = current_profile.id
         await service.delete_account(user_id, account_id)

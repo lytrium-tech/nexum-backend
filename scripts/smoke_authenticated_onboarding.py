@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+
 import httpx
 
 API_URL = "https://api.nexum.lytrium.tech"

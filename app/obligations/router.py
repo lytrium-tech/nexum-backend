@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.repository import AccountRepository
 from app.core.database import get_db_session
-from app.users.dependencies import CurrentUserProfile
 from app.core.uow import UnitOfWork
 from app.ledger.repository import LedgerRepository
 from app.obligations.repository import ObligationRepository
@@ -17,6 +16,7 @@ from app.obligations.schemas import (
     ObligationUpdate,
 )
 from app.obligations.service import ObligationService
+from app.users.dependencies import CurrentUserProfile
 
 router = APIRouter(prefix="/obligations", tags=["obligations"])
 

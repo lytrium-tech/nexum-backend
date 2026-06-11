@@ -5,7 +5,6 @@ from app.cash.exceptions import InsufficientFundsError
 from app.cash.schemas import CashExpenseCreate, CashIncomeCreate, CashOperationResult
 from app.categories.repository import CategoryRepository
 from app.core.errors import ForbiddenError, NotFoundError
-from app.core.security import AuthenticatedUser
 from app.core.uow import UnitOfWork
 from app.ledger.enums import Direction, EventType
 from app.ledger.repository import LedgerRepository
@@ -35,9 +34,8 @@ class CashService:
             raise ForbiddenError(message="No tienes permisos sobre esta categoría privada.")
 
     async def create_income(
-        self, auth_user: AuthenticatedUser, payload: CashIncomeCreate, command_id: UUID
+        self, user_id: UUID, payload: CashIncomeCreate, command_id: UUID
     ) -> CashOperationResult:
-        user_id = UUID(auth_user.user_id)
 
         async with self.uow.transaction():
             # 1. Bloquear cuenta
@@ -87,9 +85,8 @@ class CashService:
             )
 
     async def create_expense(
-        self, auth_user: AuthenticatedUser, payload: CashExpenseCreate, command_id: UUID
+        self, user_id: UUID, payload: CashExpenseCreate, command_id: UUID
     ) -> CashOperationResult:
-        user_id = UUID(auth_user.user_id)
 
         async with self.uow.transaction():
             # 1. Bloquear cuenta
