@@ -44,23 +44,24 @@ class AuthenticatedUser:
     is_dev: bool = False
 
 
+import jwt
+from jwt import PyJWKClient
+
+# Configuración del cliente JWKS para caché
+_jwks_client: PyJWKClient | None = None
+
+def get_jwks_client() -> PyJWKClient:
+    global _jwks_client
+    if _jwks_client is None:
+        url = f"{settings.SUPABASE_URL}/auth/v1/.well-known/jwks.json"
+        _jwks_client = PyJWKClient(url)
+    return _jwks_client
+
 async def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)],
 ) -> AuthenticatedUser:
     """
     Dependency de FastAPI para obtener el usuario autenticado del request actual.
-
-    Flujo actual:
-    1. Si AUTH_BYPASS_ENABLED=true (solo en development/test):
-       → retorna usuario de desarrollo fijo (DEV_USER_ID).
-    2. Si no hay credenciales:
-       → lanza AuthenticationError (HTTP 401).
-    3. Si hay Bearer token:
-       → pendiente de validación JWT real en Fase 6.
-       → actualmente lanza AuthenticationError porque no existe validación real.
-
-    Raises:
-        AuthenticationError: Si no hay credenciales válidas o el bypass está desactivado.
     """
     # Modo bypass de desarrollo
     if settings.AUTH_BYPASS_ENABLED and not settings.is_production:
@@ -76,13 +77,43 @@ async def get_current_user(
             message="Autenticación requerida. Incluye un Bearer token válido.",
         )
 
-    # TODO (Fase 6): Verificar JWT de Supabase Auth aquí.
-    # Por ahora, la presencia de token no implica autenticación válida.
-    # Se rechaza con 401 para evitar acceso sin validación real.
-    raise AuthenticationError(
-        message="La validación de tokens JWT no está implementada todavía.",
-        detail={"hint": "AUTH_BYPASS_ENABLED=true está disponible en development."},
-    )
+    token = credentials.credentials
+    try:
+        jwks_client = get_jwks_client()
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
+        
+        # El issuer de Supabase Auth es el URL base + /auth/v1
+        expected_issuer = f"{settings.SUPABASE_URL}/auth/v1"
+        
+        # Para la audiencia, por defecto es 'authenticated'
+        payload = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["ES256", "HS256", "RS256"],
+            audience="authenticated",
+            issuer=expected_issuer,
+            options={"verify_iss": True, "verify_aud": True, "verify_exp": True}
+        )
+        
+        user_id = payload.get("sub")
+        if not user_id:
+            raise AuthenticationError(message="Token inválido: falta claim 'sub'.")
+            
+        role = payload.get("role")
+        if role != "authenticated":
+            raise AuthenticationError(message="Token inválido: rol no autorizado.")
+
+        return AuthenticatedUser(
+            user_id=user_id,
+            email=payload.get("email"),
+            is_dev=False,
+        )
+    except jwt.ExpiredSignatureError:
+        raise AuthenticationError(message="Token expirado.")
+    except jwt.InvalidTokenError as e:
+        raise AuthenticationError(message=f"Token inválido: {str(e)}")
+    except Exception as e:
+        raise AuthenticationError(message="Error validando la firma del token.")
 
 
 # Alias tipado para usar como Depends en routers de dominio

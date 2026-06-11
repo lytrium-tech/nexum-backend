@@ -21,6 +21,7 @@ dependencies = [
     "tzdata>=2025.1",
     "httpx>=0.28.0",
     "google-genai>=2.8.0",
+    "pyjwt[crypto]>=2.8.0",
 ]
 
 [project.optional-dependencies]

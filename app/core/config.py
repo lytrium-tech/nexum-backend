@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"  # development | staging | production
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = True
+    CORS_ORIGINS: str = "http://localhost:3000"
 
     # ── Logging ───────────────────────────────────────────────────────────
     # Si no se define, se deriva del flag DEBUG.

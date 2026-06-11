@@ -81,10 +81,11 @@ def create_app() -> FastAPI:
     app.add_middleware(TraceIDMiddleware)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"] if settings.DEBUG else [],
+        allow_origins=[origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()],
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Trace-ID"],
+        expose_headers=["X-Trace-ID"],
     )
 
     # ── Exception handlers ────────────────────────────────────────────────

@@ -51,6 +51,12 @@ class HealthResponse(BaseModel):
     service: str
 
 
+from sqlalchemy import text
+from app.core.database import get_db_session
+from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import Depends
+from app.core.errors import InfrastructureError
+
 @api_router.get(
     "/health",
     response_model=HealthResponse,
@@ -67,6 +73,32 @@ async def health_check() -> HealthResponse:
         status="ok",
         service=settings.APP_NAME,
     )
+
+@api_router.get(
+    "/health/readiness",
+    response_model=HealthResponse,
+    summary="Readiness check",
+    description="Verifica que el backend y la base de datos estén operativos.",
+    tags=["Sistema"],
+)
+async def readiness_check(
+    session: AsyncSession = Depends(get_db_session),
+) -> HealthResponse:
+    """
+    Verifica que el pool de conexiones de la base de datos esté funcionando.
+    Retorna 503 si la base de datos falla.
+    """
+    try:
+        await session.execute(text("SELECT 1"))
+        return HealthResponse(
+            status="ok",
+            service=settings.APP_NAME,
+        )
+    except Exception as e:
+        raise InfrastructureError(
+            message="Error de conexión con la base de datos",
+            detail=str(e) if settings.DEBUG else None,
+        )
 
 
 # ── Registro del router v1 ────────────────────────────────────────────────────
