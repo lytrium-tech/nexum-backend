@@ -9,6 +9,8 @@ class GoalCreate(BaseModel):
     name: str = Field(min_length=1)
     target_amount: Decimal = Field(gt=0)
     target_date: date | None = None
+    source_message_id: UUID | None = None
+    raw_message: str | None = None
 
 
 class GoalUpdate(BaseModel):
@@ -65,6 +67,8 @@ class GoalRead(BaseModel):
 class GoalContributionCreate(BaseModel):
     account_id: UUID
     amount: Decimal = Field(gt=0)
+    source_message_id: UUID | None = None
+    raw_message: str | None = None
 
 
 class GoalContributionResult(BaseModel):

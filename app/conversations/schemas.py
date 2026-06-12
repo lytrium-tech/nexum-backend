@@ -68,6 +68,8 @@ class PendingActionBase(BaseModel):
     status: str
     command_id: uuid.UUID | None = None
     expires_at: datetime | None = None
+    source_message_id: uuid.UUID | None = None
+    confirmation_message_id: uuid.UUID | None = None
 
 
 class PendingActionRead(PendingActionBase):

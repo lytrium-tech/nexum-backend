@@ -146,6 +146,8 @@ class ObligationService:
             event_type=EventType.OBLIGATION_PAYMENT,
             direction=Direction.OUTFLOW,
             amount=payload.amount,
+            source_message_id=payload.source_message_id,
+            raw_message=payload.raw_message,
             metadata={"obligation_id": str(obligation.id)},
         )
 

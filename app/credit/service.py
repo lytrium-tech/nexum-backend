@@ -116,6 +116,8 @@ class CreditCardService:
             currency=card.currency,
             category_id=payload.category_id,
             description=payload.description,
+            source_message_id=payload.source_message_id,
+            raw_message=payload.raw_message,
             metadata={"credit_card_id": str(card.id)},
         )
 
@@ -194,6 +196,8 @@ class CreditCardService:
             amount=payload.amount,
             currency=card.currency,
             account_id=payload.account_id,
+            source_message_id=payload.source_message_id,
+            raw_message=payload.raw_message,
             metadata={"credit_card_id": str(card.id)},
         )
 

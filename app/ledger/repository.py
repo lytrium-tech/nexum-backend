@@ -99,6 +99,7 @@ class LedgerRepository:
             occurred_at=event_data.occurred_at,
             metadata_=event_data.metadata,
             command_id=event_data.command_id,
+            source_message_id=event_data.source_message_id,
         )
 
         # occurred_at se setea solo si viene, si no delega al server_default (now())

@@ -58,6 +58,8 @@ class CashService:
                 description=payload.description,
                 source=payload.source.value,
                 command_id=command_id,
+                source_message_id=payload.source_message_id,
+                raw_message=payload.raw_message,
                 metadata={},
             )
 
@@ -109,6 +111,8 @@ class CashService:
                 description=payload.description,
                 source=payload.source.value,
                 command_id=command_id,
+                source_message_id=payload.source_message_id,
+                raw_message=payload.raw_message,
                 metadata={},
             )
 

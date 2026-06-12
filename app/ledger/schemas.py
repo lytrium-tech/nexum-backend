@@ -39,6 +39,8 @@ class LedgerEventCreate(BaseModel):
     # raw_message permitido solo en entrada. Se recomienda omitir o redactar.
     raw_message: str | None = None
     source: str = Field(default="backend")
+    
+    source_message_id: UUID | None = None
 
     occurred_at: datetime | None = None
     # NOTA: `period` fue removido intencionalmente de la creación.

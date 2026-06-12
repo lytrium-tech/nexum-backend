@@ -76,6 +76,10 @@ class FinancialEvent(Base):
         server_default=func.now(),
     )
     command_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    source_message_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        nullable=True,
+    )
 
     # ── Constraints e Índices de lectura (reflejando la DB real) ──────────────
     __table_args__ = (

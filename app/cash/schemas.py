@@ -19,6 +19,8 @@ class CashOperationBase(BaseModel):
     category_id: UUID | None = None
     description: str | None = Field(None, max_length=255)
     source: EventSource = EventSource.API
+    source_message_id: UUID | None = None
+    raw_message: str | None = None
 
 
 class CashIncomeCreate(CashOperationBase):

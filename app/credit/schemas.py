@@ -46,6 +46,8 @@ class CreditCardPurchaseCreate(BaseModel):
     category_id: uuid.UUID | None = None
     description: str | None = None
     installments_total: int = Field(default=1, ge=1)
+    source_message_id: uuid.UUID | None = None
+    raw_message: str | None = None
 
 
 class CreditCardPurchaseResult(BaseModel):
@@ -60,6 +62,8 @@ class CreditCardPurchaseResult(BaseModel):
 class CreditCardPaymentCreate(BaseModel):
     account_id: uuid.UUID
     amount: Decimal = Field(..., gt=0)
+    source_message_id: uuid.UUID | None = None
+    raw_message: str | None = None
 
 
 class CreditCardPaymentResult(BaseModel):

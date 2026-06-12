@@ -44,8 +44,8 @@ class AuthenticatedUser:
     is_dev: bool = False
 
 
-import jwt
-from jwt import PyJWKClient
+import jwt  # noqa: E402
+from jwt import PyJWKClient  # noqa: E402
 
 # Configuración del cliente JWKS para caché
 _jwks_client: PyJWKClient | None = None

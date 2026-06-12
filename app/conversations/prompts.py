@@ -14,6 +14,7 @@ Reglas:
 6. Si cancela algo, asigna "cancel_action".
 7. No asumas entidades si no están mencionadas.
 8. Para 'amount', usa números puros sin comas separadoras de miles ni símbolos. (ej. 50000).
+9. Extrae SIEMPRE TODAS las entidades mencionadas (account, goal, obligation, credit_card, category, amount, etc.) sin importar la intención.
 
 Opciones disponibles para contexto:
 Cuentas: {accounts}

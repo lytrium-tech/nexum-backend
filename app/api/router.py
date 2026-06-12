@@ -51,12 +51,12 @@ class HealthResponse(BaseModel):
     service: str
 
 
-from fastapi import Depends
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import Depends  # noqa: E402
+from sqlalchemy import text  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
-from app.core.database import get_db_session
-from app.core.errors import InfrastructureError
+from app.core.database import get_db_session  # noqa: E402
+from app.core.errors import InfrastructureError  # noqa: E402
 
 
 @api_router.get(

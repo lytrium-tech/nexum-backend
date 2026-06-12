@@ -206,7 +206,7 @@ async def test_pending_action_confirm_unsupported_intent(conversations_service, 
 
     from app.conversations.schemas import PendingActionRead
     action = PendingActionRead(
-        id=action_id, user_id=user_id, intent="create_goal",
+        id=action_id, user_id=user_id, intent="unsupported_intent",
         data={"amount": 500},
         missing_fields=None, status="awaiting_confirmation", command_id=command_id,
         created_at=datetime.now(UTC), updated_at=datetime.now(UTC), expires_at=datetime.now(UTC)
@@ -219,4 +219,119 @@ async def test_pending_action_confirm_unsupported_intent(conversations_service, 
     assert resp.status == "error"
     assert "No se registró ningún movimiento" in resp.response_text
     
-    mock_repo.update_pending_action_status.assert_not_called()
+    mock_repo.update_pending_action_status.assert_called_once_with(action_id, "awaiting_confirmation", confirmation_message_id=mock_repo.save_message.return_value)
+
+@pytest.mark.asyncio
+async def test_pending_action_confirm_create_goal(conversations_service, mock_repo, mock_goals_service):
+    user_id = uuid.uuid4()
+    trace_id = uuid.uuid4()
+    action_id = uuid.uuid4()
+    command_id = uuid.uuid4()
+    req = ConversationalRequest(message="sí", channel="api", pending_action_id=str(action_id))
+    from datetime import UTC, datetime
+
+    from app.conversations.schemas import PendingActionRead
+    action = PendingActionRead(
+        id=action_id, user_id=user_id, intent="create_goal",
+        data={"name": "Viaje", "target_amount": 2000000, "target_date": "2026-12-31"},
+        missing_fields=None, status="awaiting_confirmation", command_id=command_id,
+        created_at=datetime.now(UTC), updated_at=datetime.now(UTC), expires_at=datetime.now(UTC)
+    )
+    mock_repo.get_pending_action.return_value = action
+    mock_repo.save_message.return_value = uuid.uuid4()
+    resp = await conversations_service.handle_message(user_id, req, trace_id)
+    assert resp.status == "completed"
+    mock_goals_service.create_goal.assert_called_once()
+    mock_repo.update_pending_action_status.assert_called_with(action_id, "executed")
+
+@pytest.mark.asyncio
+async def test_pending_action_confirm_create_goal_contribution(conversations_service, mock_repo, mock_goals_service):
+    user_id = uuid.uuid4()
+    trace_id = uuid.uuid4()
+    action_id = uuid.uuid4()
+    command_id = uuid.uuid4()
+    req = ConversationalRequest(message="sí", channel="api", pending_action_id=str(action_id))
+    from datetime import UTC, datetime
+
+    from app.conversations.schemas import PendingActionRead
+    action = PendingActionRead(
+        id=action_id, user_id=user_id, intent="create_goal_contribution",
+        data={"amount": 100000, "account_id": str(uuid.uuid4()), "goal_id": str(uuid.uuid4())},
+        missing_fields=None, status="awaiting_confirmation", command_id=command_id,
+        created_at=datetime.now(UTC), updated_at=datetime.now(UTC), expires_at=datetime.now(UTC)
+    )
+    mock_repo.get_pending_action.return_value = action
+    mock_repo.save_message.return_value = uuid.uuid4()
+    resp = await conversations_service.handle_message(user_id, req, trace_id)
+    assert resp.status == "completed"
+    mock_goals_service.create_contribution.assert_called_once()
+    mock_repo.update_pending_action_status.assert_called_with(action_id, "executed")
+
+@pytest.mark.asyncio
+async def test_pending_action_confirm_create_obligation(conversations_service, mock_repo, mock_obl_service):
+    user_id = uuid.uuid4()
+    trace_id = uuid.uuid4()
+    action_id = uuid.uuid4()
+    command_id = uuid.uuid4()
+    req = ConversationalRequest(message="sí", channel="api", pending_action_id=str(action_id))
+    from datetime import UTC, datetime
+
+    from app.conversations.schemas import PendingActionRead
+    action = PendingActionRead(
+        id=action_id, user_id=user_id, intent="create_obligation",
+        data={"name": "Arriendo", "amount": 900000, "due_day": 15, "frequency": "monthly"},
+        missing_fields=None, status="awaiting_confirmation", command_id=command_id,
+        created_at=datetime.now(UTC), updated_at=datetime.now(UTC), expires_at=datetime.now(UTC)
+    )
+    mock_repo.get_pending_action.return_value = action
+    mock_repo.save_message.return_value = uuid.uuid4()
+    resp = await conversations_service.handle_message(user_id, req, trace_id)
+    assert resp.status == "completed"
+    mock_obl_service.create_obligation.assert_called_once()
+    mock_repo.update_pending_action_status.assert_called_with(action_id, "executed")
+
+@pytest.mark.asyncio
+async def test_pending_action_confirm_create_obligation_payment(conversations_service, mock_repo, mock_obl_service):
+    user_id = uuid.uuid4()
+    trace_id = uuid.uuid4()
+    action_id = uuid.uuid4()
+    command_id = uuid.uuid4()
+    req = ConversationalRequest(message="sí", channel="api", pending_action_id=str(action_id))
+    from datetime import UTC, datetime
+
+    from app.conversations.schemas import PendingActionRead
+    action = PendingActionRead(
+        id=action_id, user_id=user_id, intent="create_obligation_payment",
+        data={"amount": 900000, "account_id": str(uuid.uuid4()), "obligation_id": str(uuid.uuid4())},
+        missing_fields=None, status="awaiting_confirmation", command_id=command_id,
+        created_at=datetime.now(UTC), updated_at=datetime.now(UTC), expires_at=datetime.now(UTC)
+    )
+    mock_repo.get_pending_action.return_value = action
+    mock_repo.save_message.return_value = uuid.uuid4()
+    resp = await conversations_service.handle_message(user_id, req, trace_id)
+    assert resp.status == "completed"
+    mock_obl_service.create_payment.assert_called_once()
+    mock_repo.update_pending_action_status.assert_called_with(action_id, "executed")
+
+@pytest.mark.asyncio
+async def test_pending_action_confirm_create_credit_card_payment(conversations_service, mock_repo, mock_credit_service):
+    user_id = uuid.uuid4()
+    trace_id = uuid.uuid4()
+    action_id = uuid.uuid4()
+    command_id = uuid.uuid4()
+    req = ConversationalRequest(message="sí", channel="api", pending_action_id=str(action_id))
+    from datetime import UTC, datetime
+
+    from app.conversations.schemas import PendingActionRead
+    action = PendingActionRead(
+        id=action_id, user_id=user_id, intent="create_credit_card_payment",
+        data={"amount": 300000, "account_id": str(uuid.uuid4()), "credit_card_id": str(uuid.uuid4())},
+        missing_fields=None, status="awaiting_confirmation", command_id=command_id,
+        created_at=datetime.now(UTC), updated_at=datetime.now(UTC), expires_at=datetime.now(UTC)
+    )
+    mock_repo.get_pending_action.return_value = action
+    mock_repo.save_message.return_value = uuid.uuid4()
+    resp = await conversations_service.handle_message(user_id, req, trace_id)
+    assert resp.status == "completed"
+    mock_credit_service.create_payment.assert_called_once()
+    mock_repo.update_pending_action_status.assert_called_with(action_id, "executed")

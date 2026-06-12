@@ -26,11 +26,13 @@ from app.conversations.schemas import (
     ConversationalResponse,
     PendingActionRead,
 )
-from app.credit.schemas import CreditCardPurchaseCreate
+from app.credit.schemas import CreditCardPaymentCreate, CreditCardPurchaseCreate
 from app.credit.service import CreditCardService
+from app.goals.schemas import GoalContributionCreate, GoalCreate
 from app.goals.service import GoalService
 from app.integrations.gemini_client import gemini_client
 from app.intelligence.service import IntelligenceService
+from app.obligations.schemas import ObligationCreate, ObligationPaymentCreate
 from app.obligations.service import ObligationService
 
 logger = logging.getLogger(__name__)
@@ -104,7 +106,8 @@ class ConversationsService:
             direction="inbound",
             role="user",
             message_text=request.message,
-            external_message_id=request.external_message_id
+            external_message_id=request.external_message_id,
+            trace_id=trace_id
         )
 
         # 4. Traer contexto (Cuentas, Tarjetas, Metas, etc.) para el prompt
@@ -208,6 +211,10 @@ class ConversationsService:
                     resolved_data["amount"] = float(entities.amount)
                 else:
                     missing["amount"] = "Falta el monto de la operación."
+            elif intent == "create_obligation_payment":
+                if entities.amount is not None:
+                    resolved_data["amount"] = float(entities.amount)
+                # If missing, it will be handled when resolving the obligation
             
             # 2. Cuentas (común a ingresos, gastos, aportes, pagos TC)
             if intent in ["create_income", "create_expense", "create_goal_contribution", "create_credit_card_payment", "create_obligation_payment"]:
@@ -246,8 +253,30 @@ class ConversationsService:
                 g = resolve_entity(entities.goal, goals, lambda x: x.name, allow_missing=False)
                 resolved_data["goal_id"] = str(g.id)
                 resolved_data["_goal_name"] = g.name
-            
-            # (El resto de mapeo se extiende siguiendo este patrón)
+            elif intent == "create_goal":
+                if entities.goal:
+                    resolved_data["name"] = entities.goal
+                else:
+                    missing["name"] = "Falta el nombre de la meta."
+                if entities.amount:
+                    resolved_data["target_amount"] = float(entities.amount)
+                else:
+                    missing["target_amount"] = "Falta el monto objetivo de la meta."
+                if entities.target_date:
+                    resolved_data["target_date"] = entities.target_date
+
+            # 6. Obligaciones
+            if intent == "create_obligation":
+                if entities.obligation:
+                    resolved_data["name"] = entities.obligation
+                else:
+                    missing["name"] = "Falta el nombre de la obligación."
+            elif intent == "create_obligation_payment":
+                ob = resolve_entity(entities.obligation, obligations, lambda x: x.name, allow_missing=False)
+                resolved_data["obligation_id"] = str(ob.id)
+                resolved_data["_obligation_name"] = ob.name
+                if "amount" not in resolved_data:
+                    resolved_data["amount"] = float(ob.amount)
 
         except AmbiguousEntityError as e:
             missing["ambiguity"] = e.args[0]
@@ -265,7 +294,8 @@ class ConversationsService:
                 data=resolved_data,
                 missing_fields=missing,
                 status="awaiting_clarification",
-                command_id=None
+                command_id=None,
+                source_message_id=msg_id
             )
             resp_text = " ".join(ambiguous) if ambiguous else "Me faltan algunos datos: " + ", ".join(missing.values())
             return await self._build_and_save_response(
@@ -280,7 +310,8 @@ class ConversationsService:
             data=resolved_data,
             missing_fields=None,
             status="awaiting_confirmation",
-            command_id=command_id
+            command_id=command_id,
+            source_message_id=msg_id
         )
 
         resp_text = self._generate_confirmation_text(intent, resolved_data)
@@ -296,6 +327,16 @@ class ConversationsService:
             return f"Voy a registrar un ingreso de ${data['amount']} en la cuenta {data.get('_account_name', 'default')}. ¿Confirmas?"
         elif intent == "create_credit_card_purchase":
             return f"Voy a registrar una compra por ${data['amount']} con la tarjeta {data['_cc_name']}. ¿Confirmas?"
+        elif intent == "create_credit_card_payment":
+            return f"Voy a registrar el pago de la tarjeta {data.get('_cc_name', '')} por ${data.get('amount')} desde la cuenta {data.get('_account_name', '')}. ¿Confirmas?"
+        elif intent == "create_goal":
+            return f"Voy a crear la meta '{data.get('name')}' por ${data.get('target_amount')}. ¿Confirmas?"
+        elif intent == "create_goal_contribution":
+            return f"Voy a aportar ${data.get('amount')} a la meta '{data.get('_goal_name', '')}' desde la cuenta {data.get('_account_name', '')}. ¿Confirmas?"
+        elif intent == "create_obligation":
+            return f"Voy a crear la obligación '{data.get('name')}' por ${data.get('amount')}. ¿Confirmas?"
+        elif intent == "create_obligation_payment":
+            return f"Voy a registrar el pago de la obligación '{data.get('_obligation_name', '')}' por ${data.get('amount')} desde la cuenta {data.get('_account_name', '')}. ¿Confirmas?"
         return "Voy a registrar esta operación. ¿Confirmas?"
 
     async def _handle_pending_action_flow(
@@ -317,7 +358,8 @@ class ConversationsService:
             direction="inbound",
             role="user",
             message_text=request.message,
-            external_message_id=request.external_message_id
+            external_message_id=request.external_message_id,
+            trace_id=trace_id
         )
 
         if action.status == "executed":
@@ -351,9 +393,18 @@ class ConversationsService:
         
         if classification == "confirm":
             if action.status == "awaiting_confirmation":
+                # Persistir confirmation_message_id ANTES de ejecutar
+                await self.repo.update_pending_action_status(action.id, "awaiting_confirmation", confirmation_message_id=msg_id)
                 try:
-                    # Ejecutar
-                    await self._execute_financial_action(user_id, action)
+                    # Retrieve the original message for raw_message
+                    raw_msg = None
+                    if action.source_message_id:
+                        original_msg_data = await self.repo.get_message_by_id(action.source_message_id)
+                        if original_msg_data:
+                            raw_msg = original_msg_data.get("message")
+                    
+                    # Ejecutar (se le pasa action pero también msg_id para la trazabilidad y raw_message)
+                    await self._execute_financial_action(user_id, action, source_msg_id=action.source_message_id, raw_msg=raw_msg)
                     await self.repo.update_pending_action_status(action.id, "executed")
                     return await self._build_and_save_response(
                         user_id, msg_id, request, "¡Operación registrada con éxito!",
@@ -373,7 +424,9 @@ class ConversationsService:
             action.intent, "awaiting_confirmation", trace_id, pending_action_id=action.id
         )
 
-    async def _execute_financial_action(self, user_id: uuid.UUID, action: PendingActionRead):
+    async def _execute_financial_action(
+        self, user_id: uuid.UUID, action: PendingActionRead, source_msg_id: uuid.UUID | None = None, raw_msg: str | None = None
+    ):
         intent = action.intent
         data = action.data
         command_id = action.command_id
@@ -384,6 +437,8 @@ class ConversationsService:
                 account_id=uuid.UUID(data["account_id"]),
                 category_id=uuid.UUID(data["category_id"]) if "category_id" in data else None,
                 description=data.get("description"),
+                source_message_id=source_msg_id,
+                raw_message=raw_msg,
             )
             await self.cash_service.create_expense(user_id, dto, command_id)
         elif intent == "create_income":
@@ -392,17 +447,60 @@ class ConversationsService:
                 account_id=uuid.UUID(data["account_id"]),
                 category_id=uuid.UUID(data["category_id"]) if "category_id" in data else None,
                 description=data.get("description"),
+                source_message_id=source_msg_id,
+                raw_message=raw_msg,
             )
             await self.cash_service.create_income(user_id, dto, command_id)
         elif intent == "create_credit_card_purchase":
             dto = CreditCardPurchaseCreate(
                 amount=Decimal(str(data["amount"])),
-                installments_total=data.get("installments_total", 1)
+                installments_total=data.get("installments_total", 1),
+                source_message_id=source_msg_id,
+                raw_message=raw_msg,
             )
             await self.credit_service.create_purchase(user_id, uuid.UUID(data["credit_card_id"]), dto, str(command_id))
+        elif intent == "create_goal":
+            dto = GoalCreate(
+                name=data["name"],
+                target_amount=Decimal(str(data["target_amount"])),
+                target_date=data.get("target_date")
+            )
+            await self.goals_service.create_goal(user_id, dto)
+        elif intent == "create_goal_contribution":
+            dto = GoalContributionCreate(
+                amount=Decimal(str(data["amount"])),
+                account_id=uuid.UUID(data["account_id"]),
+                source_message_id=source_msg_id,
+                raw_message=raw_msg,
+            )
+            await self.goals_service.create_contribution(user_id, uuid.UUID(data["goal_id"]), dto, str(command_id))
+        elif intent == "create_obligation":
+            dto = ObligationCreate(
+                name=data["name"],
+                amount=Decimal(str(data["amount"])),
+                due_day=data.get("due_day"),
+                frequency=data.get("frequency"),
+                category_id=uuid.UUID(data["category_id"]) if "category_id" in data else None
+            )
+            await self.obl_service.create_obligation(user_id, dto)
+        elif intent == "create_obligation_payment":
+            dto = ObligationPaymentCreate(
+                amount=Decimal(str(data["amount"])),
+                account_id=uuid.UUID(data["account_id"]),
+                source_message_id=source_msg_id,
+                raw_message=raw_msg,
+            )
+            await self.obl_service.create_payment(user_id, uuid.UUID(data["obligation_id"]), dto, str(command_id))
+        elif intent == "create_credit_card_payment":
+            dto = CreditCardPaymentCreate(
+                amount=Decimal(str(data["amount"])),
+                account_id=uuid.UUID(data["account_id"]),
+                source_message_id=source_msg_id,
+                raw_message=raw_msg,
+            )
+            await self.credit_service.create_payment(user_id, uuid.UUID(data["credit_card_id"]), dto, command_id)
         else:
-            raise UnsupportedConversationalIntentError(f"Intent {intent} no soportado para ejecución automática.")
-        # Add other intents...
+            raise UnsupportedConversationalIntentError(f"Operación no soportada automáticamente: {intent}")
 
     async def _build_and_save_response(
         self, user_id: uuid.UUID, msg_id: uuid.UUID, req: ConversationalRequest, 
@@ -428,6 +526,7 @@ class ConversationsService:
             message_text=response_text,
             intent=intent,
             response_data=resp.model_dump(mode="json"),
-            external_message_id=req.external_message_id
+            external_message_id=req.external_message_id,
+            trace_id=trace_id
         )
         return resp
