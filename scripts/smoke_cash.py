@@ -48,8 +48,8 @@ async def check_db_state(account_id: str, command_id: str):
                 "(debe ser 1 a pesar del retry)"
             )
 
-            txs = await conn.execute(text("SELECT count(*) FROM public.transactions"))
-            logger.info(f"Filas en public.transactions: {txs.scalar()} (debe ser 0)")
+            txs = await conn.execute(text("SELECT count(*) FROM public.financial_events WHERE event_type IN ('income', 'expense')"))
+            logger.info(f"Filas en public.financial_events (cash): {txs.scalar()}")
     except Exception as e:
         logger.error(f"Error consultando BD: {type(e).__name__}")
     finally:

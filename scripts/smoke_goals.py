@@ -45,8 +45,8 @@ async def check_db_state(goal_id: str, command_id: str):
                 "(debe ser 1 a pesar del retry)"
             )
 
-            txs = await conn.execute(text("SELECT count(*) FROM public.transactions"))
-            logger.info(f" -> Filas en public.transactions: {txs.scalar()} (debe ser 0)")
+            txs = await conn.execute(text("SELECT count(*) FROM public.financial_events WHERE event_type = 'goal_contribution'"))
+            logger.info(f" -> Filas en public.financial_events (goal_contributions): {txs.scalar()}")
     finally:
         await engine.dispose()
 
