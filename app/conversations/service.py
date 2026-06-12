@@ -14,6 +14,7 @@ from app.conversations.entity_resolver import (
     EntityNotFoundError,
     resolve_entity,
 )
+from app.conversations.exceptions import UnsupportedConversationalIntentError
 from app.conversations.intent_catalog import (
     is_read_intent,
     is_write_intent,
@@ -350,13 +351,21 @@ class ConversationsService:
         
         if classification == "confirm":
             if action.status == "awaiting_confirmation":
-                # Ejecutar
-                await self._execute_financial_action(user_id, action)
-                await self.repo.update_pending_action_status(action.id, "executed")
-                return await self._build_and_save_response(
-                    user_id, msg_id, request, "¡Operación registrada con éxito!",
-                    action.intent, "completed", trace_id
-                )
+                try:
+                    # Ejecutar
+                    await self._execute_financial_action(user_id, action)
+                    await self.repo.update_pending_action_status(action.id, "executed")
+                    return await self._build_and_save_response(
+                        user_id, msg_id, request, "¡Operación registrada con éxito!",
+                        action.intent, "completed", trace_id
+                    )
+                except UnsupportedConversationalIntentError as e:
+                    logger.warning(f"Fail-closed: {e}")
+                    return await self._build_and_save_response(
+                        user_id, msg_id, request,
+                        "Todavía no puedo ejecutar esa operación automáticamente. No se registró ningún movimiento.",
+                        action.intent, "error", trace_id
+                    )
         
         # Unknown
         return await self._build_and_save_response(
@@ -391,6 +400,8 @@ class ConversationsService:
                 installments_total=data.get("installments_total", 1)
             )
             await self.credit_service.create_purchase(user_id, uuid.UUID(data["credit_card_id"]), dto, str(command_id))
+        else:
+            raise UnsupportedConversationalIntentError(f"Intent {intent} no soportado para ejecución automática.")
         # Add other intents...
 
     async def _build_and_save_response(
