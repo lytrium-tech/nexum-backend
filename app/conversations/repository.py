@@ -174,3 +174,31 @@ class ConversationsRepository:
             WHERE id = :id
         """)
         await self.session.execute(query, {"id": action_id, "status": status})
+
+    async def get_latest_open_pending_action(self, user_id: uuid.UUID) -> PendingActionRead | None:
+        query = text("""
+            SELECT id, user_id, intent, data, missing_fields, status, command_id, created_at, updated_at, expires_at
+            FROM public.pending_actions
+            WHERE user_id = :user_id
+              AND status IN ('awaiting_confirmation', 'awaiting_clarification')
+              AND expires_at > now()
+            ORDER BY created_at DESC
+            LIMIT 1
+        """)
+        result = await self.session.execute(query, {"user_id": user_id})
+        row = result.mappings().first()
+        if row:
+            # Validate there is exactly one? The user instructions said: "si no llega y existe exactamente una accion abierta". 
+            # We will fetch latest, but we could also check count. Let's just do exactly one.
+            count_query = text("""
+                SELECT count(*) 
+                FROM public.pending_actions
+                WHERE user_id = :user_id
+                  AND status IN ('awaiting_confirmation', 'awaiting_clarification')
+                  AND expires_at > now()
+            """)
+            count_res = await self.session.execute(count_query, {"user_id": user_id})
+            count = count_res.scalar()
+            if count == 1:
+                return PendingActionRead(**dict(row))
+        return None

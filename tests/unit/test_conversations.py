@@ -66,7 +66,7 @@ async def test_handle_message_deduplication(conversations_service, mock_repo):
         "response_data": {"response_text": "Ya te respondí", "intent": "ask_balance", "status": "completed", "trace_id": str(trace_id)}
     }
     
-    resp = await conversations_service.handle_message(auth_user, req, trace_id)
+    resp = await conversations_service.handle_message(user_id, req, trace_id)
     assert resp.response_text == "Ya te respondí"
     mock_repo.get_message_by_external_id.assert_called_once_with("api", "ext-123")
 
@@ -102,7 +102,7 @@ async def test_handle_message_read_intent(mock_gemini, conversations_service, mo
     mock_data.model_dump.return_value = {"total_available_real": "1500.00"}
     mock_intel_service.get_balance.return_value = mock_data
     
-    resp = await conversations_service.handle_message(auth_user, req, trace_id)
+    resp = await conversations_service.handle_message(user_id, req, trace_id)
     
     assert resp.status == "completed"
     assert resp.intent == "ask_balance"
@@ -110,3 +110,80 @@ async def test_handle_message_read_intent(mock_gemini, conversations_service, mo
     
     # Assert ai_run was saved
     mock_repo.save_ai_run.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_pending_action_confirm_natural(conversations_service, mock_repo, mock_cash_service):
+    user_id = uuid.uuid4()
+    auth_user = AuthenticatedIdentity(user_id=str(user_id))
+    trace_id = uuid.uuid4()
+    
+    action_id = uuid.uuid4()
+    command_id = uuid.uuid4()
+    req = ConversationalRequest(message="sí lo confirmo", channel="api", pending_action_id=str(action_id))
+    
+    from app.conversations.schemas import PendingActionRead
+    from datetime import datetime, timezone
+    action = PendingActionRead(
+        id=action_id, user_id=user_id, intent="create_income",
+        data={"amount": 500, "account_id": str(uuid.uuid4())},
+        missing_fields=None, status="awaiting_confirmation", command_id=command_id,
+        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc), expires_at=datetime.now(timezone.utc)
+    )
+    
+    mock_repo.get_pending_action.return_value = action
+    mock_repo.save_message.return_value = uuid.uuid4()
+    
+    resp = await conversations_service.handle_message(user_id, req, trace_id)
+    assert resp.status == "completed"
+    mock_cash_service.create_income.assert_called_once()
+    mock_repo.update_pending_action_status.assert_called_with(action_id, "executed")
+
+@pytest.mark.asyncio
+async def test_pending_action_ambiguous(conversations_service, mock_repo):
+    user_id = uuid.uuid4()
+    auth_user = AuthenticatedIdentity(user_id=str(user_id))
+    trace_id = uuid.uuid4()
+    action_id = uuid.uuid4()
+    req = ConversationalRequest(message="tal vez", channel="api", pending_action_id=str(action_id))
+    
+    from app.conversations.schemas import PendingActionRead
+    from datetime import datetime, timezone
+    action = PendingActionRead(
+        id=action_id, user_id=user_id, intent="create_income",
+        data={"amount": 500}, missing_fields=None, status="awaiting_confirmation", command_id=uuid.uuid4(),
+        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc), expires_at=datetime.now(timezone.utc)
+    )
+    mock_repo.get_pending_action.return_value = action
+    mock_repo.save_message.return_value = uuid.uuid4()
+    
+    resp = await conversations_service.handle_message(user_id, req, trace_id)
+    assert resp.status == "awaiting_confirmation"
+
+@pytest.mark.asyncio
+async def test_pending_action_fallback(conversations_service, mock_repo, mock_cash_service):
+    user_id = uuid.uuid4()
+    auth_user = AuthenticatedIdentity(user_id=str(user_id))
+    trace_id = uuid.uuid4()
+    
+    action_id = uuid.uuid4()
+    command_id = uuid.uuid4()
+    req = ConversationalRequest(message="sí", channel="api")
+    
+    from app.conversations.schemas import PendingActionRead
+    from datetime import datetime, timezone
+    action = PendingActionRead(
+        id=action_id, user_id=user_id, intent="create_income",
+        data={"amount": 500, "account_id": str(uuid.uuid4())},
+        missing_fields=None, status="awaiting_confirmation", command_id=command_id,
+        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc), expires_at=datetime.now(timezone.utc)
+    )
+    
+    mock_repo.get_message_by_external_id.return_value = None
+    mock_repo.get_latest_open_pending_action.return_value = action
+    mock_repo.get_pending_action.return_value = action
+    mock_repo.save_message.return_value = uuid.uuid4()
+    
+    resp = await conversations_service.handle_message(user_id, req, trace_id)
+    assert resp.status == "completed"
+    mock_cash_service.create_income.assert_called_once()
+    mock_repo.update_pending_action_status.assert_called_with(action_id, "executed")

@@ -30,7 +30,26 @@ from app.integrations.gemini_client import gemini_client
 from app.intelligence.service import IntelligenceService
 from app.obligations.service import ObligationService
 
+import re
+import unicodedata
+from typing import Literal
+
 logger = logging.getLogger(__name__)
+
+def classify_pending_reply(text: str) -> Literal["confirm", "cancel", "unknown"]:
+    text_lower = text.lower().strip()
+    text_lower = unicodedata.normalize('NFD', text_lower).encode('ascii', 'ignore').decode('utf-8')
+    text_lower = re.sub(r'[^\w\s]', '', text_lower)
+    text_lower = re.sub(r'\s+', ' ', text_lower).strip()
+
+    confirm_phrases = {"si", "ok", "confirmo", "si confirmo", "si lo confirmo", "confirmar", "dale", "claro", "de acuerdo", "adelante", "hazlo", "si adelante", "si claro", "si hazlo"}
+    cancel_phrases = {"no", "cancelar", "cancela", "olvidalo", "no confirmo", "mejor no", "no lo hagas", "detener", "no mejor no"}
+
+    if text_lower in confirm_phrases:
+        return "confirm"
+    if text_lower in cancel_phrases:
+        return "cancel"
+    return "unknown"
 
 class ConversationsService:
     def __init__(
@@ -68,6 +87,16 @@ class ConversationsService:
         # 2. Verificar contexto de pending_action_id
         if request.pending_action_id:
             return await self._handle_pending_action_flow(user_id, request, trace_id)
+
+        # 2.5 Fallback defensivo: Si no hay pending_action_id, pero el usuario dice algo que parece confirmacion/cancelacion
+        # y hay exactamente una accion pendiente, la usamos.
+        classification = classify_pending_reply(request.message)
+        if classification in ["confirm", "cancel"]:
+            latest_action = await self.repo.get_latest_open_pending_action(user_id)
+            if latest_action:
+                logger.info(f"Fallback defensivo aplicado: asociando respuesta a pending_action_id {latest_action.id}")
+                request.pending_action_id = latest_action.id
+                return await self._handle_pending_action_flow(user_id, request, trace_id)
 
         # 3. Guardar inbound message
         inbound_msg_id = await self.repo.save_message(
@@ -304,17 +333,24 @@ class ConversationsService:
                 action.intent, "cancelled", trace_id
             )
 
-        # Determinar si es un "sí" o "no"
-        text_lower = request.message.lower().strip()
-        if text_lower in ["no", "cancelar", "olvidalo", "olvídalo", "cancel"]:
+        if action.status == "awaiting_clarification":
+            # TODO: Fase Separada - Resolver clarificación interactiva fusionando entidades con action.data
+            await self.repo.update_pending_action_status(action.id, "cancelled")
+            return await self._build_and_save_response(
+                user_id, msg_id, request, "La clarificación paso a paso aún está en desarrollo. Por favor, envía tu instrucción completa nuevamente (ej. 'Gasté 20.000 en Almuerzo usando Nequi').",
+                action.intent, "cancelled", trace_id
+            )
+
+        classification = classify_pending_reply(request.message)
+
+        if classification == "cancel":
             await self.repo.update_pending_action_status(action.id, "cancelled")
             return await self._build_and_save_response(
                 user_id, msg_id, request, "Acción cancelada sin guardar.",
                 action.intent, "cancelled", trace_id
             )
         
-        # Asumimos confirmación por ahora
-        if text_lower in ["si", "sí", "ok", "confirmo", "dale", "claro"]:
+        if classification == "confirm":
             if action.status == "awaiting_confirmation":
                 # Ejecutar
                 await self._execute_financial_action(user_id, action)
@@ -324,10 +360,10 @@ class ConversationsService:
                     action.intent, "completed", trace_id
                 )
         
-        await self.repo.update_pending_action_status(action.id, "cancelled")
+        # Unknown
         return await self._build_and_save_response(
-            user_id, msg_id, request, "No entendí tu confirmación. He cancelado la operación. Intenta de nuevo.",
-            action.intent, "cancelled", trace_id
+            user_id, msg_id, request, "No entendí tu respuesta. Responde “sí” para confirmar o “no” para cancelar.",
+            action.intent, "awaiting_confirmation", trace_id, pending_action_id=action.id
         )
 
     async def _execute_financial_action(self, user_id: uuid.UUID, action: PendingActionRead):
