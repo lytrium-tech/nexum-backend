@@ -65,7 +65,7 @@ async def run_smoke():
         # 2. Categoría
         r = await client.post(
             f"{base_url}/api/v1/categories",
-            json={"name": "Smoke Obligation Cat", "type": "expense"},
+            json={"name": f"Smoke Obligation Cat {uuid.uuid4().hex[:6]}", "type": "expense"},
             headers=headers,
         )
         if r.status_code == 409:
@@ -77,7 +77,7 @@ async def run_smoke():
         # 3. Cuenta
         r = await client.post(
             f"{base_url}/api/v1/accounts",
-            json={"name": "Smoke Obligation Account", "type": "bank"},
+            json={"name": f"Smoke Obligation Account {uuid.uuid4().hex[:6]}", "type": "bank"},
             headers=headers,
         )
         r.raise_for_status()
@@ -103,7 +103,7 @@ async def run_smoke():
         # 6. Crear obligación monthly
         r = await client.post(
             f"{base_url}/api/v1/obligations",
-            json={"name": "Obligacion Monthly", "amount": "100", "frequency": "monthly"},
+            json={"name": f"Obligacion Monthly {uuid.uuid4().hex[:6]}", "amount": "100", "frequency": "monthly"},
             headers=headers,
         )
         r.raise_for_status()
@@ -183,7 +183,7 @@ async def run_smoke():
         # 11. Crear obligación once
         r = await client.post(
             f"{base_url}/api/v1/obligations",
-            json={"name": "Obligacion Once", "amount": "50", "frequency": "once"},
+            json={"name": f"Obligacion Once {uuid.uuid4().hex[:6]}", "amount": "50", "frequency": "once"},
             headers=headers,
         )
         r.raise_for_status()

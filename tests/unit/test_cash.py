@@ -53,7 +53,7 @@ def cash_service(mock_uow, mock_ledger_repo, mock_account_repo, mock_category_re
 @pytest.mark.asyncio
 async def test_create_income_success(cash_service, mock_account_repo, mock_ledger_repo):
     user_id = uuid.uuid4()
-    auth_user = AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
+    AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
     account_id = uuid.uuid4()
     command_id = uuid.uuid4()
 
@@ -81,7 +81,7 @@ async def test_create_income_success(cash_service, mock_account_repo, mock_ledge
 @pytest.mark.asyncio
 async def test_create_expense_success(cash_service, mock_account_repo, mock_ledger_repo):
     user_id = uuid.uuid4()
-    auth_user = AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
+    AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
     account_id = uuid.uuid4()
     command_id = uuid.uuid4()
 
@@ -107,7 +107,7 @@ async def test_create_expense_success(cash_service, mock_account_repo, mock_ledg
 @pytest.mark.asyncio
 async def test_create_expense_insufficient_funds(cash_service, mock_account_repo, mock_ledger_repo):
     user_id = uuid.uuid4()
-    auth_user = AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
+    AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
     account_id = uuid.uuid4()
     command_id = uuid.uuid4()
 
@@ -134,7 +134,7 @@ async def test_create_expense_insufficient_funds(cash_service, mock_account_repo
 @pytest.mark.asyncio
 async def test_create_income_idempotent(cash_service, mock_account_repo, mock_ledger_repo):
     user_id = uuid.uuid4()
-    auth_user = AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
+    AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
     account_id = uuid.uuid4()
     command_id = uuid.uuid4()
 
@@ -165,7 +165,7 @@ async def test_create_income_idempotent(cash_service, mock_account_repo, mock_le
 async def test_create_expense_account_forbidden(cash_service, mock_account_repo):
     user_id = uuid.uuid4()
     other_user_id = uuid.uuid4()
-    auth_user = AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
+    AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
     account_id = uuid.uuid4()
     command_id = uuid.uuid4()
 
@@ -215,7 +215,7 @@ async def test_validate_category_global_accepted(
     cash_service, mock_account_repo, mock_ledger_repo, mock_category_repo
 ):
     user_id = uuid.uuid4()
-    auth_user = AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
+    AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
     category_id = uuid.uuid4()
 
     mock_account = MagicMock()
@@ -245,7 +245,7 @@ async def test_validate_category_private_own_accepted(
     cash_service, mock_account_repo, mock_ledger_repo, mock_category_repo
 ):
     user_id = uuid.uuid4()
-    auth_user = AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
+    AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
     category_id = uuid.uuid4()
 
     mock_account = MagicMock()
@@ -274,7 +274,7 @@ async def test_validate_category_private_other_rejected(
     cash_service, mock_account_repo, mock_category_repo
 ):
     user_id = uuid.uuid4()
-    auth_user = AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
+    AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
     category_id = uuid.uuid4()
 
     mock_account = MagicMock()
@@ -298,7 +298,7 @@ async def test_validate_category_not_found_rejected(
     cash_service, mock_account_repo, mock_category_repo
 ):
     user_id = uuid.uuid4()
-    auth_user = AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
+    AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
     category_id = uuid.uuid4()
 
     mock_account = MagicMock()
@@ -320,7 +320,7 @@ async def test_validate_category_none_accepted(
     cash_service, mock_account_repo, mock_ledger_repo, mock_category_repo
 ):
     user_id = uuid.uuid4()
-    auth_user = AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
+    AuthenticatedIdentity(user_id=str(user_id), is_dev=True)
 
     mock_account = MagicMock()
     mock_account.user_id = user_id

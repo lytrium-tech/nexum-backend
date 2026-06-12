@@ -74,7 +74,7 @@ async def smoke_test():
         cat_idempotency = str(uuid.uuid4())
         r = await client.post(
             f"{API_URL}/categories",
-            json={"name": "Smoke Category", "type": "expense"},
+            json={"name": f"Smoke Category {uuid.uuid4().hex[:6]}", "type": "expense"},
             headers={"Idempotency-Key": cat_idempotency},
         )
         if r.status_code not in (200, 201):
@@ -86,7 +86,7 @@ async def smoke_test():
         acc_idempotency = str(uuid.uuid4())
         r = await client.post(
             f"{API_URL}/accounts",
-            json={"name": "Smoke Account", "type": "cash"},
+            json={"name": f"Smoke Account {uuid.uuid4().hex[:6]}", "type": "cash"},
             headers={"Idempotency-Key": acc_idempotency},
         )
         if r.status_code not in (200, 201):

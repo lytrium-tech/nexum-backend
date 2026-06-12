@@ -35,14 +35,14 @@ async def run_smoke():
         acc_resp.raise_for_status()
         accounts = acc_resp.json()
         if not any(a["name"] == "Nequi" for a in accounts):
-            resp = await client.post(f"{BASE_URL}/api/v1/accounts", json={"name": "Nequi", "type": "wallet"}, headers=HEADERS)
+            resp = await client.post(f"{BASE_URL}/api/v1/accounts", json={"name": f"Nequi {uuid.uuid4().hex[:6]}", "type": "wallet"}, headers=HEADERS)
             resp.raise_for_status()
         
         cat_resp = await client.get(f"{BASE_URL}/api/v1/categories", headers=HEADERS)
         cat_resp.raise_for_status()
         categories = cat_resp.json()
         if not any(c["name"] == "Comida" for c in categories):
-            resp = await client.post(f"{BASE_URL}/api/v1/categories", json={"name": "Comida", "type": "expense"}, headers=HEADERS)
+            resp = await client.post(f"{BASE_URL}/api/v1/categories", json={"name": f"Comida {uuid.uuid4().hex[:6]}", "type": "expense"}, headers=HEADERS)
             resp.raise_for_status()
 
         # Darle fondos a Nequi

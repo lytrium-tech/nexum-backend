@@ -5,12 +5,18 @@ from datetime import datetime, timedelta
 
 import httpx
 
+from app.core.config import settings
+
 # Variables de entorno o defaults
 API_HOST = os.getenv("API_HOST", "http://localhost:8000")
-DEV_USER_ID = "00000000-0000-0000-0000-000000000000"
+DEV_USER_ID = str(settings.DEV_USER_ID)
+
+
+from scripts.cleanup_dev import cleanup
 
 
 async def main():
+    await cleanup()
     headers = {"X-User-Id": DEV_USER_ID}
     client = httpx.AsyncClient(timeout=10.0)
 
@@ -19,7 +25,7 @@ async def main():
         print("INFO: Creando cuenta...")
         res = await client.post(
             f"{API_HOST}/api/v1/accounts",
-            json={"name": "Cuenta Principal", "type": "bank", "currency": "COP", "balance": "1000"},
+            json={"name": f"Cuenta Principal {uuid.uuid4().hex[:6]}", "type": "bank", "currency": "COP", "balance": "1000"},
             headers=headers,
         )
         assert res.status_code == 201, res.text
@@ -28,7 +34,7 @@ async def main():
         # 2. Crear Categoria
         res = await client.post(
             f"{API_HOST}/api/v1/categories",
-            json={"name": "General", "type": "expense"},
+            json={"name": f"General {uuid.uuid4().hex[:6]}", "type": "expense"},
             headers=headers,
         )
         assert res.status_code == 201
@@ -57,7 +63,7 @@ async def main():
         target_date = (datetime.now() + timedelta(days=300)).strftime("%Y-%m-%d")
         res = await client.post(
             f"{API_HOST}/api/v1/goals",
-            json={"name": "Viaje", "target_amount": "1000", "target_date": target_date},
+            json={"name": f"Viaje {uuid.uuid4().hex[:6]}", "target_amount": "1000", "target_date": target_date},
             headers=headers,
         )
         assert res.status_code == 201
@@ -74,7 +80,7 @@ async def main():
         print("INFO: Creando Obligation...")
         res = await client.post(
             f"{API_HOST}/api/v1/obligations",
-            json={"name": "Internet", "amount": "50", "frequency": "monthly", "due_day": 15},
+            json={"name": f"Internet {uuid.uuid4().hex[:6]}", "amount": "50", "frequency": "monthly", "due_day": 15},
             headers=headers,
         )
         assert res.status_code == 201
@@ -152,7 +158,7 @@ async def main():
         assert float(debt["total_estimated_credit_card_debt"]) == 300.0
         assert float(debt["total_monthly_cc_payment"]) == 100.0
         assert len(debt["pending_commitments"]) == 1
-        assert debt["pending_commitments"][0]["name"] == "Internet"
+        assert debt["pending_commitments"][0]["name"].startswith("Internet")
 
         # Free Money
         res = await client.get(f"{API_HOST}/api/v1/intelligence/free-money", headers=headers)

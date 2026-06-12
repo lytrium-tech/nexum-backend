@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -58,7 +59,7 @@ def conversations_service(mock_repo, mock_intel_service, mock_cash_service, mock
 @pytest.mark.asyncio
 async def test_handle_message_deduplication(conversations_service, mock_repo):
     user_id = uuid.uuid4()
-    auth_user = AuthenticatedIdentity(user_id=str(user_id))
+    AuthenticatedIdentity(user_id=str(user_id))
     trace_id = uuid.uuid4()
     req = ConversationalRequest(message="Hola", channel="api", external_message_id="ext-123")
     
@@ -75,7 +76,7 @@ async def test_handle_message_deduplication(conversations_service, mock_repo):
 @patch("app.conversations.service.gemini_client")
 async def test_handle_message_read_intent(mock_gemini, conversations_service, mock_intel_service, mock_repo):
     user_id = uuid.uuid4()
-    auth_user = AuthenticatedIdentity(user_id=str(user_id))
+    AuthenticatedIdentity(user_id=str(user_id))
     trace_id = uuid.uuid4()
     msg_id = uuid.uuid4()
     req = ConversationalRequest(message="¿Cuánto tengo?", channel="api")
@@ -114,20 +115,21 @@ async def test_handle_message_read_intent(mock_gemini, conversations_service, mo
 @pytest.mark.asyncio
 async def test_pending_action_confirm_natural(conversations_service, mock_repo, mock_cash_service):
     user_id = uuid.uuid4()
-    auth_user = AuthenticatedIdentity(user_id=str(user_id))
+    AuthenticatedIdentity(user_id=str(user_id))
     trace_id = uuid.uuid4()
     
     action_id = uuid.uuid4()
     command_id = uuid.uuid4()
     req = ConversationalRequest(message="sí lo confirmo", channel="api", pending_action_id=str(action_id))
     
+    from datetime import datetime
+
     from app.conversations.schemas import PendingActionRead
-    from datetime import datetime, timezone
     action = PendingActionRead(
         id=action_id, user_id=user_id, intent="create_income",
         data={"amount": 500, "account_id": str(uuid.uuid4())},
         missing_fields=None, status="awaiting_confirmation", command_id=command_id,
-        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc), expires_at=datetime.now(timezone.utc)
+        created_at=datetime.now(UTC), updated_at=datetime.now(UTC), expires_at=datetime.now(UTC)
     )
     
     mock_repo.get_pending_action.return_value = action
@@ -141,17 +143,18 @@ async def test_pending_action_confirm_natural(conversations_service, mock_repo, 
 @pytest.mark.asyncio
 async def test_pending_action_ambiguous(conversations_service, mock_repo):
     user_id = uuid.uuid4()
-    auth_user = AuthenticatedIdentity(user_id=str(user_id))
+    AuthenticatedIdentity(user_id=str(user_id))
     trace_id = uuid.uuid4()
     action_id = uuid.uuid4()
     req = ConversationalRequest(message="tal vez", channel="api", pending_action_id=str(action_id))
     
+    from datetime import datetime
+
     from app.conversations.schemas import PendingActionRead
-    from datetime import datetime, timezone
     action = PendingActionRead(
         id=action_id, user_id=user_id, intent="create_income",
         data={"amount": 500}, missing_fields=None, status="awaiting_confirmation", command_id=uuid.uuid4(),
-        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc), expires_at=datetime.now(timezone.utc)
+        created_at=datetime.now(UTC), updated_at=datetime.now(UTC), expires_at=datetime.now(UTC)
     )
     mock_repo.get_pending_action.return_value = action
     mock_repo.save_message.return_value = uuid.uuid4()
@@ -162,20 +165,21 @@ async def test_pending_action_ambiguous(conversations_service, mock_repo):
 @pytest.mark.asyncio
 async def test_pending_action_fallback(conversations_service, mock_repo, mock_cash_service):
     user_id = uuid.uuid4()
-    auth_user = AuthenticatedIdentity(user_id=str(user_id))
+    AuthenticatedIdentity(user_id=str(user_id))
     trace_id = uuid.uuid4()
     
     action_id = uuid.uuid4()
     command_id = uuid.uuid4()
     req = ConversationalRequest(message="sí", channel="api")
     
+    from datetime import datetime
+
     from app.conversations.schemas import PendingActionRead
-    from datetime import datetime, timezone
     action = PendingActionRead(
         id=action_id, user_id=user_id, intent="create_income",
         data={"amount": 500, "account_id": str(uuid.uuid4())},
         missing_fields=None, status="awaiting_confirmation", command_id=command_id,
-        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc), expires_at=datetime.now(timezone.utc)
+        created_at=datetime.now(UTC), updated_at=datetime.now(UTC), expires_at=datetime.now(UTC)
     )
     
     mock_repo.get_message_by_external_id.return_value = None

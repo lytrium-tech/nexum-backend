@@ -26,6 +26,24 @@ async def cleanup():
     try:
         async with engine.begin() as conn:
             res = await conn.execute(
+                text("DELETE FROM public.pending_actions WHERE user_id = :id"),
+                {"id": dev_user_id},
+            )
+            logger.info(f"Pending actions eliminados: {res.rowcount}")
+
+            res = await conn.execute(
+                text("DELETE FROM public.ai_runs WHERE user_id = :id"),
+                {"id": dev_user_id},
+            )
+            logger.info(f"AI Runs eliminados: {res.rowcount}")
+
+            res = await conn.execute(
+                text("DELETE FROM public.messages WHERE user_id = :id"),
+                {"id": dev_user_id},
+            )
+            logger.info(f"Messages eliminados: {res.rowcount}")
+
+            res = await conn.execute(
                 text("DELETE FROM public.credit_card_transactions WHERE user_id = :id"),
                 {"id": dev_user_id},
             )
@@ -73,14 +91,10 @@ async def cleanup():
             )
             logger.info(f"Cuentas eliminadas: {res.rowcount}")
 
-            res = await conn.execute(
-                text("DELETE FROM public.users WHERE id = :id AND auth_user_id IS NULL"),
-                {"id": dev_user_id},
-            )
-            logger.info(f"Usuarios de prueba puros eliminados: {res.rowcount}")
+
 
     except Exception as e:
-        logger.error(f"Fallo en limpieza: {type(e).__name__}")
+        logger.error(f"Fallo en limpieza: {e}")
     finally:
         await engine.dispose()
         logger.info("Limpieza completada.")

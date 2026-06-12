@@ -66,7 +66,7 @@ async def run_smoke():
         # 2. Categoría
         r = await client.post(
             f"{base_url}/api/v1/categories",
-            json={"name": "Smoke Goal Cat", "type": "goal"},
+            json={"name": f"Smoke Goal Cat {uuid.uuid4().hex[:6]}", "type": "goal"},
             headers=headers,
         )
         if r.status_code == 409:
@@ -78,7 +78,7 @@ async def run_smoke():
         # 3. Cuenta
         r = await client.post(
             f"{base_url}/api/v1/accounts",
-            json={"name": "Smoke Goal Account", "type": "bank"},
+            json={"name": f"Smoke Goal Account {uuid.uuid4().hex[:6]}", "type": "bank"},
             headers=headers,
         )
         r.raise_for_status()

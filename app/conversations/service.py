@@ -1,7 +1,9 @@
 import logging
+import re
+import unicodedata
 import uuid
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,10 +31,6 @@ from app.goals.service import GoalService
 from app.integrations.gemini_client import gemini_client
 from app.intelligence.service import IntelligenceService
 from app.obligations.service import ObligationService
-
-import re
-import unicodedata
-from typing import Literal
 
 logger = logging.getLogger(__name__)
 
