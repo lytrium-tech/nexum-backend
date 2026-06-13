@@ -29,10 +29,9 @@ class ConversationsRepository:
         result = await self.session.execute(query, {"channel": channel, "external_message_id": external_message_id})
         row = result.fetchone()
         if row:
-            import json
             return {
                 "id": row[0],
-                "response_data": json.loads(row[1]) if row[1] else {}
+                "response_data": row[1] if row[1] else {}
             }
         return None
 
@@ -156,9 +155,9 @@ class ConversationsRepository:
         import json
         query = text("""
             INSERT INTO public.pending_actions (
-                user_id, intent, data, missing_fields, status, command_id, source_message_id
+                user_id, intent, data, missing_fields, status, command_id, source_message_id, expires_at
             ) VALUES (
-                :user_id, :intent, :data, :missing_fields, :status, :command_id, :source_message_id
+                :user_id, :intent, :data, :missing_fields, :status, :command_id, :source_message_id, now() + interval '15 minutes'
             ) RETURNING id, user_id, intent, data, missing_fields, status, command_id, created_at, updated_at, expires_at, source_message_id, confirmation_message_id
         """)
         
@@ -206,30 +205,53 @@ class ConversationsRepository:
             """)
             await self.session.execute(query, {"id": action_id, "status": status})
 
+    async def update_pending_action(
+        self, action_id: uuid.UUID, data: dict, missing_fields: dict | None, status: str, command_id: uuid.UUID | None, intent: str | None = None
+    ) -> None:
+        import json
+        if intent:
+            query = text("""
+                UPDATE public.pending_actions
+                SET data = :data, missing_fields = :missing_fields, status = :status, command_id = :command_id, intent = :intent, updated_at = now()
+                WHERE id = :id
+            """)
+            await self.session.execute(query, {
+                "id": action_id,
+                "data": json.dumps(data),
+                "missing_fields": json.dumps(missing_fields) if missing_fields else None,
+                "status": status,
+                "command_id": command_id,
+                "intent": intent
+            })
+        else:
+            query = text("""
+                UPDATE public.pending_actions
+                SET data = :data, missing_fields = :missing_fields, status = :status, command_id = :command_id, updated_at = now()
+                WHERE id = :id
+            """)
+            await self.session.execute(query, {
+                "id": action_id,
+                "data": json.dumps(data),
+                "missing_fields": json.dumps(missing_fields) if missing_fields else None,
+                "status": status,
+                "command_id": command_id
+            })
+
     async def get_latest_open_pending_action(self, user_id: uuid.UUID) -> PendingActionRead | None:
+        # Mantenemos este método por retrocompatibilidad o lo eliminamos si no se usa
+        actions = await self.get_open_pending_actions(user_id)
+        if len(actions) == 1:
+            return actions[0]
+        return None
+
+    async def get_open_pending_actions(self, user_id: uuid.UUID) -> list[PendingActionRead]:
         query = text("""
             SELECT id, user_id, intent, data, missing_fields, status, command_id, created_at, updated_at, expires_at, source_message_id, confirmation_message_id
             FROM public.pending_actions
             WHERE user_id = :user_id
               AND status IN ('awaiting_confirmation', 'awaiting_clarification')
-              AND expires_at > now()
-            ORDER BY created_at DESC
-            LIMIT 1
+              AND (expires_at IS NULL OR expires_at > now())
+            ORDER BY created_at ASC
         """)
         result = await self.session.execute(query, {"user_id": user_id})
-        row = result.mappings().first()
-        if row:
-            # Validate there is exactly one? The user instructions said: "si no llega y existe exactamente una accion abierta". 
-            # We will fetch latest, but we could also check count. Let's just do exactly one.
-            count_query = text("""
-                SELECT count(*) 
-                FROM public.pending_actions
-                WHERE user_id = :user_id
-                  AND status IN ('awaiting_confirmation', 'awaiting_clarification')
-                  AND expires_at > now()
-            """)
-            count_res = await self.session.execute(count_query, {"user_id": user_id})
-            count = count_res.scalar()
-            if count == 1:
-                return PendingActionRead(**dict(row))
-        return None
+        return [PendingActionRead(**dict(row)) for row in result.mappings().all()]

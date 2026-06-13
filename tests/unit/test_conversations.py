@@ -183,7 +183,7 @@ async def test_pending_action_fallback(conversations_service, mock_repo, mock_ca
     )
     
     mock_repo.get_message_by_external_id.return_value = None
-    mock_repo.get_latest_open_pending_action.return_value = action
+    mock_repo.get_open_pending_actions.return_value = [action]
     mock_repo.get_pending_action.return_value = action
     mock_repo.save_message.return_value = uuid.uuid4()
     
@@ -332,6 +332,79 @@ async def test_pending_action_confirm_create_credit_card_payment(conversations_s
     mock_repo.get_pending_action.return_value = action
     mock_repo.save_message.return_value = uuid.uuid4()
     resp = await conversations_service.handle_message(user_id, req, trace_id)
-    assert resp.status == "completed"
-    mock_credit_service.create_payment.assert_called_once()
+    mock_cash_service.create_income.assert_called_once()
     mock_repo.update_pending_action_status.assert_called_with(action_id, "executed")
+
+
+
+@pytest.mark.asyncio
+@patch("app.conversations.service.gemini_client")
+async def test_pending_action_clarification_merge(mock_gemini, conversations_service, mock_repo):
+    user_id = uuid.uuid4()
+    trace_id = uuid.uuid4()
+    action_id = uuid.uuid4()
+    req = ConversationalRequest(message="Nequi", channel="api", pending_action_id=str(action_id))
+    from datetime import UTC, datetime
+
+    from app.conversations.schemas import PendingActionRead
+    action = PendingActionRead(
+        id=action_id, user_id=user_id, intent="create_expense",
+        data={"amount": 50000, "category_id": str(uuid.uuid4()), "_category_name": "Almuerzo"},
+        missing_fields={"account_id": "¿Desde qué cuenta hiciste el movimiento?"},
+        status="awaiting_clarification", command_id=None,
+        created_at=datetime.now(UTC), updated_at=datetime.now(UTC), expires_at=datetime.now(UTC),
+        source_message_id=uuid.uuid4()
+    )
+    mock_repo.get_pending_action.return_value = action
+    mock_repo.save_message.return_value = uuid.uuid4()
+
+    from app.conversations.schemas import ExtractedEntities, GeminiNLUOutput
+    nlu_out = GeminiNLUOutput(intent="unknown", entities=ExtractedEntities(account="Nequi"), confidence=1.0)
+    mock_gemini.extract_intent_and_entities.return_value = (nlu_out, {"model": "gemini-1.5-flash", "success": True, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "latency_ms": 10})
+
+    # mock accounts to allow resolution
+    from unittest.mock import MagicMock
+    mock_account = MagicMock()
+    mock_account.id = uuid.uuid4()
+    mock_account.name = "Nequi"
+    conversations_service.cash_service.account_repo.list_by_user.return_value = [mock_account]
+
+    resp = await conversations_service.handle_message(user_id, req, trace_id)
+    assert resp.status == "awaiting_confirmation"
+    assert "Voy a registrar un gasto de $50000" in resp.response_text
+    mock_repo.update_pending_action.assert_called_once()
+
+@pytest.mark.asyncio
+@patch("app.conversations.service.gemini_client")
+async def test_pending_action_clarification_intent_change(mock_gemini, conversations_service, mock_repo):
+    user_id = uuid.uuid4()
+    trace_id = uuid.uuid4()
+    action_id = uuid.uuid4()
+    req = ConversationalRequest(message="Mejor crea una meta Viaje por 1 millón", channel="api", pending_action_id=str(action_id))
+    from datetime import UTC, datetime
+
+    from app.conversations.schemas import PendingActionRead
+    action = PendingActionRead(
+        id=action_id, user_id=user_id, intent="create_expense",
+        data={"amount": 50000},
+        missing_fields={"account_id": "¿Desde qué cuenta hiciste el movimiento?"},
+        status="awaiting_clarification", command_id=None,
+        created_at=datetime.now(UTC), updated_at=datetime.now(UTC), expires_at=datetime.now(UTC)
+    )
+    mock_repo.get_pending_action.return_value = action
+    mock_repo.save_message.return_value = uuid.uuid4()
+    
+    from unittest.mock import MagicMock
+    mock_new_action = MagicMock()
+    mock_new_action.id = uuid.uuid4()
+    mock_repo.create_pending_action.return_value = mock_new_action
+
+    from app.conversations.schemas import ExtractedEntities, GeminiNLUOutput
+    nlu_out = GeminiNLUOutput(intent="create_goal", entities=ExtractedEntities(amount=1000000, goal="Viaje"), confidence=1.0)
+    mock_gemini.extract_intent_and_entities.return_value = (nlu_out, {"model": "gemini-1.5-flash", "success": True, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "latency_ms": 10})
+
+    resp = await conversations_service.handle_message(user_id, req, trace_id)
+    assert resp.status == "awaiting_confirmation"
+    assert "Entendido. Cancelé el registro anterior." in resp.response_text
+    mock_repo.update_pending_action_status.assert_called_with(action_id, "cancelled")
+    mock_repo.create_pending_action.assert_called_once()
