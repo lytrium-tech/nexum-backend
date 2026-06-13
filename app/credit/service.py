@@ -171,10 +171,17 @@ class CreditCardService:
         command_id: uuid.UUID,
     ) -> CreditCardPaymentResult:
         account = await self.account_repo.get_by_id_for_update(payload.account_id)
-        if not account or account.user_id != user_id or not account.is_active:
-            raise ValueError("Account not found or inactive")
+        if not account:
+            from app.core.errors import NotFoundError
+            raise NotFoundError(message="Cuenta no encontrada.")
+
+        if account.user_id != user_id or not account.is_active:
+            from app.accounts.exceptions import AccountForbiddenError
+            raise AccountForbiddenError()
+
         if account.balance < payload.amount:
-            raise ValueError("Insufficient balance")
+            from app.cash.exceptions import InsufficientFundsError
+            raise InsufficientFundsError()
 
         card = await self.repo.get_by_id_for_update(card_id)
         if not card or card.user_id != user_id:

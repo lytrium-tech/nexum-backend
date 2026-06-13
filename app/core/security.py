@@ -57,14 +57,23 @@ def get_jwks_client() -> PyJWKClient:
         _jwks_client = PyJWKClient(url)
     return _jwks_client
 
+from fastapi import Depends, Request
+
 async def get_current_user(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)],
 ) -> AuthenticatedUser:
-    """
-    Dependency de FastAPI para obtener el usuario autenticado del request actual.
-    """
     # Modo bypass de desarrollo
     if settings.AUTH_BYPASS_ENABLED and not settings.is_production:
+        if request.headers.get("x-test-bypass-auth") == "true":
+            # Extract user ID from bearer token used for test bypass
+            if credentials and credentials.credentials:
+                return AuthenticatedUser(
+                    user_id=credentials.credentials,
+                    email=request.headers.get("x-test-email", "test@example.com"),
+                    is_dev=True,
+                )
+            
         return AuthenticatedUser(
             user_id=settings.DEV_USER_ID,
             email=settings.DEV_USER_EMAIL,
