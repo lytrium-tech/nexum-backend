@@ -1,8 +1,8 @@
 import asyncio
 import os
 import uuid
+
 import httpx
-from datetime import datetime, timezone
 
 BASE_URL = os.getenv("API_URL", "http://localhost:8000/api/v1")
 

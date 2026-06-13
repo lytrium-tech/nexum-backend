@@ -18,7 +18,7 @@ Ningún test requiere conexión real a Supabase.
 """
 
 import uuid
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import APIRouter
@@ -203,7 +203,7 @@ async def test_auth_bypass_returns_dev_user(client: AsyncClient) -> None:
         mock_settings.DEV_USER_ID = "00000000-0000-0000-0000-000000000001"
         mock_settings.DEV_USER_EMAIL = "dev@nexum.local"
 
-        user = await get_current_user(credentials=None)
+        user = await get_current_user(request=MagicMock(), credentials=None)
 
     assert user.user_id == "00000000-0000-0000-0000-000000000001"
     assert user.email == "dev@nexum.local"
@@ -221,7 +221,7 @@ async def test_auth_bypass_raises_without_credentials_when_disabled() -> None:
         mock_settings.is_production = False
 
         with pytest.raises(AuthenticationError):
-            await get_current_user(credentials=None)
+            await get_current_user(request=MagicMock(), credentials=None)
 
 
 # ── Validación de configuración de producción ─────────────────────────────────

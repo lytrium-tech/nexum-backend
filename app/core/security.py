@@ -18,7 +18,7 @@ Próxima fase (Fase 6 — Users/Auth):
 from dataclasses import dataclass
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import settings
@@ -57,7 +57,8 @@ def get_jwks_client() -> PyJWKClient:
         _jwks_client = PyJWKClient(url)
     return _jwks_client
 
-from fastapi import Depends, Request
+
+
 
 async def get_current_user(
     request: Request,

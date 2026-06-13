@@ -2,8 +2,8 @@ import asyncio
 import os
 import uuid
 
-import httpx
 import asyncpg
+import httpx
 from dotenv import load_dotenv
 
 load_dotenv()

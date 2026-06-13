@@ -51,7 +51,7 @@ async def main():
         assert action_id is not None
         
         # Verify inbound message
-        inbound1 = await conn.fetchrow("SELECT id, trace_id FROM messages WHERE trace_id = $1 ORDER BY created_at DESC LIMIT 1", trace_id_str)
+        inbound1 = await conn.fetchrow("SELECT id, trace_id FROM messages WHERE trace_id = $1 AND direction = 'inbound' ORDER BY created_at DESC LIMIT 1", trace_id_str)
         assert inbound1 is not None
         assert str(inbound1['trace_id']) == trace_id_str
         

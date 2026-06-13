@@ -1,6 +1,5 @@
-import os
 
-with open('scripts/smoke_clarification.py', 'r', encoding='utf-8') as f:
+with open('scripts/smoke_clarification.py', encoding='utf-8') as f:
     content = f.read()
 
 new_header = """

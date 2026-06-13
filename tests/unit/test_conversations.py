@@ -324,6 +324,11 @@ async def test_pending_action_confirm_create_credit_card_payment(conversations_s
 
     from app.conversations.schemas import PendingActionRead
     action = PendingActionRead(
+        id=action_id,
+        user_id=user_id,
+        intent="create_credit_card_payment",
+        data={"amount": 100, "credit_card_id": str(uuid.uuid4()), "account_id": str(uuid.uuid4())},
+        status="awaiting_confirmation",
         created_at=datetime.now(UTC), updated_at=datetime.now(UTC), expires_at=datetime.now(UTC)
     )
     
@@ -332,7 +337,7 @@ async def test_pending_action_confirm_create_credit_card_payment(conversations_s
     
     resp = await conversations_service.handle_message(user_id, req, trace_id)
     assert resp.status == "completed"
-    mock_cash_service.create_income.assert_called_once()
+    mock_credit_service.create_payment.assert_called_once()
     mock_repo.update_pending_action_status.assert_called_with(action_id, "executed")
 
 @pytest.mark.asyncio
