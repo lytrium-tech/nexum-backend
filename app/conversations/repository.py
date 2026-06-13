@@ -255,3 +255,32 @@ class ConversationsRepository:
         """)
         result = await self.session.execute(query, {"user_id": user_id})
         return [PendingActionRead(**dict(row)) for row in result.mappings().all()]
+
+    async def mark_expired_pending_actions(self, user_id: uuid.UUID) -> None:
+        query = text("""
+            UPDATE public.pending_actions
+            SET status = 'expired', updated_at = now()
+            WHERE user_id = :user_id
+              AND status IN ('awaiting_confirmation', 'awaiting_clarification')
+              AND expires_at <= now()
+        """)
+        await self.session.execute(query, {"user_id": user_id})
+
+    async def cancel_open_pending_actions(self, user_id: uuid.UUID, exclude_id: uuid.UUID | None = None) -> None:
+        if exclude_id:
+            query = text("""
+                UPDATE public.pending_actions
+                SET status = 'cancelled', updated_at = now()
+                WHERE user_id = :user_id
+                  AND status IN ('awaiting_confirmation', 'awaiting_clarification')
+                  AND id != :exclude_id
+            """)
+            await self.session.execute(query, {"user_id": user_id, "exclude_id": exclude_id})
+        else:
+            query = text("""
+                UPDATE public.pending_actions
+                SET status = 'cancelled', updated_at = now()
+                WHERE user_id = :user_id
+                  AND status IN ('awaiting_confirmation', 'awaiting_clarification')
+            """)
+            await self.session.execute(query, {"user_id": user_id})

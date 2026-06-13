@@ -4,6 +4,7 @@
 
 # Agent configuration — never track local MCP credentials
 .agents/
+docs/agent/
 
 # Entorno virtual y uv
 .venv/
