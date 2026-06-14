@@ -14,7 +14,7 @@ from app.transfers.service import TransfersService
 from app.transfers.repository import TransfersRepository
 from app.ledger.repository import LedgerRepository
 from app.accounts.repository import AccountRepository
-
+from app.users.dependencies import CurrentUserProfile
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db_session
