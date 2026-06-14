@@ -73,3 +73,25 @@ class CreditCardPaymentResult(BaseModel):
     amount: Decimal
     estimated_current_debt: Decimal
     account_balance: Decimal
+
+
+class CreditCardStatusRead(BaseModel):
+    card_id: uuid.UUID
+    name: str
+    credit_limit: Decimal
+    total_debt: Decimal
+    billed_debt: Decimal
+    unbilled_debt: Decimal
+    available_credit: Decimal
+    monthly_cc_payment: Decimal
+    cutoff_day: int
+    payment_due_day: int
+    next_payment_due_date: str
+    purchases_count: int
+    payments_count: int
+
+class CreditSummaryRead(BaseModel):
+    total_credit_limit: Decimal
+    total_debt: Decimal
+    total_available_credit: Decimal
+    cards: list[CreditCardStatusRead]

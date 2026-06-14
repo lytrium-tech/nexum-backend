@@ -68,10 +68,13 @@ class IntelligenceCreditCardRead(IntelligenceBase):
     credit_card_name: str
     credit_limit: Decimal | None
     estimated_current_debt: Decimal
+    billed_debt: Decimal | None = None
+    unbilled_debt: Decimal | None = None
     estimated_available_credit: Decimal | None
     monthly_cc_payment: Decimal
     cutoff_day: int | None
     due_day: int | None
+    next_payment_due_date: str | None = None
 
 
 class IntelligenceDebtRead(IntelligenceBase):

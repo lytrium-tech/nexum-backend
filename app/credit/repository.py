@@ -52,3 +52,31 @@ class CreditCardRepository:
             select(CreditCardTransaction).where(CreditCardTransaction.event_id == event_id)
         )
         return result.scalar_one_or_none()
+
+    async def get_card_status_data(self, card_id: uuid.UUID, cycle_end_date: 'datetime.date') -> dict:
+        from datetime import datetime
+        query = text("""
+            SELECT
+                COUNT(*) FILTER (WHERE type = 'purchase') as purchases_count,
+                COUNT(*) FILTER (WHERE type = 'payment') as payments_count,
+                COALESCE(SUM(CASE WHEN type = 'purchase' AND DATE(occurred_at AT TIME ZONE 'UTC') <= :cycle_end THEN COALESCE(total_with_interest, amount) ELSE 0 END), 0) as billed_purchases,
+                COALESCE(SUM(CASE WHEN type = 'purchase' AND DATE(occurred_at AT TIME ZONE 'UTC') > :cycle_end THEN COALESCE(total_with_interest, amount) ELSE 0 END), 0) as unbilled_purchases,
+                COALESCE(SUM(CASE WHEN type = 'payment' THEN amount ELSE 0 END), 0) as total_payments
+            FROM credit_card_transactions
+            WHERE credit_card_id = :card_id
+        """)
+        result = await self.session.execute(query, {"card_id": card_id, "cycle_end": cycle_end_date})
+        row = result.fetchone()
+        from decimal import Decimal
+        if row:
+            return {
+                "purchases_count": int(row[0]),
+                "payments_count": int(row[1]),
+                "billed_purchases": Decimal(str(row[2])),
+                "unbilled_purchases": Decimal(str(row[3])),
+                "total_payments": Decimal(str(row[4]))
+            }
+        return {
+            "purchases_count": 0, "payments_count": 0,
+            "billed_purchases": Decimal("0.00"), "unbilled_purchases": Decimal("0.00"), "total_payments": Decimal("0.00")
+        }

@@ -137,34 +137,29 @@ class IntelligenceService:
         )
 
     async def get_debt(self, user_id: uuid.UUID) -> IntelligenceDebtRead:
-        cc_data = await self.repo.get_credit_card_debt(user_id)
-        total_debt = Decimal("0.00")
+        from app.credit.service import CreditCardService
+        credit_service = CreditCardService(self.repo.session)
+        summary = await credit_service.get_credit_summary(user_id)
+        
+        total_debt = summary.total_debt
         total_monthly_cc = Decimal("0.00")
         cards = []
 
-        for cc in cc_data:
-            debt = self._safe_decimal(cc.get("credit_card_debt"))
-            monthly_pay = self._safe_decimal(cc.get("monthly_cc_payment"))
-            limit = (
-                self._safe_decimal(cc.get("credit_limit"))
-                if cc.get("credit_limit") is not None
-                else None
-            )
-            avail = max(Decimal("0.00"), limit - debt) if limit is not None else None
-
-            total_debt += debt
-            total_monthly_cc += monthly_pay
-
+        for cc in summary.cards:
+            total_monthly_cc += cc.monthly_cc_payment
             cards.append(
                 IntelligenceCreditCardRead(
-                    credit_card_id=cc["credit_card_id"],
-                    credit_card_name=cc["credit_card_name"],
-                    credit_limit=limit,
-                    estimated_current_debt=debt,
-                    estimated_available_credit=avail,
-                    monthly_cc_payment=monthly_pay,
-                    cutoff_day=cc.get("cutoff_day"),
-                    due_day=cc.get("due_day"),
+                    credit_card_id=cc.card_id,
+                    credit_card_name=cc.name,
+                    credit_limit=cc.credit_limit,
+                    estimated_current_debt=cc.total_debt,
+                    billed_debt=cc.billed_debt,
+                    unbilled_debt=cc.unbilled_debt,
+                    estimated_available_credit=cc.available_credit,
+                    monthly_cc_payment=cc.monthly_cc_payment,
+                    cutoff_day=cc.cutoff_day,
+                    due_day=cc.payment_due_day,
+                    next_payment_due_date=cc.next_payment_due_date
                 )
             )
 

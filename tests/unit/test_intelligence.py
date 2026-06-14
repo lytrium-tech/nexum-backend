@@ -106,35 +106,59 @@ async def test_get_balance_success(intelligence_service, mock_intelligence_repo)
 @pytest.mark.asyncio
 async def test_get_debt_success(intelligence_service, mock_intelligence_repo):
     user_id = uuid.uuid4()
-    mock_intelligence_repo.return_value.get_credit_card_debt.return_value = [
-        {
-            "credit_card_id": uuid.uuid4(),
-            "credit_card_name": "Visa",
-            "credit_limit": Decimal("5000.00"),
-            "credit_card_debt": Decimal("1500.00"),
-            "monthly_cc_payment": Decimal("200.00"),
-            "cutoff_day": 15,
-            "due_day": 5,
-        }
-    ]
-    mock_intelligence_repo.return_value.get_pending_obligations.return_value = [
-        {
-            "obligation_id": uuid.uuid4(),
-            "name": "Rent",
-            "amount": Decimal("1000.00"),
-            "due_day": 1,
-            "is_pending": True,
-        },
-        {
-            "obligation_id": uuid.uuid4(),
-            "name": "Internet",
-            "amount": Decimal("100.00"),
-            "due_day": 10,
-            "is_pending": False,  # Should be ignored in pending_commitments
-        },
-    ]
-
-    result = await intelligence_service.get_debt(user_id)
+    
+    from unittest.mock import AsyncMock, patch
+    mock_session = AsyncMock()
+    mock_intelligence_repo.return_value.session = mock_session
+    
+    # We need to mock the CreditCardService inside get_debt, or its repo.
+    with patch('app.credit.service.CreditCardService') as mock_cc_service_class:
+        mock_cc_service_instance = mock_cc_service_class.return_value
+        
+        from app.credit.schemas import CreditSummaryRead, CreditCardStatusRead
+        from datetime import date
+        mock_cc_service_instance.get_credit_summary = AsyncMock(return_value=CreditSummaryRead(
+            total_credit_limit=Decimal("5000.00"),
+            total_debt=Decimal("1500.00"),
+            total_available_credit=Decimal("3500.00"),
+            total_monthly_cc_payment=Decimal("200.00"),
+            cards=[
+                    CreditCardStatusRead(
+                        card_id=uuid.uuid4(),
+                        name="Visa",
+                        credit_limit=Decimal("5000.00"),
+                        total_debt=Decimal("1500.00"),
+                        billed_debt=Decimal("1000.00"),
+                        unbilled_debt=Decimal("500.00"),
+                        monthly_cc_payment=Decimal("200.00"),
+                        available_credit=Decimal("3500.00"),
+                        cutoff_day=15,
+                        payment_due_day=5,
+                        next_payment_due_date=date.today().isoformat(),
+                        purchases_count=0,
+                        payments_count=0,
+                    )
+            ]
+        ))
+        
+        mock_intelligence_repo.return_value.get_pending_obligations.return_value = [
+            {
+                "obligation_id": uuid.uuid4(),
+                "name": "Rent",
+                "amount": Decimal("1000.00"),
+                "due_day": 1,
+                "is_pending": True,
+            },
+            {
+                "obligation_id": uuid.uuid4(),
+                "name": "Internet",
+                "amount": Decimal("100.00"),
+                "due_day": 10,
+                "is_pending": False,  # Should be ignored in pending_commitments
+            },
+        ]
+    
+        result = await intelligence_service.get_debt(user_id)
 
     assert result.total_estimated_credit_card_debt == Decimal("1500.00")
     assert result.total_monthly_cc_payment == Decimal("200.00")

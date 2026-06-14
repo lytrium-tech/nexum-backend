@@ -19,6 +19,8 @@ from app.credit.schemas import (
     CreditCardPurchaseResult,
     CreditCardRead,
     CreditCardUpdate,
+    CreditCardStatusRead,
+    CreditSummaryRead,
 )
 from app.credit.service import CreditCardService
 from app.users.dependencies import CurrentUserProfile
@@ -151,3 +153,22 @@ async def create_payment(
             raise HTTPException(status_code=400, detail=str(e))
         except InvalidPaymentAmountError:
             raise HTTPException(status_code=409, detail="Payment amount exceeds current debt")
+
+@router.get("/summary", response_model=CreditSummaryRead)
+async def get_credit_summary(
+    current_profile: CurrentUserProfile, session: AsyncSession = Depends(get_db_session)
+):
+    user_id = current_profile.id
+    service = get_credit_service(session)
+    return await service.get_credit_summary(user_id)
+
+@router.get("/cards/{card_id}/status", response_model=CreditCardStatusRead)
+async def get_card_status(
+    card_id: uuid.UUID, current_profile: CurrentUserProfile, session: AsyncSession = Depends(get_db_session)
+):
+    user_id = current_profile.id
+    service = get_credit_service(session)
+    try:
+        return await service.get_card_status(user_id, card_id)
+    except CreditCardNotFoundError:
+        raise HTTPException(status_code=404, detail="Credit card not found")

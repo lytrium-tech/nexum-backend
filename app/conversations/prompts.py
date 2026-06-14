@@ -51,7 +51,16 @@ def render_read_response(intent: str, data: dict) -> str:
     elif intent == "ask_free_money":
         return f"Tienes ${data.get('free_money', '0.00')} de dinero libre."
     elif intent == "ask_debt":
-        return f"Tu deuda actual de tarjetas de crédito es de ${data.get('total_credit_card_debt', '0.00')}."
+        cards_info = []
+        for cc in data.get('credit_cards', []):
+            cards_info.append(
+                f"- {cc.get('credit_card_name')}: Deuda total ${cc.get('estimated_current_debt', '0.00')} "
+                f"(Facturado: ${cc.get('billed_debt', '0.00')}, Sin facturar: ${cc.get('unbilled_debt', '0.00')}). "
+                f"Cupo disponible: ${cc.get('estimated_available_credit', '0.00')}. "
+                f"Próximo pago: {cc.get('next_payment_due_date', 'N/A')}."
+            )
+        cards_str = "\\n".join(cards_info) if cards_info else "No tienes tarjetas registradas."
+        return f"Tu deuda total de tarjetas de crédito es de ${data.get('total_estimated_credit_card_debt', '0.00')}.\\nDetalle:\\n{cards_str}"
     elif intent == "ask_cashflow":
         return (f"Resumen de flujo de caja del mes:\n"
                 f"Ingresos: ${data.get('income', '0.00')}\n"

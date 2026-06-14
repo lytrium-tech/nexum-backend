@@ -245,3 +245,68 @@ class CreditCardService:
             estimated_current_debt=new_debt,
             account_balance=account.balance,
         )
+
+    async def get_card_status(self, user_id: uuid.UUID, card_id: uuid.UUID) -> 'CreditCardStatusRead':
+        from datetime import date
+        from app.credit.utils import calculate_credit_card_dates
+        from app.credit.schemas import CreditCardStatusRead
+
+        card = await self.repo.get_by_id(card_id)
+        if not card or card.user_id != user_id or not card.is_active:
+            raise CreditCardNotFoundError()
+
+        current_date = date.today()
+        from datetime import timedelta
+        cycle_start, cycle_end, next_due = calculate_credit_card_dates(
+            current_date, card.cutoff_day, card.due_day
+        )
+
+        last_cutoff = cycle_start - timedelta(days=1)
+        status_data = await self.repo.get_card_status_data(card.id, last_cutoff)
+        _, monthly_pay = await self.repo.get_card_debt(card.id)
+        
+        billed_purchases = status_data["billed_purchases"]
+        unbilled_purchases = status_data["unbilled_purchases"]
+        total_payments = status_data["total_payments"]
+        
+        # Apply payments to billed purchases first
+        billed_debt = billed_purchases - total_payments
+        if billed_debt < 0:
+            unbilled_debt = max(Decimal("0.00"), unbilled_purchases + billed_debt)
+            billed_debt = Decimal("0.00")
+        else:
+            unbilled_debt = unbilled_purchases
+            
+        total_debt = billed_debt + unbilled_debt
+        available_credit = max(Decimal("0.00"), card.credit_limit - total_debt)
+
+        return CreditCardStatusRead(
+            card_id=card.id,
+            name=card.name,
+            credit_limit=card.credit_limit,
+            total_debt=total_debt,
+            billed_debt=billed_debt,
+            unbilled_debt=unbilled_debt,
+            available_credit=available_credit,
+            monthly_cc_payment=Decimal(str(monthly_pay)),
+            cutoff_day=card.cutoff_day,
+            payment_due_day=card.due_day,
+            next_payment_due_date=next_due.isoformat(),
+            purchases_count=status_data["purchases_count"],
+            payments_count=status_data["payments_count"]
+        )
+
+    async def get_credit_summary(self, user_id: uuid.UUID) -> 'CreditSummaryRead':
+        from app.credit.schemas import CreditSummaryRead
+        cards = await self.repo.get_all_for_user(user_id)
+        
+        statuses = []
+        for c in cards:
+            statuses.append(await self.get_card_status(user_id, c.id))
+            
+        return CreditSummaryRead(
+            total_credit_limit=sum((s.credit_limit for s in statuses), Decimal("0.00")),
+            total_debt=sum((s.total_debt for s in statuses), Decimal("0.00")),
+            total_available_credit=sum((s.available_credit for s in statuses), Decimal("0.00")),
+            cards=statuses
+        )
