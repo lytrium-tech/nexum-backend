@@ -18,8 +18,8 @@ from app.credit.schemas import (
     CreditCardPurchaseCreate,
     CreditCardPurchaseResult,
     CreditCardRead,
-    CreditCardUpdate,
     CreditCardStatusRead,
+    CreditCardUpdate,
     CreditSummaryRead,
 )
 from app.credit.service import CreditCardService

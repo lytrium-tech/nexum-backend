@@ -30,3 +30,7 @@ class Category(Base):
             name="categories_type_check",
         ),
     )
+
+    @property
+    def is_global(self) -> bool:
+        return self.user_id is None

@@ -3,7 +3,7 @@ from uuid import UUID
 from app.accounts.exceptions import AccountDuplicateError, AccountForbiddenError
 from app.accounts.models import Account
 from app.accounts.repository import AccountRepository
-from app.accounts.schemas import AccountCreate, AccountRead, AccountUpdate
+from app.accounts.schemas import AccountCreate, AccountRead, AccountSummary, AccountUpdate
 from app.core.errors import NotFoundError
 from app.core.utils import clean_presentation_name, normalize_name
 
@@ -58,6 +58,9 @@ class AccountService:
                     raise AccountDuplicateError()
             account.name = clean_presentation_name(payload.name)
 
+        if payload.is_active is not None:
+            account.is_active = payload.is_active
+
         await self.repository.session.flush()
         return AccountRead.model_validate(account)
 
@@ -74,3 +77,13 @@ class AccountService:
         if not account:
             raise NotFoundError(message="Cuenta no encontrada.")
         return account
+
+    async def get_summary(self, auth_user_id: UUID) -> AccountSummary:
+        accounts = await self.repository.list_by_user_all(auth_user_id)
+        total = sum(a.balance for a in accounts if a.is_active)
+        return AccountSummary(
+            total_balance=total,
+            accounts_count=len(accounts),
+            active_accounts_count=sum(1 for a in accounts if a.is_active),
+            currency='COP'
+        )

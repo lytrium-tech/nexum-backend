@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.repository import AccountRepository
-from app.accounts.schemas import AccountCreate, AccountRead, AccountUpdate
+from app.accounts.schemas import AccountCreate, AccountRead, AccountSummary, AccountUpdate
 from app.accounts.service import AccountService
 from app.core.database import get_db_session
 from app.core.uow import UnitOfWork
@@ -27,6 +27,14 @@ async def list_accounts(
 ) -> list[AccountRead]:
     user_id = current_profile.id
     return await service.list_accounts(user_id)
+
+
+@router.get("/summary", response_model=AccountSummary)
+async def get_summary(
+    current_profile: CurrentUserProfile, service: AccountService = Depends(get_account_service)
+) -> AccountSummary:
+    user_id = current_profile.id
+    return await service.get_summary(user_id)
 
 
 @router.get("/{account_id}", response_model=AccountRead)

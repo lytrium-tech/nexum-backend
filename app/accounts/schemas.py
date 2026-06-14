@@ -14,6 +14,7 @@ class AccountCreate(BaseModel):
 
 class AccountUpdate(BaseModel):
     name: str | None = Field(None, min_length=1)
+    is_active: bool | None = None
     # balance explícitamente no incluido
 
 
@@ -27,3 +28,10 @@ class AccountRead(BaseModel):
     is_active: bool
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class AccountSummary(BaseModel):
+    total_balance: Decimal
+    accounts_count: int
+    active_accounts_count: int
+    currency: str

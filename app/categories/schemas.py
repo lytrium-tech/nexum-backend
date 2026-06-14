@@ -12,10 +12,12 @@ class CategoryCreate(BaseModel):
 
 class CategoryUpdate(BaseModel):
     name: str | None = Field(None, min_length=1)
+    is_active: bool | None = None
 
 
 class CategoryRead(BaseModel):
     id: UUID
+    is_global: bool = False
     user_id: UUID | None
     name: str
     type: CategoryType | None

@@ -1,11 +1,9 @@
-import uuid
-from datetime import date, datetime, timedelta
-from decimal import Decimal
-from typing import Tuple
+from datetime import date, timedelta
+
 
 def calculate_credit_card_dates(
     current_date: date, cutoff_day: int, due_day: int
-) -> Tuple[date, date, date]:
+) -> tuple[date, date, date]:
     """
     Calculates the current cycle start, cycle end, and next payment due date
     based on the current date, cutoff_day, and due_day.

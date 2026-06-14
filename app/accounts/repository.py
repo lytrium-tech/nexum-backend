@@ -56,3 +56,8 @@ class AccountRepository:
         """
         account.balance += amount_diff
         await self.session.flush()
+
+    async def list_by_user_all(self, user_id: UUID) -> Sequence[Account]:
+        stmt = select(Account).where(Account.user_id == user_id)
+        result = await self.session.execute(stmt)
+        return result.scalars().all()

@@ -1,26 +1,22 @@
 import asyncio
 import uuid
-import sys
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import select
-
-from app.core.database import init_engine, _session_factory
-from app.core.database import init_engine, get_engine
-from app.users.models import User
-from app.credit.schemas import CreditCardCreate, CreditCardPurchaseCreate, CreditCardPaymentCreate
-from app.credit.service import CreditCardService
-from app.credit.models import CreditCardTransaction
-from app.accounts.schemas import AccountCreate
-from app.accounts.service import AccountService
-from app.accounts.repository import AccountRepository
-from app.categories.models import Category
-from app.ledger.models import FinancialEvent
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.accounts.repository import AccountRepository
+from app.accounts.schemas import AccountCreate
+from app.accounts.service import AccountService
+from app.core.database import get_engine, init_engine
+from app.credit.models import CreditCardTransaction
+from app.credit.schemas import CreditCardCreate, CreditCardPaymentCreate, CreditCardPurchaseCreate
+from app.credit.service import CreditCardService
+from app.users.models import User
+
+
 async def main():
-    import app.core.config
     await init_engine()
     async_session = async_sessionmaker(get_engine(), expire_on_commit=False, class_=AsyncSession)
     async with async_session() as session:
@@ -68,12 +64,22 @@ async def main():
         )
         await session.commit()
         
-        print(f"Compras hechas: {res1.amount}, {res2.amount}")
+        # Test: Compra a cuotas
+        cmd_cuotas = uuid.uuid4()
+        res_cuotas = await credit_service.create_purchase(
+            user.id,
+            card.id,
+            CreditCardPurchaseCreate(amount=Decimal("300000"), installments_total=6, description="Electrodomestico"),
+            cmd_cuotas
+        )
+        await session.commit()
+        
+        print(f"Compras hechas: {res1.amount}, {res2.amount}, {res_cuotas.amount}")
         
         txs = (await session.execute(select(CreditCardTransaction).where(CreditCardTransaction.credit_card_id == card.id))).scalars().all()
         
         # Set one in the past to make it billed
-        past_date = datetime.now(timezone.utc) - timedelta(days=40)
+        past_date = datetime.now(UTC) - timedelta(days=40)
         txs[0].occurred_at = past_date
         await session.commit()
         
@@ -84,9 +90,9 @@ async def main():
         print(f"Sin Facturar: {status_updated.unbilled_debt}")
         
         # Assert logic
-        assert status_updated.total_debt == Decimal("200000.00")
+        assert status_updated.total_debt == Decimal("500000.00")
         assert status_updated.billed_debt == Decimal("150000.00")
-        assert status_updated.unbilled_debt == Decimal("50000.00")
+        assert status_updated.unbilled_debt == Decimal("350000.00")
         
         # Test 2: Pago
         cmd3 = uuid.uuid4()
@@ -103,9 +109,9 @@ async def main():
         print(f"Final Facturado: {status_final.billed_debt}")
         print(f"Final Sin Facturar: {status_final.unbilled_debt}")
         
-        assert status_final.total_debt == Decimal("50000.00")
+        assert status_final.total_debt == Decimal("350000.00")
         assert status_final.billed_debt == Decimal("0.00")
-        assert status_final.unbilled_debt == Decimal("50000.00")
+        assert status_final.unbilled_debt == Decimal("350000.00")
 
         # Pago over limit
         cmd4 = uuid.uuid4()
@@ -114,7 +120,7 @@ async def main():
             await credit_service.create_payment(
                 user.id,
                 card.id,
-                CreditCardPaymentCreate(amount=Decimal("60000"), account_id=acc.id),
+                CreditCardPaymentCreate(amount=Decimal("400000"), account_id=acc.id),
                 cmd4
             )
             await session.commit()
@@ -123,7 +129,7 @@ async def main():
             await session.rollback()
             print("Overpayment blocked properly!")
 
-        print("Test passed! ✅")
+        print("Test passed! ")
 
 if __name__ == "__main__":
     asyncio.run(main())

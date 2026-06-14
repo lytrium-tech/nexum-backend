@@ -290,10 +290,21 @@ class ConversationsService:
             # 3. Categorías (para ingresos y gastos)
             if intent in ["create_income", "create_expense"]:
                 if entities.category:
-                    cat = resolve_entity(entities.category, categories, lambda x: x.name, allow_missing=True)
-                    if cat:
-                        resolved_data["category_id"] = str(cat.id)
-                        resolved_data["_category_name"] = cat.name
+                    try:
+                        cat = resolve_entity(entities.category, categories, lambda x: x.name, allow_missing=True)
+                        if cat:
+                            resolved_data["category_id"] = str(cat.id)
+                            resolved_data["_category_name"] = cat.name
+                    except EntityNotFoundError:
+                        pass
+                
+                if "category_id" not in resolved_data:
+                    from app.conversations.entity_resolver import normalize_string
+                    fallback = next((c for c in categories if normalize_string(c.name) == "sinclasificar" or normalize_string(c.name) == "sin clasificar"), None)
+                    if fallback:
+                        resolved_data["category_id"] = str(fallback.id)
+                        resolved_data["_category_name"] = fallback.name
+
                 if entities.description:
                     resolved_data["description"] = entities.description
 

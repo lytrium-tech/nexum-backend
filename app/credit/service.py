@@ -19,7 +19,9 @@ from app.credit.schemas import (
     CreditCardPurchaseCreate,
     CreditCardPurchaseResult,
     CreditCardRead,
+    CreditCardStatusRead,
     CreditCardUpdate,
+    CreditSummaryRead,
 )
 from app.ledger.repository import LedgerRepository
 from app.ledger.schemas import LedgerEventCreate
@@ -248,8 +250,9 @@ class CreditCardService:
 
     async def get_card_status(self, user_id: uuid.UUID, card_id: uuid.UUID) -> 'CreditCardStatusRead':
         from datetime import date
-        from app.credit.utils import calculate_credit_card_dates
+
         from app.credit.schemas import CreditCardStatusRead
+        from app.credit.utils import calculate_credit_card_dates
 
         card = await self.repo.get_by_id(card_id)
         if not card or card.user_id != user_id or not card.is_active:

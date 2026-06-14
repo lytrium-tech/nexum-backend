@@ -1,4 +1,6 @@
 import uuid
+from datetime import date
+from decimal import Decimal
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,8 +55,7 @@ class CreditCardRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_card_status_data(self, card_id: uuid.UUID, cycle_end_date: 'datetime.date') -> dict:
-        from datetime import datetime
+    async def get_card_status_data(self, card_id: uuid.UUID, cycle_end_date: date) -> dict:
         query = text("""
             SELECT
                 COUNT(*) FILTER (WHERE type = 'purchase') as purchases_count,
@@ -67,7 +68,6 @@ class CreditCardRepository:
         """)
         result = await self.session.execute(query, {"card_id": card_id, "cycle_end": cycle_end_date})
         row = result.fetchone()
-        from decimal import Decimal
         if row:
             return {
                 "purchases_count": int(row[0]),

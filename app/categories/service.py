@@ -52,6 +52,9 @@ class CategoryService:
                     raise CategoryDuplicateError()
             category.name = clean_presentation_name(payload.name)
 
+        if payload.is_active is not None:
+            category.is_active = payload.is_active
+
         await self.repository.session.flush()
         return CategoryRead.model_validate(category)
 

@@ -115,8 +115,9 @@ async def test_get_debt_success(intelligence_service, mock_intelligence_repo):
     with patch('app.credit.service.CreditCardService') as mock_cc_service_class:
         mock_cc_service_instance = mock_cc_service_class.return_value
         
-        from app.credit.schemas import CreditSummaryRead, CreditCardStatusRead
         from datetime import date
+
+        from app.credit.schemas import CreditCardStatusRead, CreditSummaryRead
         mock_cc_service_instance.get_credit_summary = AsyncMock(return_value=CreditSummaryRead(
             total_credit_limit=Decimal("5000.00"),
             total_debt=Decimal("1500.00"),

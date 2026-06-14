@@ -25,6 +25,7 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
+from app.categories.models import Category  # noqa: F401
 from app.core.database import Base
 
 
