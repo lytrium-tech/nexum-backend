@@ -12,6 +12,7 @@ verificaciones estructurales básicas apoyadas en SQLAlchemy.
 
 from uuid import UUID
 from decimal import Decimal
+from datetime import datetime
 
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
