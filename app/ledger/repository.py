@@ -10,9 +10,9 @@ No ejecuta consultas complejas de dominios ajenos, pero sí puede hacer
 verificaciones estructurales básicas apoyadas en SQLAlchemy.
 """
 
-from uuid import UUID
-from decimal import Decimal
 from datetime import datetime
+from decimal import Decimal
+from uuid import UUID
 
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
@@ -172,8 +172,8 @@ class LedgerRepository:
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[FinancialEvent], int]:
-        from sqlalchemy.orm import selectinload
         from sqlalchemy import func, or_
+        from sqlalchemy.orm import selectinload
 
         stmt = select(FinancialEvent).where(FinancialEvent.user_id == user_id)
         

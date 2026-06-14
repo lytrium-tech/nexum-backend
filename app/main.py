@@ -18,12 +18,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
-
-from app.credit.router import router as credit_router
-from app.goals.router import router as goals_router
-from app.intelligence.router import router as intelligence_router
-from app.obligations.router import router as obligations_router
-from app.users.router import router as users_router
 from app.core.config import settings
 from app.core.database import close_engine, init_engine
 from app.core.errors import register_exception_handlers

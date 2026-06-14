@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.accounts.schemas import AccountRead
 
+
 class TransferCreate(BaseModel):
     """Payload para crear transferencia."""
     source_account_id: UUID

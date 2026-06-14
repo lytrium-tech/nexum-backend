@@ -14,7 +14,7 @@ from app.ledger.repository import LedgerRepository
 from app.ledger.schemas import LedgerEventCreate
 from app.transfers.models import Transfer
 from app.transfers.repository import TransfersRepository
-from app.transfers.schemas import TransferCreate, TransferResult, LedgerEventsRef
+from app.transfers.schemas import LedgerEventsRef, TransferCreate, TransferResult
 
 
 class TransfersService:

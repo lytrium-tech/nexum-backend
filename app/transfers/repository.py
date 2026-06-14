@@ -8,8 +8,8 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.errors import ConflictError, NotFoundError
 from app.transfers.models import Transfer
@@ -66,13 +66,6 @@ class TransfersRepository:
         return transfer
 
     async def list_transfers(self, user_id: UUID, limit: int = 50, offset: int = 0) -> tuple[list[Transfer], int]:
-        stmt = (
-            select(Transfer)
-            .options(selectinload(Transfer.source_account), selectinload(Transfer.destination_account))
-            .where(Transfer.user_id == user_id)
-            .order_by(Transfer.occurred_at.desc().nulls_last(), Transfer.created_at.desc())
-        )
-        
         # Ocurred_at doesn't exist on transfers, we use created_at for ordering.
         stmt = (
             select(Transfer)

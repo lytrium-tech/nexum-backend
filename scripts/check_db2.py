@@ -1,6 +1,9 @@
 import asyncio
-from app.core.database import init_engine, get_db_session
+
 from sqlalchemy import text
+
+from app.core.database import get_db_session, init_engine
+
 
 async def main():
     await init_engine()

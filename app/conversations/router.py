@@ -17,12 +17,12 @@ from app.intelligence.router import get_intelligence_service
 from app.intelligence.service import IntelligenceService
 from app.obligations.router import get_obligation_service
 from app.obligations.service import ObligationService
+from app.transfers.router import get_transfers_service
+from app.transfers.service import TransfersService
 from app.users.dependencies import CurrentUserProfile
 
 router = APIRouter(prefix="/conversations", tags=["Conversational"])
 
-from app.transfers.router import get_transfers_service
-from app.transfers.service import TransfersService
 
 def get_conversations_service(
     session: AsyncSession = Depends(get_db_session),

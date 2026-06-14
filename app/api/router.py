@@ -18,18 +18,24 @@ Registro de routers de dominio (se irán descomentando por fase):
     Fase 12: conversations
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.router import router as accounts_router
 from app.cash.router import router as cash_router
 from app.categories.router import router as categories_router
 from app.conversations.router import router as conversations_router
 from app.core.config import settings
+from app.core.database import get_db_session
+from app.core.errors import InfrastructureError
 from app.credit.router import router as credit_router
 from app.goals.router import router as goals_router
 from app.intelligence.router import router as intelligence_router
+from app.ledger.router import router as ledger_router
 from app.obligations.router import router as obligations_router
+from app.transfers.router import router as transfers_router
 from app.users.router import router as users_router
 
 # ── Routers ───────────────────────────────────────────────────────────────────
@@ -49,14 +55,6 @@ class HealthResponse(BaseModel):
 
     status: str
     service: str
-
-
-from fastapi import Depends  # noqa: E402
-from sqlalchemy import text  # noqa: E402
-from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
-
-from app.core.database import get_db_session  # noqa: E402
-from app.core.errors import InfrastructureError  # noqa: E402
 
 
 @api_router.get(
@@ -106,9 +104,6 @@ async def readiness_check(
 # ── Registro del router v1 ────────────────────────────────────────────────────
 # Los routers de dominio se registran aquí a medida que se implementan:
 
-
-from app.ledger.router import router as ledger_router
-
 v1_router.include_router(users_router)
 v1_router.include_router(accounts_router)
 v1_router.include_router(categories_router)
@@ -119,8 +114,6 @@ v1_router.include_router(credit_router, prefix="/credit", tags=["Credit"])
 v1_router.include_router(ledger_router)
 v1_router.include_router(intelligence_router)
 v1_router.include_router(conversations_router)
-
-from app.transfers.router import router as transfers_router
 v1_router.include_router(transfers_router)
 
 api_router.include_router(v1_router)

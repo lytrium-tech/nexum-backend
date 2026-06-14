@@ -3,12 +3,13 @@ Smoke test manual conversacional para probar Transfers.
 """
 
 import asyncio
-from httpx import AsyncClient
-from uuid import UUID
-
 import uuid
-from app.core.database import init_engine, get_db_session
+
+from httpx import AsyncClient
+
+from app.core.database import get_db_session, init_engine
 from app.users.models import User
+
 
 async def setup_test_users():
     user1_id = uuid.uuid4()

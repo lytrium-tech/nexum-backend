@@ -1,20 +1,17 @@
 import asyncio
 import uuid
-from datetime import datetime, timedelta, UTC
-from uuid import UUID
 
 from httpx import AsyncClient
-
-from app.core.config import settings
 
 # Constantes para usuarios locales (ver scripts/seed_dev.py o los que generemos)
 BASE_URL = "http://localhost:8000/api/v1"
 
 async def setup_test_users():
     """Crea dos usuarios en la base de datos para pruebas de ownership."""
-    from app.core.database import init_engine, get_db_session
-    from app.users.models import User
     import uuid
+
+    from app.core.database import get_db_session, init_engine
+    from app.users.models import User
 
     user1_id = uuid.uuid4()
     user2_id = uuid.uuid4()
@@ -69,7 +66,6 @@ async def main():
             "type": "wallet",
             "currency": "COP"
         })
-        account_b = res.json()["id"]
 
         res = await client.post("/categories", headers=headers_a, json={
             "name": "Comida A",
@@ -83,7 +79,6 @@ async def main():
             "type": "expense",
             "icon": "🍕"
         })
-        cat_b = res.json()["id"]
 
         # 2. Registrar eventos para A usando Cash y Credit
         # Income
@@ -93,7 +88,8 @@ async def main():
             "currency": "COP",
             "description": "Salario"
         })
-        if res.status_code not in (200, 201): print("Error income:", res.text)
+        if res.status_code not in (200, 201):
+            print("Error income:", res.text)
 
         # Expense
         res = await client.post("/cash/expense", headers={**headers_a, "Idempotency-Key": str(uuid.uuid4())}, json={
@@ -103,7 +99,8 @@ async def main():
             "currency": "COP",
             "description": "Hamburguesa"
         })
-        if res.status_code not in (200, 201): print("Error expense:", res.text)
+        if res.status_code not in (200, 201):
+            print("Error expense:", res.text)
         
         # Credit Card (necesitamos crear una tarjeta)
         res = await client.post("/credit/cards", headers=headers_a, json={
@@ -125,14 +122,16 @@ async def main():
             "installments": 1,
             "description": "Zapatos"
         })
-        if res.status_code not in (200, 201): print("Error purchase:", res.text)
+        if res.status_code not in (200, 201):
+            print("Error purchase:", res.text)
 
         # Pagamos tarjeta (payment) desde cuenta A
         res = await client.post(f"/credit/cards/{cc_a}/payments", headers={**headers_a, "Idempotency-Key": str(uuid.uuid4())}, json={
             "account_id": account_a,
             "amount": 50000
         })
-        if res.status_code not in (200, 201): print("Error payment:", res.text)
+        if res.status_code not in (200, 201):
+            print("Error payment:", res.text)
 
         print("OK: Datos de prueba creados.")
 

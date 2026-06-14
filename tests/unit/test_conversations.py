@@ -43,14 +43,20 @@ def mock_obl_service():
 
 
 @pytest.fixture
-def conversations_service(mock_repo, mock_intel_service, mock_cash_service, mock_credit_service, mock_goals_service, mock_obl_service):
+def mock_transfers_service():
+    from unittest.mock import AsyncMock
+    return AsyncMock()
+
+@pytest.fixture
+def conversations_service(mock_repo, mock_intel_service, mock_cash_service, mock_credit_service, mock_goals_service, mock_obl_service, mock_transfers_service):
     service = ConversationsService(
         session=AsyncMock(),
         intel_service=mock_intel_service,
         cash_service=mock_cash_service,
         goals_service=mock_goals_service,
         obl_service=mock_obl_service,
-        credit_service=mock_credit_service
+        credit_service=mock_credit_service,
+        transfers_service=mock_transfers_service
     )
     service.repo = mock_repo
     return service
