@@ -1,5 +1,4 @@
 import uuid
-from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
@@ -10,21 +9,45 @@ class IntelligenceBase(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class IntelligenceSnapshotRead(IntelligenceBase):
-    available_real: Decimal
-    safe_money: Decimal
-    free_money: Decimal
-    total_income_current_month: Decimal
-    cash_consumption_outflow: Decimal
-    credit_card_consumption_committed: Decimal
-    total_consumption_committed: Decimal
-    committed_outflow_current_month: Decimal
-    wealth_allocation_current_month: Decimal
-    pending_obligations_total: Decimal
-    goals_required_this_period: Decimal
-    credit_cards_required_payment: Decimal
-    total_credit_card_debt: Decimal
-    calculated_at: datetime
+class SnapshotPeriod(BaseModel):
+    month: str
+    timezone: str
+
+class SnapshotCash(BaseModel):
+    total_balance: Decimal
+    active_accounts_count: int
+
+class SnapshotCashflow(BaseModel):
+    income: Decimal
+    expenses: Decimal
+    net_cashflow: Decimal
+
+class SnapshotDebt(BaseModel):
+    credit_card_total_debt: Decimal
+    billed_debt: Decimal
+    unbilled_debt: Decimal
+
+class SnapshotGoals(BaseModel):
+    active_goals_count: int
+    total_target: Decimal
+    total_saved: Decimal
+
+class SnapshotObligations(BaseModel):
+    pending_count: int
+    pending_amount: Decimal
+
+class SnapshotTransfers(BaseModel):
+    monthly_transfer_volume: Decimal
+
+class IntelligenceSnapshotRead(BaseModel):
+    period: SnapshotPeriod
+    cash: SnapshotCash
+    cashflow: SnapshotCashflow
+    debt: SnapshotDebt
+    goals: SnapshotGoals
+    obligations: SnapshotObligations
+    transfers: SnapshotTransfers
+    recent_activity: list[dict[str, Any]]
 
 
 class AccountBalanceRead(IntelligenceBase):

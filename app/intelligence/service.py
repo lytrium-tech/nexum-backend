@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.credit.service import CreditCardService
 from app.intelligence.repository import IntelligenceRepository
 from app.intelligence.schemas import (
     AccountBalanceRead,
@@ -20,6 +21,7 @@ from app.intelligence.schemas import (
 
 class IntelligenceService:
     def __init__(self, session: AsyncSession):
+        self.session = session
         self.repo = IntelligenceRepository(session)
 
     def _safe_decimal(self, val) -> Decimal:
@@ -28,37 +30,67 @@ class IntelligenceService:
         return Decimal(str(val))
 
     async def get_snapshot(self, user_id: uuid.UUID) -> IntelligenceSnapshotRead:
-        snap = await self.repo.get_financial_snapshot(user_id)
-        if not snap:
-            snap = {}
+        from zoneinfo import ZoneInfo
 
-        cons = await self.repo.get_consumption_summary(user_id)
-        if not cons:
-            cons = {}
+        tz = ZoneInfo("America/Bogota")
+        now = datetime.now(tz)
+        month_start = datetime(now.year, now.month, 1, tzinfo=tz)
+        if now.month == 12:
+            next_month_start = datetime(now.year + 1, 1, 1, tzinfo=tz)
+        else:
+            next_month_start = datetime(now.year, now.month + 1, 1, tzinfo=tz)
+            
+        period_str = f"{now.year}-{now.month:02d}"
 
-        cf = await self.repo.get_cashflow(user_id)
-        if not cf:
-            cf = {}
+        cash = await self.repo.get_cash_metrics(user_id)
+        cf = await self.repo.get_cashflow_metrics(user_id, month_start, next_month_start)
+        goals = await self.repo.get_goals_metrics(user_id)
+        obligations = await self.repo.get_obligations_metrics(user_id, period_str)
+        transfers = await self.repo.get_transfers_metrics(user_id, month_start, next_month_start)
+        recent = await self.repo.get_recent_activity(user_id, limit=5)
+
+        # Build Cashflow
+        income = self._safe_decimal(cf.get("income"))
+        expenses = self._safe_decimal(cf.get("expenses"))
+        net_cashflow = income - expenses
+
+        # Credit Core is the source of truth for billed/unbilled debt separation.
+        credit_summary = await CreditCardService(self.session).get_credit_summary(user_id)
+        billed_debt = sum((card.billed_debt for card in credit_summary.cards), Decimal("0.00"))
+        unbilled_debt = sum((card.unbilled_debt for card in credit_summary.cards), Decimal("0.00"))
 
         return IntelligenceSnapshotRead(
-            available_real=self._safe_decimal(snap.get("available_real")),
-            safe_money=self._safe_decimal(snap.get("safe_money")),
-            free_money=self._safe_decimal(snap.get("free_money")),
-            total_income_current_month=self._safe_decimal(cf.get("monthly_income")),
-            cash_consumption_outflow=self._safe_decimal(cons.get("cash_consumption_outflow")),
-            credit_card_consumption_committed=self._safe_decimal(
-                cons.get("credit_card_consumption_committed")
-            ),
-            total_consumption_committed=self._safe_decimal(cons.get("total_consumption_committed")),
-            committed_outflow_current_month=self._safe_decimal(cf.get("committed_outflow")),
-            wealth_allocation_current_month=self._safe_decimal(cf.get("wealth_allocation")),
-            pending_obligations_total=self._safe_decimal(snap.get("pending_obligations_total")),
-            goals_required_this_period=self._safe_decimal(
-                snap.get("monthly_goals_required_remaining")
-            ),
-            credit_cards_required_payment=self._safe_decimal(snap.get("monthly_cc_payment")),
-            total_credit_card_debt=self._safe_decimal(snap.get("credit_card_debt")),
-            calculated_at=snap.get("calculated_at", datetime.now(UTC)),
+            period={
+                "month": period_str,
+                "timezone": "America/Bogota"
+            },
+            cash={
+                "total_balance": self._safe_decimal(cash.get("total_balance")),
+                "active_accounts_count": cash.get("active_accounts_count", 0)
+            },
+            cashflow={
+                "income": income,
+                "expenses": expenses,
+                "net_cashflow": net_cashflow
+            },
+            debt={
+                "credit_card_total_debt": credit_summary.total_debt,
+                "billed_debt": billed_debt,
+                "unbilled_debt": unbilled_debt
+            },
+            goals={
+                "active_goals_count": goals.get("active_goals_count", 0),
+                "total_target": self._safe_decimal(goals.get("total_target")),
+                "total_saved": self._safe_decimal(goals.get("total_saved"))
+            },
+            obligations={
+                "pending_count": obligations.get("pending_count", 0),
+                "pending_amount": self._safe_decimal(obligations.get("pending_amount"))
+            },
+            transfers={
+                "monthly_transfer_volume": self._safe_decimal(transfers.get("monthly_transfer_volume"))
+            },
+            recent_activity=recent
         )
 
     async def get_balance(self, user_id: uuid.UUID) -> IntelligenceBalanceRead:
@@ -138,7 +170,7 @@ class IntelligenceService:
 
     async def get_debt(self, user_id: uuid.UUID) -> IntelligenceDebtRead:
         from app.credit.service import CreditCardService
-        credit_service = CreditCardService(self.repo.session)
+        credit_service = CreditCardService(self.session)
         summary = await credit_service.get_credit_summary(user_id)
         
         total_debt = summary.total_debt
