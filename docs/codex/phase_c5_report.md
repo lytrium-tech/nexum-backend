@@ -199,19 +199,15 @@ No se tocó `transactions`.
 
 ## 18. Commit
 
-Pendiente de ejecución al cierre de este reporte local.
+Commit funcional creado y pusheado:
 
-Commit sugerido:
-
-```bash
-git commit -m "feat: implement financial snapshot mvp"
+```text
+1417b14 feat: implement financial snapshot mvp
 ```
 
 ## 19. Deploy
 
-Pendiente de ejecución posterior al commit/push.
-
-Comandos objetivo:
+Deploy ejecutado en VPS con el flujo operativo:
 
 ```bash
 ssh lytrium-vps
@@ -222,15 +218,16 @@ docker compose up -d
 docker compose ps
 ```
 
+El contenedor `nexum_backend_api` fue recreado correctamente.
+
 ## 20. Health/readiness
 
-Health local validado:
+Health/readiness productivos validados:
 
-```bash
-GET /health -> {"status":"ok","service":"nexum-backend"}
+```text
+GET https://api.nexum.lytrium.tech/health -> {"status":"ok","service":"nexum-backend"}
+GET https://api.nexum.lytrium.tech/health/readiness -> {"status":"ok","service":"nexum-backend"}
 ```
-
-Readiness productivo pendiente de deploy.
 
 ## 21. Limitaciones conocidas
 
