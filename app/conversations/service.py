@@ -34,6 +34,8 @@ from app.integrations.gemini_client import gemini_client
 from app.intelligence.service import IntelligenceService
 from app.obligations.schemas import ObligationCreate, ObligationPaymentCreate
 from app.obligations.service import ObligationService
+from app.transfers.schemas import TransferCreate
+from app.transfers.service import TransfersService
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +66,7 @@ class ConversationsService:
         goals_service: GoalService,
         obl_service: ObligationService,
         credit_service: CreditCardService,
+        transfers_service: TransfersService,
     ):
         self.session = session
         self.repo = ConversationsRepository(session)
@@ -72,6 +75,7 @@ class ConversationsService:
         self.goals_service = goals_service
         self.obl_service = obl_service
         self.credit_service = credit_service
+        self.transfers_service = transfers_service
 
     async def handle_message(
         self, user_id: uuid.UUID, request: ConversationalRequest, trace_id: uuid.UUID
@@ -264,7 +268,7 @@ class ConversationsService:
 
         try:
             # 1. Monto (común a casi todos)
-            if intent in ["create_income", "create_expense", "create_goal_contribution", "create_obligation", "create_credit_card_purchase", "create_credit_card_payment"]:
+            if intent in ["create_income", "create_expense", "create_goal_contribution", "create_obligation", "create_credit_card_purchase", "create_credit_card_payment", "create_transfer"]:
                 if entities.amount is not None:
                     resolved_data["amount"] = float(entities.amount)
                 if "amount" not in resolved_data:
@@ -286,6 +290,22 @@ class ConversationsService:
                         resolved_data["_account_name"] = accounts[0].name
                     else:
                         missing["account_id"] = "¿Desde qué cuenta hiciste el movimiento?" if intent != "create_income" else "¿A qué cuenta te ingresó?"
+            
+            # 2.5 Cuentas origen y destino (para transferencias)
+            if intent == "create_transfer":
+                if getattr(entities, "source_account", None):
+                    acc = resolve_entity(entities.source_account, accounts, lambda x: x.name, allow_missing=False)
+                    resolved_data["source_account_id"] = str(acc.id)
+                    resolved_data["_source_account_name"] = acc.name
+                if "source_account_id" not in resolved_data:
+                    missing["source_account_id"] = "¿Desde qué cuenta transferiste?"
+
+                if getattr(entities, "destination_account", None):
+                    acc = resolve_entity(entities.destination_account, accounts, lambda x: x.name, allow_missing=False)
+                    resolved_data["destination_account_id"] = str(acc.id)
+                    resolved_data["_destination_account_name"] = acc.name
+                if "destination_account_id" not in resolved_data:
+                    missing["destination_account_id"] = "¿Hacia qué cuenta transferiste?"
             
             # 3. Categorías (para ingresos y gastos)
             if intent in ["create_income", "create_expense"]:
@@ -442,6 +462,8 @@ class ConversationsService:
             return f"Voy a crear la obligación '{data.get('name')}' por ${data.get('amount')}. ¿Confirmas?"
         elif intent == "create_obligation_payment":
             return f"Voy a registrar el pago de la obligación '{data.get('_obligation_name', '')}' por ${data.get('amount')} desde la cuenta {data.get('_account_name', '')}. ¿Confirmas?"
+        elif intent == "create_transfer":
+            return f"Voy a transferir ${data.get('amount')} de la cuenta {data.get('_source_account_name', '')} a la cuenta {data.get('_destination_account_name', '')}. ¿Confirmas?"
         return "Voy a registrar esta operación. ¿Confirmas?"
 
     async def _handle_pending_action_flow(
@@ -665,6 +687,16 @@ class ConversationsService:
                 raw_message=raw_msg,
             )
             await self.credit_service.create_payment(user_id, uuid.UUID(data["credit_card_id"]), dto, command_id)
+        elif intent == "create_transfer":
+            dto = TransferCreate(
+                source_account_id=uuid.UUID(data["source_account_id"]),
+                destination_account_id=uuid.UUID(data["destination_account_id"]),
+                amount=Decimal(str(data["amount"])),
+                command_id=command_id,
+                source_message_id=source_msg_id,
+                raw_message=raw_msg,
+            )
+            await self.transfers_service.create_transfer(user_id, dto)
         else:
             raise UnsupportedConversationalIntentError(f"Operación no soportada automáticamente: {intent}")
 

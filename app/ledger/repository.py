@@ -101,6 +101,7 @@ class LedgerRepository:
             occurred_at=event_data.occurred_at,
             metadata_=event_data.metadata,
             command_id=event_data.command_id,
+            transfer_id=event_data.transfer_id,
             source_message_id=event_data.source_message_id,
         )
 
@@ -282,10 +283,11 @@ class LedgerRepository:
             elif etype == "credit_card_purchase":
                 summary["total_credit_card_purchases"] += total_amt
 
-            if direction == "inflow":
-                summary["net_cashflow"] += total_amt
-            elif direction == "outflow":
-                summary["net_cashflow"] -= total_amt
+            if etype not in ("transfer_in", "transfer_out"):
+                if direction == "inflow":
+                    summary["net_cashflow"] += total_amt
+                elif direction == "outflow":
+                    summary["net_cashflow"] -= total_amt
 
         return summary
 

@@ -120,4 +120,7 @@ v1_router.include_router(ledger_router)
 v1_router.include_router(intelligence_router)
 v1_router.include_router(conversations_router)
 
+from app.transfers.router import router as transfers_router
+v1_router.include_router(transfers_router)
+
 api_router.include_router(v1_router)

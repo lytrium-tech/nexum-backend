@@ -116,12 +116,13 @@ class LedgerService:
         for event in events:
             date_str = event.occurred_at.strftime("%Y-%m-%d")
             groups[date_str]["items"].append(event)
-            if event.direction == "inflow":
-                groups[date_str]["income"] += event.amount
-                groups[date_str]["net"] += event.amount
-            elif event.direction == "outflow":
-                groups[date_str]["expense"] += event.amount
-                groups[date_str]["net"] -= event.amount
+            if event.event_type not in ("transfer_in", "transfer_out"):
+                if event.direction == "inflow":
+                    groups[date_str]["income"] += event.amount
+                    groups[date_str]["net"] += event.amount
+                elif event.direction == "outflow":
+                    groups[date_str]["expense"] += event.amount
+                    groups[date_str]["net"] -= event.amount
 
         result = []
         for date_str, data in groups.items():

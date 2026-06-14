@@ -21,6 +21,8 @@ class EventType(StrEnum):
     CREDIT_CARD_PURCHASE = "credit_card_purchase"
     CREDIT_CARD_PAYMENT = "credit_card_payment"
     MANUAL_ADJUSTMENT = "manual_adjustment"
+    TRANSFER_OUT = "transfer_out"
+    TRANSFER_IN = "transfer_in"
 
 
 class Direction(StrEnum):

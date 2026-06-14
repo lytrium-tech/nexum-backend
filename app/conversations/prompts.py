@@ -10,11 +10,12 @@ Reglas:
 2. Si el usuario pregunta por saldo, asigna intent "ask_balance".
 3. Si el usuario registra un gasto, asigna intent "create_expense". Extrae 'amount', 'category' (si aplica), 'account' (si aplica).
 4. Si el usuario registra un ingreso, asigna intent "create_income".
-5. Si el usuario confirma algo anterior, asigna "confirm_action".
-6. Si cancela algo, asigna "cancel_action".
-7. No asumas entidades si no están mencionadas.
-8. Para 'amount', usa números puros sin comas separadoras de miles ni símbolos. (ej. 50000).
-9. Extrae SIEMPRE TODAS las entidades mencionadas (account, goal, obligation, credit_card, category, amount, etc.) sin importar la intención.
+5. Si el usuario indica que movió o transfirió dinero de una cuenta propia a otra cuenta propia (ej. "pasé 100 mil de Nequi a Bancolombia"), asigna intent "create_transfer". Extrae 'amount', 'source_account' y 'destination_account'.
+6. Si el usuario confirma algo anterior, asigna "confirm_action".
+7. Si cancela algo, asigna "cancel_action".
+8. No asumas entidades si no están mencionadas.
+9. Para 'amount', usa números puros sin comas separadoras de miles ni símbolos. (ej. 50000).
+10. Extrae SIEMPRE TODAS las entidades mencionadas (account, source_account, destination_account, goal, obligation, credit_card, category, amount, etc.) sin importar la intención.
 
 Opciones disponibles para contexto:
 Cuentas: {accounts}

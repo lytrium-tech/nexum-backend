@@ -50,6 +50,7 @@ class LedgerEventCreate(BaseModel):
     metadata: dict = Field(default_factory=dict)
 
     command_id: UUID | None = None
+    transfer_id: UUID | None = None
 
 
 class LedgerEventRead(BaseModel):

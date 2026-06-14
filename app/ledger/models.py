@@ -86,6 +86,10 @@ class FinancialEvent(Base):
         PGUUID(as_uuid=True),
         nullable=True,
     )
+    transfer_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        nullable=True,
+    )
 
     # ── Constraints e Índices de lectura (reflejando la DB real) ──────────────
     __table_args__ = (
@@ -97,7 +101,7 @@ class FinancialEvent(Base):
         CheckConstraint(
             "event_type = ANY (ARRAY['income', 'expense', 'credit_card_purchase', "
             "'credit_card_payment', 'obligation_payment', "
-            "'goal_contribution', 'manual_adjustment'])",
+            "'goal_contribution', 'manual_adjustment', 'transfer_out', 'transfer_in'])",
             name="financial_events_type_check",
         ),
         # Índice único parcial que garantiza idempotencia

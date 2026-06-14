@@ -33,6 +33,8 @@ class ExtractedEntities(BaseModel):
     """Entidades extraídas por Gemini desde el mensaje del usuario."""
     amount: Decimal | None = Field(None, description="Monto numérico extraído de la solicitud. Ej. 50000, 100.50")
     account: str | None = Field(None, description="Nombre de la cuenta mencionada. Ej. Nequi, Bancolombia")
+    source_account: str | None = Field(None, description="Nombre de la cuenta de origen para transferencias. Ej. Nequi")
+    destination_account: str | None = Field(None, description="Nombre de la cuenta de destino para transferencias. Ej. Bancolombia")
     category: str | None = Field(None, description="Nombre de la categoría mencionada. Ej. Comida, Transporte")
     credit_card: str | None = Field(None, description="Nombre de la tarjeta de crédito. Ej. RappiCard, Nu")
     goal: str | None = Field(None, description="Nombre de la meta mencionada. Ej. Viaje, iPhone")
@@ -50,6 +52,7 @@ class GeminiNLUOutput(BaseModel):
         "create_income", "create_expense", "create_goal", "create_goal_contribution",
         "create_obligation", "create_obligation_payment",
         "create_credit_card_purchase", "create_credit_card_payment",
+        "create_transfer",
         "confirm_action", "cancel_action", "clarify_action", "unknown"
     ] = Field(..., description="La intención detectada en el mensaje del usuario.")
     entities: ExtractedEntities = Field(..., description="Entidades extraídas para cumplir la intención.")

@@ -21,6 +21,9 @@ from app.users.dependencies import CurrentUserProfile
 
 router = APIRouter(prefix="/conversations", tags=["Conversational"])
 
+from app.transfers.router import get_transfers_service
+from app.transfers.service import TransfersService
+
 def get_conversations_service(
     session: AsyncSession = Depends(get_db_session),
     intel_service: IntelligenceService = Depends(get_intelligence_service),
@@ -28,6 +31,7 @@ def get_conversations_service(
     goals_service: GoalService = Depends(get_goal_service),
     obl_service: ObligationService = Depends(get_obligation_service),
     credit_service: CreditCardService = Depends(get_credit_service),
+    transfers_service: TransfersService = Depends(get_transfers_service),
 ) -> ConversationsService:
     return ConversationsService(
         session=session,
@@ -36,6 +40,7 @@ def get_conversations_service(
         goals_service=goals_service,
         obl_service=obl_service,
         credit_service=credit_service,
+        transfers_service=transfers_service,
     )
 
 @router.post("/message", response_model=ConversationalResponse)
