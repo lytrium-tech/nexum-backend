@@ -86,6 +86,71 @@ class LedgerEventResult(BaseModel):
     Resultado de la operación de escritura en el Ledger.
     Incluye flag de idempotencia para notificar a capas superiores.
     """
-
     event: LedgerEventRead
     idempotent: bool = False
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Esquemas para Queries (Frontend Readiness)
+# ────────────────────────────────────────────────────────────────────────────
+
+class AccountRef(BaseModel):
+    id: UUID
+    name: str
+    model_config = ConfigDict(from_attributes=True)
+
+class CategoryRef(BaseModel):
+    id: UUID
+    name: str
+    model_config = ConfigDict(from_attributes=True)
+
+class LedgerEventDetail(BaseModel):
+    id: UUID
+    user_id: UUID
+    occurred_at: datetime
+    event_type: str
+    direction: str
+    amount: Decimal
+    currency: str
+    description: str | None
+    account: AccountRef | None = None
+    category: CategoryRef | None = None
+    source: str
+    raw_message: str | None = None
+    
+    # Detalle adicional
+    source_message_id: UUID | None = None
+    command_id: UUID | None = None
+    # No exponemos trace_id aquí aún porque está en messages, no en financial_events
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+class LedgerPaginationInfo(BaseModel):
+    limit: int
+    offset: int
+    total: int
+
+class LedgerEventsResponse(BaseModel):
+    items: list[LedgerEventDetail]
+    pagination: LedgerPaginationInfo
+
+class LedgerSummaryResponse(BaseModel):
+    total_income: Decimal
+    total_expense: Decimal
+    net_cashflow: Decimal
+    total_goal_contributions: Decimal
+    total_obligation_payments: Decimal
+    total_credit_card_payments: Decimal
+    total_credit_card_purchases: Decimal
+    events_count: int
+
+class LedgerTimelineGroup(BaseModel):
+    date: str
+    income: Decimal
+    expense: Decimal
+    net: Decimal
+    items: list[LedgerEventDetail]
+
+class LedgerTimelineResponse(BaseModel):
+    groups: list[LedgerTimelineGroup]

@@ -11,6 +11,7 @@ verificaciones estructurales básicas apoyadas en SQLAlchemy.
 """
 
 from uuid import UUID
+from decimal import Decimal
 
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
@@ -153,3 +154,159 @@ class LedgerRepository:
             event=LedgerEventRead.model_validate(db_event),
             idempotent=False,
         )
+
+    async def list_events(
+        self,
+        user_id: UUID,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        account_id: UUID | None = None,
+        category_id: UUID | None = None,
+        event_type: str | None = None,
+        direction: str | None = None,
+        amount_min: Decimal | float | None = None,
+        amount_max: Decimal | float | None = None,
+        search: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[FinancialEvent], int]:
+        from sqlalchemy.orm import selectinload
+        from sqlalchemy import func, or_
+
+        stmt = select(FinancialEvent).where(FinancialEvent.user_id == user_id)
+        
+        if date_from:
+            stmt = stmt.where(FinancialEvent.occurred_at >= date_from)
+        if date_to:
+            stmt = stmt.where(FinancialEvent.occurred_at <= date_to)
+        if account_id:
+            stmt = stmt.where(FinancialEvent.account_id == account_id)
+        if category_id:
+            stmt = stmt.where(FinancialEvent.category_id == category_id)
+        if event_type:
+            stmt = stmt.where(FinancialEvent.event_type == event_type)
+        if direction:
+            stmt = stmt.where(FinancialEvent.direction == direction)
+        if amount_min is not None:
+            stmt = stmt.where(FinancialEvent.amount >= amount_min)
+        if amount_max is not None:
+            stmt = stmt.where(FinancialEvent.amount <= amount_max)
+        if search:
+            search_pattern = f"%{search}%"
+            stmt = stmt.where(
+                or_(
+                    FinancialEvent.description.ilike(search_pattern),
+                    FinancialEvent.raw_message.ilike(search_pattern),
+                )
+            )
+
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total_res = await self.session.execute(count_stmt)
+        total = total_res.scalar_one_or_none() or 0
+
+        stmt = stmt.options(
+            selectinload(FinancialEvent.account),
+            selectinload(FinancialEvent.category)
+        )
+        stmt = stmt.order_by(FinancialEvent.occurred_at.desc())
+        stmt = stmt.limit(limit).offset(offset)
+        
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all()), total
+
+    async def get_event_detail(self, user_id: UUID, event_id: UUID) -> FinancialEvent | None:
+        from sqlalchemy.orm import selectinload
+        stmt = select(FinancialEvent).where(
+            FinancialEvent.id == event_id,
+            FinancialEvent.user_id == user_id
+        ).options(
+            selectinload(FinancialEvent.account),
+            selectinload(FinancialEvent.category)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_summary(
+        self,
+        user_id: UUID,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+    ) -> dict:
+        from sqlalchemy import func
+        stmt = select(
+            FinancialEvent.event_type,
+            FinancialEvent.direction,
+            func.sum(FinancialEvent.amount).label("total_amount"),
+            func.count(FinancialEvent.id).label("count")
+        ).where(FinancialEvent.user_id == user_id)
+
+        if date_from:
+            stmt = stmt.where(FinancialEvent.occurred_at >= date_from)
+        if date_to:
+            stmt = stmt.where(FinancialEvent.occurred_at <= date_to)
+
+        stmt = stmt.group_by(FinancialEvent.event_type, FinancialEvent.direction)
+        result = await self.session.execute(stmt)
+        rows = result.all()
+
+        summary = {
+            "total_income": Decimal("0"),
+            "total_expense": Decimal("0"),
+            "total_goal_contributions": Decimal("0"),
+            "total_obligation_payments": Decimal("0"),
+            "total_credit_card_payments": Decimal("0"),
+            "total_credit_card_purchases": Decimal("0"),
+            "events_count": 0,
+            "net_cashflow": Decimal("0")
+        }
+
+        for row in rows:
+            etype = row.event_type
+            direction = row.direction
+            total_amt = row.total_amount or Decimal("0")
+            count = row.count or 0
+            
+            summary["events_count"] += count
+
+            if etype == "income":
+                summary["total_income"] += total_amt
+            elif etype == "expense":
+                summary["total_expense"] += total_amt
+            elif etype == "goal_contribution":
+                summary["total_goal_contributions"] += total_amt
+            elif etype == "obligation_payment":
+                summary["total_obligation_payments"] += total_amt
+            elif etype == "credit_card_payment":
+                summary["total_credit_card_payments"] += total_amt
+            elif etype == "credit_card_purchase":
+                summary["total_credit_card_purchases"] += total_amt
+
+            if direction == "inflow":
+                summary["net_cashflow"] += total_amt
+            elif direction == "outflow":
+                summary["net_cashflow"] -= total_amt
+
+        return summary
+
+    async def get_timeline(
+        self,
+        user_id: UUID,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+    ) -> list[FinancialEvent]:
+        # Return all events in period to group them in service
+        from sqlalchemy.orm import selectinload
+        stmt = select(FinancialEvent).where(FinancialEvent.user_id == user_id)
+        if date_from:
+            stmt = stmt.where(FinancialEvent.occurred_at >= date_from)
+        if date_to:
+            stmt = stmt.where(FinancialEvent.occurred_at <= date_to)
+        
+        stmt = stmt.options(
+            selectinload(FinancialEvent.account),
+            selectinload(FinancialEvent.category)
+        )
+        stmt = stmt.order_by(FinancialEvent.occurred_at.asc())
+        
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())

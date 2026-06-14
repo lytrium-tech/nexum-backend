@@ -22,9 +22,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
+from app.accounts.models import Account  # noqa: F401
 from app.categories.models import Category  # noqa: F401
 from app.core.database import Base
 
@@ -52,11 +53,15 @@ class FinancialEvent(Base):
         ForeignKey("accounts.id", ondelete="SET NULL"),
         nullable=True,
     )
+    account: Mapped["Account"] = relationship("Account", lazy="noload")
+
     category_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("categories.id", ondelete="SET NULL"),
         nullable=True,
     )
+    category: Mapped["Category"] = relationship("Category", lazy="noload")
+
     event_type: Mapped[str] = mapped_column(Text, nullable=False)
     direction: Mapped[str] = mapped_column(Text, nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
