@@ -176,7 +176,7 @@ class LedgerRepository:
         from sqlalchemy.orm import selectinload
 
         stmt = select(FinancialEvent).where(FinancialEvent.user_id == user_id)
-        
+
         if date_from:
             stmt = stmt.where(FinancialEvent.occurred_at >= date_from)
         if date_to:
@@ -207,23 +207,21 @@ class LedgerRepository:
         total = total_res.scalar_one_or_none() or 0
 
         stmt = stmt.options(
-            selectinload(FinancialEvent.account),
-            selectinload(FinancialEvent.category)
+            selectinload(FinancialEvent.account), selectinload(FinancialEvent.category)
         )
         stmt = stmt.order_by(FinancialEvent.occurred_at.desc())
         stmt = stmt.limit(limit).offset(offset)
-        
+
         result = await self.session.execute(stmt)
         return list(result.scalars().all()), total
 
     async def get_event_detail(self, user_id: UUID, event_id: UUID) -> FinancialEvent | None:
         from sqlalchemy.orm import selectinload
-        stmt = select(FinancialEvent).where(
-            FinancialEvent.id == event_id,
-            FinancialEvent.user_id == user_id
-        ).options(
-            selectinload(FinancialEvent.account),
-            selectinload(FinancialEvent.category)
+
+        stmt = (
+            select(FinancialEvent)
+            .where(FinancialEvent.id == event_id, FinancialEvent.user_id == user_id)
+            .options(selectinload(FinancialEvent.account), selectinload(FinancialEvent.category))
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
@@ -235,11 +233,12 @@ class LedgerRepository:
         date_to: datetime | None = None,
     ) -> dict:
         from sqlalchemy import func
+
         stmt = select(
             FinancialEvent.event_type,
             FinancialEvent.direction,
             func.sum(FinancialEvent.amount).label("total_amount"),
-            func.count(FinancialEvent.id).label("count")
+            func.count(FinancialEvent.id).label("count"),
         ).where(FinancialEvent.user_id == user_id)
 
         if date_from:
@@ -259,7 +258,7 @@ class LedgerRepository:
             "total_credit_card_payments": Decimal("0"),
             "total_credit_card_purchases": Decimal("0"),
             "events_count": 0,
-            "net_cashflow": Decimal("0")
+            "net_cashflow": Decimal("0"),
         }
 
         for row in rows:
@@ -267,7 +266,7 @@ class LedgerRepository:
             direction = row.direction
             total_amt = row.total_amount or Decimal("0")
             count = row.count or 0
-            
+
             summary["events_count"] += count
 
             if etype == "income":
@@ -299,17 +298,17 @@ class LedgerRepository:
     ) -> list[FinancialEvent]:
         # Return all events in period to group them in service
         from sqlalchemy.orm import selectinload
+
         stmt = select(FinancialEvent).where(FinancialEvent.user_id == user_id)
         if date_from:
             stmt = stmt.where(FinancialEvent.occurred_at >= date_from)
         if date_to:
             stmt = stmt.where(FinancialEvent.occurred_at <= date_to)
-        
+
         stmt = stmt.options(
-            selectinload(FinancialEvent.account),
-            selectinload(FinancialEvent.category)
+            selectinload(FinancialEvent.account), selectinload(FinancialEvent.category)
         )
         stmt = stmt.order_by(FinancialEvent.occurred_at.asc())
-        
+
         result = await self.session.execute(stmt)
         return list(result.scalars().all())

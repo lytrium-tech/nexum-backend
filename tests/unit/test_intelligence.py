@@ -63,23 +63,23 @@ def intelligence_service(mock_intelligence_repo):
 @pytest.mark.asyncio
 async def test_get_snapshot_success(intelligence_service, mock_intelligence_repo):
     user_id = uuid.uuid4()
-    
+
     mock_intelligence_repo.return_value.get_cash_metrics.return_value = {
         "total_balance": Decimal("1000.00"),
-        "active_accounts_count": 2
+        "active_accounts_count": 2,
     }
     mock_intelligence_repo.return_value.get_cashflow_metrics.return_value = {
         "income": Decimal("1500.00"),
-        "expenses": Decimal("200.00")
+        "expenses": Decimal("200.00"),
     }
     mock_intelligence_repo.return_value.get_goals_metrics.return_value = {
         "active_goals_count": 1,
         "total_target": Decimal("5000.00"),
-        "total_saved": Decimal("100.00")
+        "total_saved": Decimal("100.00"),
     }
     mock_intelligence_repo.return_value.get_obligations_metrics.return_value = {
         "pending_count": 1,
-        "pending_amount": Decimal("100.00")
+        "pending_amount": Decimal("100.00"),
     }
     mock_intelligence_repo.return_value.get_transfers_metrics.return_value = {
         "monthly_transfer_volume": Decimal("400.00")
@@ -135,7 +135,9 @@ async def test_get_snapshot_empty_user(intelligence_service, mock_intelligence_r
 
 
 @pytest.mark.asyncio
-async def test_get_snapshot_transfers_do_not_change_cashflow(intelligence_service, mock_intelligence_repo):
+async def test_get_snapshot_transfers_do_not_change_cashflow(
+    intelligence_service, mock_intelligence_repo
+):
     user_id = uuid.uuid4()
     mock_intelligence_repo.return_value.get_cash_metrics.return_value = {
         "total_balance": Decimal("1200.00"),
@@ -201,24 +203,27 @@ async def test_get_balance_success(intelligence_service, mock_intelligence_repo)
 @pytest.mark.asyncio
 async def test_get_debt_success(intelligence_service, mock_intelligence_repo):
     user_id = uuid.uuid4()
-    
+
     from unittest.mock import AsyncMock, patch
+
     mock_session = AsyncMock()
     mock_intelligence_repo.return_value.session = mock_session
-    
+
     # We need to mock the CreditCardService inside get_debt, or its repo.
-    with patch('app.credit.service.CreditCardService') as mock_cc_service_class:
+    with patch("app.credit.service.CreditCardService") as mock_cc_service_class:
         mock_cc_service_instance = mock_cc_service_class.return_value
-        
+
         from datetime import date
 
         from app.credit.schemas import CreditCardStatusRead, CreditSummaryRead
-        mock_cc_service_instance.get_credit_summary = AsyncMock(return_value=CreditSummaryRead(
-            total_credit_limit=Decimal("5000.00"),
-            total_debt=Decimal("1500.00"),
-            total_available_credit=Decimal("3500.00"),
-            total_monthly_cc_payment=Decimal("200.00"),
-            cards=[
+
+        mock_cc_service_instance.get_credit_summary = AsyncMock(
+            return_value=CreditSummaryRead(
+                total_credit_limit=Decimal("5000.00"),
+                total_debt=Decimal("1500.00"),
+                total_available_credit=Decimal("3500.00"),
+                total_monthly_cc_payment=Decimal("200.00"),
+                cards=[
                     CreditCardStatusRead(
                         card_id=uuid.uuid4(),
                         name="Visa",
@@ -234,9 +239,10 @@ async def test_get_debt_success(intelligence_service, mock_intelligence_repo):
                         purchases_count=0,
                         payments_count=0,
                     )
-            ]
-        ))
-        
+                ],
+            )
+        )
+
         mock_intelligence_repo.return_value.get_pending_obligations.return_value = [
             {
                 "obligation_id": uuid.uuid4(),
@@ -253,7 +259,7 @@ async def test_get_debt_success(intelligence_service, mock_intelligence_repo):
                 "is_pending": False,  # Should be ignored in pending_commitments
             },
         ]
-    
+
         result = await intelligence_service.get_debt(user_id)
 
     assert result.total_estimated_credit_card_debt == Decimal("1500.00")

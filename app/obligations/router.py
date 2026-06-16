@@ -28,9 +28,6 @@ def get_obligation_service(session: AsyncSession = Depends(get_db_session)) -> O
     return ObligationService(repo, account_repo, ledger_repo)
 
 
-
-
-
 @router.post("", response_model=ObligationRead, status_code=status.HTTP_201_CREATED)
 async def create_obligation(
     payload: ObligationCreate,
@@ -55,7 +52,9 @@ async def list_obligations(
 
 @router.get("/{obligation_id}", response_model=ObligationRead)
 async def get_obligation(
-    obligation_id: UUID, current_profile: CurrentUserProfile, session: AsyncSession = Depends(get_db_session)
+    obligation_id: UUID,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
 ) -> ObligationRead:
     service = get_obligation_service(session)
     user_id = current_profile.id

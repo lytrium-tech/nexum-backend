@@ -1,3 +1,4 @@
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import select
@@ -38,6 +39,18 @@ class GoalRepository:
             if normalize_name(goal.name) == norm_name:
                 return True
         return False
+
+    async def get_period_contributions(self, user_id: UUID, period: str) -> dict[UUID, Decimal]:
+        from sqlalchemy import func
+
+        stmt = (
+            select(GoalContribution.goal_id, func.sum(GoalContribution.amount))
+            .where(GoalContribution.user_id == user_id)
+            .where(GoalContribution.period == period)
+            .group_by(GoalContribution.goal_id)
+        )
+        result = await self.session.execute(stmt)
+        return {row[0]: Decimal(str(row[1] or 0)) for row in result.all()}
 
     async def create(self, goal: Goal) -> Goal:
         self.session.add(goal)

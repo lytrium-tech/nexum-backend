@@ -46,7 +46,9 @@ async def create_card(
 
 
 @router.get("/cards", response_model=list[CreditCardRead])
-async def list_cards(current_profile: CurrentUserProfile, session: AsyncSession = Depends(get_db_session)):
+async def list_cards(
+    current_profile: CurrentUserProfile, session: AsyncSession = Depends(get_db_session)
+):
     user_id = current_profile.id
     service = get_credit_service(session)
     return await service.list_cards(user_id)
@@ -54,7 +56,9 @@ async def list_cards(current_profile: CurrentUserProfile, session: AsyncSession 
 
 @router.get("/cards/{card_id}", response_model=CreditCardRead)
 async def get_card(
-    card_id: uuid.UUID, current_profile: CurrentUserProfile, session: AsyncSession = Depends(get_db_session)
+    card_id: uuid.UUID,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
 ):
     user_id = current_profile.id
     service = get_credit_service(session)
@@ -83,7 +87,9 @@ async def update_card(
 
 @router.delete("/cards/{card_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_card(
-    card_id: uuid.UUID, current_profile: CurrentUserProfile, session: AsyncSession = Depends(get_db_session)
+    card_id: uuid.UUID,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
 ):
     uow = UnitOfWork(session)
     async with uow.transaction():
@@ -154,6 +160,7 @@ async def create_payment(
         except InvalidPaymentAmountError:
             raise HTTPException(status_code=409, detail="Payment amount exceeds current debt")
 
+
 @router.get("/summary", response_model=CreditSummaryRead)
 async def get_credit_summary(
     current_profile: CurrentUserProfile, session: AsyncSession = Depends(get_db_session)
@@ -162,9 +169,12 @@ async def get_credit_summary(
     service = get_credit_service(session)
     return await service.get_credit_summary(user_id)
 
+
 @router.get("/cards/{card_id}/status", response_model=CreditCardStatusRead)
 async def get_card_status(
-    card_id: uuid.UUID, current_profile: CurrentUserProfile, session: AsyncSession = Depends(get_db_session)
+    card_id: uuid.UUID,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
 ):
     user_id = current_profile.id
     service = get_credit_service(session)

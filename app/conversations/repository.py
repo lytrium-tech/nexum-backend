@@ -10,11 +10,12 @@ from app.conversations.schemas import PendingActionRead
 
 
 class ConversationsRepository:
-
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_message_by_external_id(self, channel: str, external_message_id: str) -> dict[str, Any] | None:
+    async def get_message_by_external_id(
+        self, channel: str, external_message_id: str
+    ) -> dict[str, Any] | None:
         """
         Retorna el mensaje (si existe) para deduplicar.
         """
@@ -26,13 +27,12 @@ class ConversationsRepository:
               AND direction = 'outbound'
             LIMIT 1
         """)
-        result = await self.session.execute(query, {"channel": channel, "external_message_id": external_message_id})
+        result = await self.session.execute(
+            query, {"channel": channel, "external_message_id": external_message_id}
+        )
         row = result.fetchone()
         if row:
-            return {
-                "id": row[0],
-                "response_data": row[1] if row[1] else {}
-            }
+            return {"id": row[0], "response_data": row[1] if row[1] else {}}
         return None
 
     async def get_message_by_id(self, message_id: uuid.UUID) -> dict[str, Any] | None:
@@ -61,7 +61,7 @@ class ConversationsRepository:
         external_message_id: str | None = None,
         trace_id: uuid.UUID | None = None,
     ) -> uuid.UUID:
-        
+
         query = text("""
             INSERT INTO public.messages (
                 user_id, channel, direction, role, message, intent, 
@@ -71,8 +71,9 @@ class ConversationsRepository:
                 :parsed_data, :response_data, :external_message_id, :trace_id
             ) RETURNING id
         """)
-        
+
         import json
+
         params = {
             "user_id": user_id,
             "channel": channel,
@@ -83,9 +84,9 @@ class ConversationsRepository:
             "parsed_data": json.dumps(parsed_data or {}),
             "response_data": json.dumps(response_data or {}),
             "external_message_id": external_message_id,
-            "trace_id": trace_id
+            "trace_id": trace_id,
         }
-        
+
         result = await self.session.execute(query, params)
         row = result.fetchone()
         return row[0] if row else uuid.uuid4()
@@ -104,11 +105,11 @@ class ConversationsRepository:
         completion_tokens: int,
         total_tokens: int,
         latency_ms: int,
-        trace_id: uuid.UUID
+        trace_id: uuid.UUID,
     ) -> uuid.UUID:
-        
+
         import json
-        
+
         query = text("""
             INSERT INTO public.ai_runs (
                 user_id, message_id, provider, model, input, output,
@@ -120,7 +121,7 @@ class ConversationsRepository:
                 :total_tokens, :latency_ms, :trace_id
             ) RETURNING id
         """)
-        
+
         params = {
             "user_id": user_id,
             "message_id": message_id,
@@ -134,13 +135,12 @@ class ConversationsRepository:
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
             "latency_ms": latency_ms,
-            "trace_id": trace_id
+            "trace_id": trace_id,
         }
-        
+
         result = await self.session.execute(query, params)
         row = result.fetchone()
         return row[0] if row else uuid.uuid4()
-
 
     async def create_pending_action(
         self,
@@ -150,9 +150,10 @@ class ConversationsRepository:
         missing_fields: dict | None,
         status: str,
         command_id: uuid.UUID | None,
-        source_message_id: uuid.UUID | None = None
+        source_message_id: uuid.UUID | None = None,
     ) -> PendingActionRead:
         import json
+
         query = text("""
             INSERT INTO public.pending_actions (
                 user_id, intent, data, missing_fields, status, command_id, source_message_id, expires_at
@@ -160,7 +161,7 @@ class ConversationsRepository:
                 :user_id, :intent, :data, :missing_fields, :status, :command_id, :source_message_id, now() + interval '15 minutes'
             ) RETURNING id, user_id, intent, data, missing_fields, status, command_id, created_at, updated_at, expires_at, source_message_id, confirmation_message_id
         """)
-        
+
         params = {
             "user_id": user_id,
             "intent": intent,
@@ -168,9 +169,9 @@ class ConversationsRepository:
             "missing_fields": json.dumps(missing_fields) if missing_fields else None,
             "status": status,
             "command_id": command_id,
-            "source_message_id": source_message_id
+            "source_message_id": source_message_id,
         }
-        
+
         result = await self.session.execute(query, params)
         row = result.mappings().first()
         return PendingActionRead(**dict(row))
@@ -196,7 +197,14 @@ class ConversationsRepository:
                 SET status = :status, updated_at = now(), confirmation_message_id = :confirmation_message_id
                 WHERE id = :id
             """)
-            await self.session.execute(query, {"id": action_id, "status": status, "confirmation_message_id": confirmation_message_id})
+            await self.session.execute(
+                query,
+                {
+                    "id": action_id,
+                    "status": status,
+                    "confirmation_message_id": confirmation_message_id,
+                },
+            )
         else:
             query = text("""
                 UPDATE public.pending_actions
@@ -206,36 +214,49 @@ class ConversationsRepository:
             await self.session.execute(query, {"id": action_id, "status": status})
 
     async def update_pending_action(
-        self, action_id: uuid.UUID, data: dict, missing_fields: dict | None, status: str, command_id: uuid.UUID | None, intent: str | None = None
+        self,
+        action_id: uuid.UUID,
+        data: dict,
+        missing_fields: dict | None,
+        status: str,
+        command_id: uuid.UUID | None,
+        intent: str | None = None,
     ) -> None:
         import json
+
         if intent:
             query = text("""
                 UPDATE public.pending_actions
                 SET data = :data, missing_fields = :missing_fields, status = :status, command_id = :command_id, intent = :intent, updated_at = now()
                 WHERE id = :id
             """)
-            await self.session.execute(query, {
-                "id": action_id,
-                "data": json.dumps(data),
-                "missing_fields": json.dumps(missing_fields) if missing_fields else None,
-                "status": status,
-                "command_id": command_id,
-                "intent": intent
-            })
+            await self.session.execute(
+                query,
+                {
+                    "id": action_id,
+                    "data": json.dumps(data),
+                    "missing_fields": json.dumps(missing_fields) if missing_fields else None,
+                    "status": status,
+                    "command_id": command_id,
+                    "intent": intent,
+                },
+            )
         else:
             query = text("""
                 UPDATE public.pending_actions
                 SET data = :data, missing_fields = :missing_fields, status = :status, command_id = :command_id, updated_at = now()
                 WHERE id = :id
             """)
-            await self.session.execute(query, {
-                "id": action_id,
-                "data": json.dumps(data),
-                "missing_fields": json.dumps(missing_fields) if missing_fields else None,
-                "status": status,
-                "command_id": command_id
-            })
+            await self.session.execute(
+                query,
+                {
+                    "id": action_id,
+                    "data": json.dumps(data),
+                    "missing_fields": json.dumps(missing_fields) if missing_fields else None,
+                    "status": status,
+                    "command_id": command_id,
+                },
+            )
 
     async def get_latest_open_pending_action(self, user_id: uuid.UUID) -> PendingActionRead | None:
         # Mantenemos este método por retrocompatibilidad o lo eliminamos si no se usa
@@ -266,7 +287,9 @@ class ConversationsRepository:
         """)
         await self.session.execute(query, {"user_id": user_id})
 
-    async def cancel_open_pending_actions(self, user_id: uuid.UUID, exclude_id: uuid.UUID | None = None) -> None:
+    async def cancel_open_pending_actions(
+        self, user_id: uuid.UUID, exclude_id: uuid.UUID | None = None
+    ) -> None:
         if exclude_id:
             query = text("""
                 UPDATE public.pending_actions

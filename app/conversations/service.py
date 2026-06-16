@@ -39,16 +39,44 @@ from app.transfers.service import TransfersService
 
 logger = logging.getLogger(__name__)
 
+
 def classify_pending_reply(text: str) -> Literal["confirm", "cancel", "unknown"]:
     text_lower = text.lower().strip()
-    text_lower = unicodedata.normalize('NFD', text_lower).encode('ascii', 'ignore').decode('utf-8')
-    text_lower = re.sub(r'[^\w\s]', '', text_lower)
-    text_lower = re.sub(r'\s+', ' ', text_lower).strip()
+    text_lower = unicodedata.normalize("NFD", text_lower).encode("ascii", "ignore").decode("utf-8")
+    text_lower = re.sub(r"[^\w\s]", "", text_lower)
+    text_lower = re.sub(r"\s+", " ", text_lower).strip()
 
-    confirm_phrases = {"si", "ok", "confirmo", "si confirmo", "si lo confirmo", "confirmar", "dale", "claro", "de acuerdo", "adelante", "hazlo", "si adelante", "si claro", "si hazlo"}
+    confirm_phrases = {
+        "si",
+        "ok",
+        "confirmo",
+        "si confirmo",
+        "si lo confirmo",
+        "confirmar",
+        "dale",
+        "claro",
+        "de acuerdo",
+        "adelante",
+        "hazlo",
+        "si adelante",
+        "si claro",
+        "si hazlo",
+    }
     cancel_phrases = {
-        "no", "cancelar", "cancela", "olvidalo", "no confirmo", "mejor no", "no lo hagas", "detener", "no mejor no",
-        "cancelar todo", "ninguna", "olvida eso", "descartar", "empezar de nuevo"
+        "no",
+        "cancelar",
+        "cancela",
+        "olvidalo",
+        "no confirmo",
+        "mejor no",
+        "no lo hagas",
+        "detener",
+        "no mejor no",
+        "cancelar todo",
+        "ninguna",
+        "olvida eso",
+        "descartar",
+        "empezar de nuevo",
     }
 
     if text_lower in confirm_phrases:
@@ -57,9 +85,10 @@ def classify_pending_reply(text: str) -> Literal["confirm", "cancel", "unknown"]
         return "cancel"
     return "unknown"
 
+
 class ConversationsService:
     def __init__(
-        self, 
+        self,
         session: AsyncSession,
         intel_service: IntelligenceService,
         cash_service: CashService,
@@ -80,15 +109,18 @@ class ConversationsService:
     async def handle_message(
         self, user_id: uuid.UUID, request: ConversationalRequest, trace_id: uuid.UUID
     ) -> ConversationalResponse:
-        
+
         # 1. Deduplicación por external_message_id
         if request.external_message_id:
-            existing = await self.repo.get_message_by_external_id(request.channel, request.external_message_id)
+            existing = await self.repo.get_message_by_external_id(
+                request.channel, request.external_message_id
+            )
             if existing:
                 logger.info(f"Deduplicated message {request.external_message_id}")
                 resp_data = existing["response_data"]
                 if isinstance(resp_data, str):
                     import json
+
                     resp_data = json.loads(resp_data)
                 return ConversationalResponse(**resp_data)
 
@@ -108,12 +140,22 @@ class ConversationsService:
         if open_actions and classification == "cancel":
             await self.repo.cancel_open_pending_actions(user_id)
             inbound_msg_id = await self.repo.save_message(
-                user_id=user_id, channel=request.channel, direction="inbound", role="user",
-                message_text=request.message, external_message_id=request.external_message_id, trace_id=trace_id
+                user_id=user_id,
+                channel=request.channel,
+                direction="inbound",
+                role="user",
+                message_text=request.message,
+                external_message_id=request.external_message_id,
+                trace_id=trace_id,
             )
             return await self._build_and_save_response(
-                user_id, inbound_msg_id, request, "Listo, cancelé las operaciones pendientes. Puedes empezar de nuevo.",
-                "unknown", "cancelled", trace_id
+                user_id,
+                inbound_msg_id,
+                request,
+                "Listo, cancelé las operaciones pendientes. Puedes empezar de nuevo.",
+                "unknown",
+                "cancelled",
+                trace_id,
             )
 
         # 5. Selección por número
@@ -122,24 +164,37 @@ class ConversationsService:
                 sel_num = int(request.message.strip())
                 if 1 <= sel_num <= len(open_actions):
                     selected_action = open_actions[sel_num - 1]
-                    
+
                     for act in open_actions:
                         if act.id != selected_action.id:
                             await self.repo.update_pending_action_status(act.id, "cancelled")
-                    
+
                     inbound_msg_id = await self.repo.save_message(
-                        user_id=user_id, channel=request.channel, direction="inbound", role="user",
-                        message_text=request.message, external_message_id=request.external_message_id, trace_id=trace_id
+                        user_id=user_id,
+                        channel=request.channel,
+                        direction="inbound",
+                        role="user",
+                        message_text=request.message,
+                        external_message_id=request.external_message_id,
+                        trace_id=trace_id,
                     )
-                    
+
                     if selected_action.status == "awaiting_confirmation":
-                        prompt = self._generate_confirmation_text(selected_action.intent, selected_action.data)
+                        prompt = self._generate_confirmation_text(
+                            selected_action.intent, selected_action.data
+                        )
                     else:
                         prompt = list(selected_action.missing_fields.values())[0]
-                        
+
                     return await self._build_and_save_response(
-                        user_id, inbound_msg_id, request, prompt,
-                        selected_action.intent, selected_action.status, trace_id, pending_action_id=selected_action.id
+                        user_id,
+                        inbound_msg_id,
+                        request,
+                        prompt,
+                        selected_action.intent,
+                        selected_action.status,
+                        trace_id,
+                        pending_action_id=selected_action.id,
                     )
             except ValueError:
                 pass
@@ -150,7 +205,9 @@ class ConversationsService:
 
         # 7. Fallback defensivo si solo hay 1 acción y no mandaron ID
         if len(open_actions) == 1:
-            logger.info(f"Fallback defensivo aplicado: asociando respuesta a pending_action_id {open_actions[0].id}")
+            logger.info(
+                f"Fallback defensivo aplicado: asociando respuesta a pending_action_id {open_actions[0].id}"
+            )
             request.pending_action_id = str(open_actions[0].id)
             return await self._handle_pending_action_flow(user_id, request, trace_id, open_actions)
 
@@ -162,7 +219,7 @@ class ConversationsService:
             role="user",
             message_text=request.message,
             external_message_id=request.external_message_id,
-            trace_id=trace_id
+            trace_id=trace_id,
         )
 
         accounts = await self.cash_service.account_repo.list_by_user(user_id)
@@ -176,7 +233,7 @@ class ConversationsService:
             categories=[c.name for c in categories],
             credit_cards=[cc.name for cc in credit_cards],
             goals=[g.name for g in goals],
-            obligations=[o.name for o in obligations]
+            obligations=[o.name for o in obligations],
         )
 
         nlu_out, metadata = gemini_client.extract_intent_and_entities(
@@ -197,37 +254,61 @@ class ConversationsService:
             completion_tokens=metadata["completion_tokens"],
             total_tokens=metadata["total_tokens"],
             latency_ms=metadata["latency_ms"],
-            trace_id=trace_id
+            trace_id=trace_id,
         )
 
         intent = nlu_out.intent
 
         if is_read_intent(intent):
-            return await self._process_read_intent(user_id, intent, request, inbound_msg_id, trace_id)
+            return await self._process_read_intent(
+                user_id, intent, request, inbound_msg_id, trace_id
+            )
 
         if is_write_intent(intent):
             return await self._process_write_intent(
-                user_id, intent, nlu_out.entities, request, inbound_msg_id, trace_id,
-                accounts, categories, credit_cards, goals, obligations,
-                open_actions_to_cancel=open_actions if len(open_actions) > 1 else None
+                user_id,
+                intent,
+                nlu_out.entities,
+                request,
+                inbound_msg_id,
+                trace_id,
+                accounts,
+                categories,
+                credit_cards,
+                goals,
+                obligations,
+                open_actions_to_cancel=open_actions if len(open_actions) > 1 else None,
             )
-        
+
         # Default / Fallback o Ambiguo
         if len(open_actions) > 1:
-            return await self._build_and_save_multiple_actions_response(user_id, inbound_msg_id, request, trace_id, open_actions)
+            return await self._build_and_save_multiple_actions_response(
+                user_id, inbound_msg_id, request, trace_id, open_actions
+            )
 
         return await self._build_and_save_response(
-            user_id, inbound_msg_id, request, "No pude entender tu solicitud o la intención no es clara.",
-            "unknown", "completed", trace_id
+            user_id,
+            inbound_msg_id,
+            request,
+            "No pude entender tu solicitud o la intención no es clara.",
+            "unknown",
+            "completed",
+            trace_id,
         )
 
     async def _process_read_intent(
-        self, user_id: uuid.UUID, intent: str, req: ConversationalRequest, msg_id: uuid.UUID, trace_id: uuid.UUID
+        self,
+        user_id: uuid.UUID,
+        intent: str,
+        req: ConversationalRequest,
+        msg_id: uuid.UUID,
+        trace_id: uuid.UUID,
     ) -> ConversationalResponse:
         if intent == "ask_balance":
             data = await self.intel_service.get_balance(user_id)
         elif intent == "ask_free_money":
-            data = await self.intel_service.get_free_money(user_id)
+            snap = await self.intel_service.get_snapshot(user_id)
+            data = {"free_money": snap.truth.free_money}
         elif intent == "ask_debt":
             data = await self.intel_service.get_debt(user_id)
         elif intent == "ask_cashflow":
@@ -241,22 +322,38 @@ class ConversationsService:
         else:
             data = {}
 
-        data_dict = data.model_dump(mode="json") if hasattr(data, "model_dump") else {}
+        data_dict = data.model_dump(mode="json") if hasattr(data, "model_dump") else dict(data)
         response_text = render_read_response(intent, data_dict)
 
         return await self._build_and_save_response(
-            user_id, msg_id, req, response_text, intent, "completed", trace_id, structured_data=data_dict
+            user_id,
+            msg_id,
+            req,
+            response_text,
+            intent,
+            "completed",
+            trace_id,
+            structured_data=data_dict,
         )
 
     async def _process_write_intent(
-        self, user_id: uuid.UUID, intent: str, entities: Any, req: ConversationalRequest, 
-        msg_id: uuid.UUID, trace_id: uuid.UUID,
-        accounts, categories, credit_cards, goals, obligations,
+        self,
+        user_id: uuid.UUID,
+        intent: str,
+        entities: Any,
+        req: ConversationalRequest,
+        msg_id: uuid.UUID,
+        trace_id: uuid.UUID,
+        accounts,
+        categories,
+        credit_cards,
+        goals,
+        obligations,
         existing_resolved_data: dict | None = None,
         action_id: uuid.UUID | None = None,
         original_source_msg_id: uuid.UUID | None = None,
         extra_prefix_message: str | None = None,
-        open_actions_to_cancel: list[PendingActionRead] | None = None
+        open_actions_to_cancel: list[PendingActionRead] | None = None,
     ) -> ConversationalResponse:
         missing = {}
         resolved_data = existing_resolved_data.copy() if existing_resolved_data else {}
@@ -268,7 +365,15 @@ class ConversationsService:
 
         try:
             # 1. Monto (común a casi todos)
-            if intent in ["create_income", "create_expense", "create_goal_contribution", "create_obligation", "create_credit_card_purchase", "create_credit_card_payment", "create_transfer"]:
+            if intent in [
+                "create_income",
+                "create_expense",
+                "create_goal_contribution",
+                "create_obligation",
+                "create_credit_card_purchase",
+                "create_credit_card_payment",
+                "create_transfer",
+            ]:
                 if entities.amount is not None:
                     resolved_data["amount"] = float(entities.amount)
                 if "amount" not in resolved_data:
@@ -276,51 +381,81 @@ class ConversationsService:
             elif intent == "create_obligation_payment":
                 if entities.amount is not None:
                     resolved_data["amount"] = float(entities.amount)
-            
+
             # 2. Cuentas (común a ingresos, gastos, aportes, pagos TC)
-            if intent in ["create_income", "create_expense", "create_goal_contribution", "create_credit_card_payment", "create_obligation_payment"]:
+            if intent in [
+                "create_income",
+                "create_expense",
+                "create_goal_contribution",
+                "create_credit_card_payment",
+                "create_obligation_payment",
+            ]:
                 if entities.account:
-                    acc = resolve_entity(entities.account, accounts, lambda x: x.name, allow_missing=False)
+                    acc = resolve_entity(
+                        entities.account, accounts, lambda x: x.name, allow_missing=False
+                    )
                     resolved_data["account_id"] = str(acc.id)
                     resolved_data["_account_name"] = acc.name
-                
+
                 if "account_id" not in resolved_data:
                     if len(accounts) == 1:
                         resolved_data["account_id"] = str(accounts[0].id)
                         resolved_data["_account_name"] = accounts[0].name
                     else:
-                        missing["account_id"] = "¿Desde qué cuenta hiciste el movimiento?" if intent != "create_income" else "¿A qué cuenta te ingresó?"
-            
+                        missing["account_id"] = (
+                            "¿Desde qué cuenta hiciste el movimiento?"
+                            if intent != "create_income"
+                            else "¿A qué cuenta te ingresó?"
+                        )
+
             # 2.5 Cuentas origen y destino (para transferencias)
             if intent == "create_transfer":
                 if getattr(entities, "source_account", None):
-                    acc = resolve_entity(entities.source_account, accounts, lambda x: x.name, allow_missing=False)
+                    acc = resolve_entity(
+                        entities.source_account, accounts, lambda x: x.name, allow_missing=False
+                    )
                     resolved_data["source_account_id"] = str(acc.id)
                     resolved_data["_source_account_name"] = acc.name
                 if "source_account_id" not in resolved_data:
                     missing["source_account_id"] = "¿Desde qué cuenta transferiste?"
 
                 if getattr(entities, "destination_account", None):
-                    acc = resolve_entity(entities.destination_account, accounts, lambda x: x.name, allow_missing=False)
+                    acc = resolve_entity(
+                        entities.destination_account,
+                        accounts,
+                        lambda x: x.name,
+                        allow_missing=False,
+                    )
                     resolved_data["destination_account_id"] = str(acc.id)
                     resolved_data["_destination_account_name"] = acc.name
                 if "destination_account_id" not in resolved_data:
                     missing["destination_account_id"] = "¿Hacia qué cuenta transferiste?"
-            
+
             # 3. Categorías (para ingresos y gastos)
             if intent in ["create_income", "create_expense"]:
                 if entities.category:
                     try:
-                        cat = resolve_entity(entities.category, categories, lambda x: x.name, allow_missing=True)
+                        cat = resolve_entity(
+                            entities.category, categories, lambda x: x.name, allow_missing=True
+                        )
                         if cat:
                             resolved_data["category_id"] = str(cat.id)
                             resolved_data["_category_name"] = cat.name
                     except EntityNotFoundError:
                         pass
-                
+
                 if "category_id" not in resolved_data:
                     from app.conversations.entity_resolver import normalize_string
-                    fallback = next((c for c in categories if normalize_string(c.name) == "sinclasificar" or normalize_string(c.name) == "sin clasificar"), None)
+
+                    fallback = next(
+                        (
+                            c
+                            for c in categories
+                            if normalize_string(c.name) == "sinclasificar"
+                            or normalize_string(c.name) == "sin clasificar"
+                        ),
+                        None,
+                    )
                     if fallback:
                         resolved_data["category_id"] = str(fallback.id)
                         resolved_data["_category_name"] = fallback.name
@@ -331,11 +466,17 @@ class ConversationsService:
             # 4. TC
             if intent in ["create_credit_card_purchase", "create_credit_card_payment"]:
                 if entities.credit_card:
-                    cc = resolve_entity(entities.credit_card, credit_cards, lambda x: x.name, allow_missing=False)
+                    cc = resolve_entity(
+                        entities.credit_card, credit_cards, lambda x: x.name, allow_missing=False
+                    )
                     resolved_data["credit_card_id"] = str(cc.id)
                     resolved_data["_cc_name"] = cc.name
                 if "credit_card_id" not in resolved_data:
-                    missing["credit_card_id"] = "¿Con qué tarjeta hiciste la compra?" if intent == "create_credit_card_purchase" else "¿Qué tarjeta pagaste?"
+                    missing["credit_card_id"] = (
+                        "¿Con qué tarjeta hiciste la compra?"
+                        if intent == "create_credit_card_purchase"
+                        else "¿Qué tarjeta pagaste?"
+                    )
 
                 if intent == "create_credit_card_purchase":
                     if entities.installments_total:
@@ -371,7 +512,9 @@ class ConversationsService:
                     missing["name"] = "¿Cómo quieres llamar esta obligación?"
             elif intent == "create_obligation_payment":
                 if entities.obligation:
-                    ob = resolve_entity(entities.obligation, obligations, lambda x: x.name, allow_missing=False)
+                    ob = resolve_entity(
+                        entities.obligation, obligations, lambda x: x.name, allow_missing=False
+                    )
                     resolved_data["obligation_id"] = str(ob.id)
                     resolved_data["_obligation_name"] = ob.name
                     if "amount" not in resolved_data:
@@ -389,11 +532,18 @@ class ConversationsService:
 
         if missing or ambiguous:
             if open_actions_to_cancel:
-                return await self._build_and_save_multiple_actions_response(user_id, msg_id, req, trace_id, open_actions_to_cancel)
+                return await self._build_and_save_multiple_actions_response(
+                    user_id, msg_id, req, trace_id, open_actions_to_cancel
+                )
 
             if action_id:
                 await self.repo.update_pending_action(
-                    action_id, data=resolved_data, missing_fields=missing, status="awaiting_clarification", command_id=None, intent=intent
+                    action_id,
+                    data=resolved_data,
+                    missing_fields=missing,
+                    status="awaiting_clarification",
+                    command_id=None,
+                    intent=intent,
                 )
                 action_ref_id = action_id
             else:
@@ -404,17 +554,24 @@ class ConversationsService:
                     missing_fields=missing,
                     status="awaiting_clarification",
                     command_id=None,
-                    source_message_id=msg_id
+                    source_message_id=msg_id,
                 )
                 action_ref_id = action.id
-            
+
             resp_text = " ".join(ambiguous) if ambiguous else list(missing.values())[0]
             if extra_prefix_message:
                 resp_text = f"{extra_prefix_message} {resp_text}"
             return await self._build_and_save_response(
-                user_id, msg_id, req, resp_text, intent, "awaiting_clarification", trace_id, pending_action_id=action_ref_id
+                user_id,
+                msg_id,
+                req,
+                resp_text,
+                intent,
+                "awaiting_clarification",
+                trace_id,
+                pending_action_id=action_ref_id,
             )
-        
+
         # Todo claro -> pending_action awaiting_confirmation
         if open_actions_to_cancel:
             await self.repo.cancel_open_pending_actions(user_id)
@@ -422,7 +579,12 @@ class ConversationsService:
         command_id = uuid.uuid4()
         if action_id:
             await self.repo.update_pending_action(
-                action_id, data=resolved_data, missing_fields=None, status="awaiting_confirmation", command_id=command_id, intent=intent
+                action_id,
+                data=resolved_data,
+                missing_fields=None,
+                status="awaiting_confirmation",
+                command_id=command_id,
+                intent=intent,
             )
             action_ref_id = action_id
         else:
@@ -433,7 +595,7 @@ class ConversationsService:
                 missing_fields=None,
                 status="awaiting_confirmation",
                 command_id=command_id,
-                source_message_id=msg_id
+                source_message_id=msg_id,
             )
             action_ref_id = action.id
 
@@ -442,7 +604,14 @@ class ConversationsService:
             resp_text = f"{extra_prefix_message} {resp_text}"
 
         return await self._build_and_save_response(
-            user_id, msg_id, req, resp_text, intent, "awaiting_confirmation", trace_id, pending_action_id=action_ref_id
+            user_id,
+            msg_id,
+            req,
+            resp_text,
+            intent,
+            "awaiting_confirmation",
+            trace_id,
+            pending_action_id=action_ref_id,
         )
 
     def _generate_confirmation_text(self, intent: str, data: dict) -> str:
@@ -467,7 +636,11 @@ class ConversationsService:
         return "Voy a registrar esta operación. ¿Confirmas?"
 
     async def _handle_pending_action_flow(
-        self, user_id: uuid.UUID, request: ConversationalRequest, trace_id: uuid.UUID, open_actions: list[PendingActionRead]
+        self,
+        user_id: uuid.UUID,
+        request: ConversationalRequest,
+        trace_id: uuid.UUID,
+        open_actions: list[PendingActionRead],
     ) -> ConversationalResponse:
         action = await self.repo.get_pending_action(request.pending_action_id)
         if not action or action.user_id != user_id:
@@ -475,7 +648,7 @@ class ConversationsService:
                 response_text="No encontré una acción pendiente válida.",
                 intent="unknown",
                 status="error",
-                trace_id=trace_id
+                trace_id=trace_id,
             )
 
         # Guardar mensaje inbound de confirmacion
@@ -486,25 +659,40 @@ class ConversationsService:
             role="user",
             message_text=request.message,
             external_message_id=request.external_message_id,
-            trace_id=trace_id
+            trace_id=trace_id,
         )
 
         if action.status == "executed":
             return await self._build_and_save_response(
-                user_id, msg_id, request, "Esta acción ya fue ejecutada previamente.",
-                action.intent, "completed", trace_id
+                user_id,
+                msg_id,
+                request,
+                "Esta acción ya fue ejecutada previamente.",
+                action.intent,
+                "completed",
+                trace_id,
             )
-        
+
         if action.status == "cancelled":
             return await self._build_and_save_response(
-                user_id, msg_id, request, "Esta acción fue cancelada.",
-                action.intent, "cancelled", trace_id
+                user_id,
+                msg_id,
+                request,
+                "Esta acción fue cancelada.",
+                action.intent,
+                "cancelled",
+                trace_id,
             )
 
         if action.status == "expired":
             return await self._build_and_save_response(
-                user_id, msg_id, request, "Esta operación ha expirado. Por favor, comienza de nuevo.",
-                action.intent, "error", trace_id
+                user_id,
+                msg_id,
+                request,
+                "Esta operación ha expirado. Por favor, comienza de nuevo.",
+                action.intent,
+                "error",
+                trace_id,
             )
 
         if action.status == "awaiting_clarification":
@@ -514,60 +702,100 @@ class ConversationsService:
             credit_cards = await self.credit_service.repo.get_all_for_user(user_id)
             goals = await self.goals_service.repository.list_active(user_id)
             obligations = await self.obl_service.repository.list_active(user_id)
-            
+
             prompt = build_system_prompt(
                 accounts=[a.name for a in accounts],
                 categories=[c.name for c in categories],
                 credit_cards=[cc.name for cc in credit_cards],
                 goals=[g.name for g in goals],
-                obligations=[o.name for o in obligations]
+                obligations=[o.name for o in obligations],
             )
-            
+
             nlu_out, metadata = gemini_client.extract_intent_and_entities(
                 message=request.message,
                 system_prompt=prompt,
             )
-            
+
             await self.repo.save_ai_run(
-                user_id=user_id, message_id=msg_id, provider="gemini", model=metadata["model"],
-                input_data={"message": request.message}, output_data=nlu_out.model_dump(mode="json"),
-                intent=nlu_out.intent, success=metadata["success"], prompt_tokens=metadata["prompt_tokens"],
-                completion_tokens=metadata["completion_tokens"], total_tokens=metadata["total_tokens"],
-                latency_ms=metadata["latency_ms"], trace_id=trace_id
+                user_id=user_id,
+                message_id=msg_id,
+                provider="gemini",
+                model=metadata["model"],
+                input_data={"message": request.message},
+                output_data=nlu_out.model_dump(mode="json"),
+                intent=nlu_out.intent,
+                success=metadata["success"],
+                prompt_tokens=metadata["prompt_tokens"],
+                completion_tokens=metadata["completion_tokens"],
+                total_tokens=metadata["total_tokens"],
+                latency_ms=metadata["latency_ms"],
+                trace_id=trace_id,
             )
-            
+
             classification = classify_pending_reply(request.message)
             if classification == "cancel":
                 await self.repo.update_pending_action_status(action.id, "cancelled")
                 return await self._build_and_save_response(
-                    user_id, msg_id, request, "Acción cancelada sin guardar.",
-                    action.intent, "cancelled", trace_id
+                    user_id,
+                    msg_id,
+                    request,
+                    "Acción cancelada sin guardar.",
+                    action.intent,
+                    "cancelled",
+                    trace_id,
                 )
-            
+
             if is_write_intent(nlu_out.intent) and nlu_out.intent != action.intent:
                 # El usuario cambió de intención claramente
                 if len(open_actions) == 1:
                     await self.repo.update_pending_action_status(action.id, "cancelled")
                     return await self._process_write_intent(
-                        user_id, nlu_out.intent, nlu_out.entities, request, msg_id, trace_id,
-                        accounts, categories, credit_cards, goals, obligations,
-                        extra_prefix_message="Entendido. Cancelé el registro anterior."
+                        user_id,
+                        nlu_out.intent,
+                        nlu_out.entities,
+                        request,
+                        msg_id,
+                        trace_id,
+                        accounts,
+                        categories,
+                        credit_cards,
+                        goals,
+                        obligations,
+                        extra_prefix_message="Entendido. Cancelé el registro anterior.",
                     )
                 else:
                     return await self._process_write_intent(
-                        user_id, nlu_out.intent, nlu_out.entities, request, msg_id, trace_id,
-                        accounts, categories, credit_cards, goals, obligations,
-                        open_actions_to_cancel=open_actions
+                        user_id,
+                        nlu_out.intent,
+                        nlu_out.entities,
+                        request,
+                        msg_id,
+                        trace_id,
+                        accounts,
+                        categories,
+                        credit_cards,
+                        goals,
+                        obligations,
+                        open_actions_to_cancel=open_actions,
                     )
-            
+
             # Si es intent="unknown" o el mismo, asumimos que es una clarificación. Hacemos merge.
             # En process_write_intent usamos el action_id para actualizar
             return await self._process_write_intent(
-                user_id, action.intent, nlu_out.entities, request, msg_id, trace_id,
-                accounts, categories, credit_cards, goals, obligations,
+                user_id,
+                action.intent,
+                nlu_out.entities,
+                request,
+                msg_id,
+                trace_id,
+                accounts,
+                categories,
+                credit_cards,
+                goals,
+                obligations,
                 existing_resolved_data=action.data,
                 action_id=action.id,
-                original_source_msg_id=action.source_message_id
+                original_source_msg_id=action.source_message_id,
             )
 
         classification = classify_pending_reply(request.message)
@@ -575,45 +803,75 @@ class ConversationsService:
         if classification == "cancel":
             await self.repo.update_pending_action_status(action.id, "cancelled")
             return await self._build_and_save_response(
-                user_id, msg_id, request, "Acción cancelada sin guardar.",
-                action.intent, "cancelled", trace_id
+                user_id,
+                msg_id,
+                request,
+                "Acción cancelada sin guardar.",
+                action.intent,
+                "cancelled",
+                trace_id,
             )
-        
+
         if classification == "confirm":
             if action.status == "awaiting_confirmation":
                 # Persistir confirmation_message_id ANTES de ejecutar
-                await self.repo.update_pending_action_status(action.id, "awaiting_confirmation", confirmation_message_id=msg_id)
+                await self.repo.update_pending_action_status(
+                    action.id, "awaiting_confirmation", confirmation_message_id=msg_id
+                )
                 try:
                     # Retrieve the original message for raw_message
                     raw_msg = None
                     if action.source_message_id:
-                        original_msg_data = await self.repo.get_message_by_id(action.source_message_id)
+                        original_msg_data = await self.repo.get_message_by_id(
+                            action.source_message_id
+                        )
                         if original_msg_data:
                             raw_msg = original_msg_data.get("message")
-                    
+
                     # Ejecutar (se le pasa action pero también msg_id para la trazabilidad y raw_message)
-                    await self._execute_financial_action(user_id, action, source_msg_id=action.source_message_id, raw_msg=raw_msg)
+                    await self._execute_financial_action(
+                        user_id, action, source_msg_id=action.source_message_id, raw_msg=raw_msg
+                    )
                     await self.repo.update_pending_action_status(action.id, "executed")
                     return await self._build_and_save_response(
-                        user_id, msg_id, request, "¡Operación registrada con éxito!",
-                        action.intent, "completed", trace_id
+                        user_id,
+                        msg_id,
+                        request,
+                        "¡Operación registrada con éxito!",
+                        action.intent,
+                        "completed",
+                        trace_id,
                     )
                 except UnsupportedConversationalIntentError as e:
                     logger.warning(f"Fail-closed: {e}")
                     return await self._build_and_save_response(
-                        user_id, msg_id, request,
+                        user_id,
+                        msg_id,
+                        request,
                         "Todavía no puedo ejecutar esa operación automáticamente. No se registró ningún movimiento.",
-                        action.intent, "error", trace_id
+                        action.intent,
+                        "error",
+                        trace_id,
                     )
-        
+
         # Unknown
         return await self._build_and_save_response(
-            user_id, msg_id, request, "No entendí tu respuesta. Responde “sí” para confirmar o “no” para cancelar.",
-            action.intent, "awaiting_confirmation", trace_id, pending_action_id=action.id
+            user_id,
+            msg_id,
+            request,
+            "No entendí tu respuesta. Responde “sí” para confirmar o “no” para cancelar.",
+            action.intent,
+            "awaiting_confirmation",
+            trace_id,
+            pending_action_id=action.id,
         )
 
     async def _execute_financial_action(
-        self, user_id: uuid.UUID, action: PendingActionRead, source_msg_id: uuid.UUID | None = None, raw_msg: str | None = None
+        self,
+        user_id: uuid.UUID,
+        action: PendingActionRead,
+        source_msg_id: uuid.UUID | None = None,
+        raw_msg: str | None = None,
     ):
         intent = action.intent
         data = action.data
@@ -646,12 +904,14 @@ class ConversationsService:
                 source_message_id=source_msg_id,
                 raw_message=raw_msg,
             )
-            await self.credit_service.create_purchase(user_id, uuid.UUID(data["credit_card_id"]), dto, str(command_id))
+            await self.credit_service.create_purchase(
+                user_id, uuid.UUID(data["credit_card_id"]), dto, str(command_id)
+            )
         elif intent == "create_goal":
             dto = GoalCreate(
                 name=data["name"],
                 target_amount=Decimal(str(data["target_amount"])),
-                target_date=data.get("target_date")
+                target_date=data.get("target_date"),
             )
             await self.goals_service.create_goal(user_id, dto)
         elif intent == "create_goal_contribution":
@@ -661,14 +921,16 @@ class ConversationsService:
                 source_message_id=source_msg_id,
                 raw_message=raw_msg,
             )
-            await self.goals_service.create_contribution(user_id, uuid.UUID(data["goal_id"]), dto, str(command_id))
+            await self.goals_service.create_contribution(
+                user_id, uuid.UUID(data["goal_id"]), dto, str(command_id)
+            )
         elif intent == "create_obligation":
             dto = ObligationCreate(
                 name=data["name"],
                 amount=Decimal(str(data["amount"])),
                 due_day=data.get("due_day"),
                 frequency=data.get("frequency"),
-                category_id=uuid.UUID(data["category_id"]) if "category_id" in data else None
+                category_id=uuid.UUID(data["category_id"]) if "category_id" in data else None,
             )
             await self.obl_service.create_obligation(user_id, dto)
         elif intent == "create_obligation_payment":
@@ -678,7 +940,9 @@ class ConversationsService:
                 source_message_id=source_msg_id,
                 raw_message=raw_msg,
             )
-            await self.obl_service.create_payment(user_id, uuid.UUID(data["obligation_id"]), dto, str(command_id))
+            await self.obl_service.create_payment(
+                user_id, uuid.UUID(data["obligation_id"]), dto, str(command_id)
+            )
         elif intent == "create_credit_card_payment":
             dto = CreditCardPaymentCreate(
                 amount=Decimal(str(data["amount"])),
@@ -686,7 +950,9 @@ class ConversationsService:
                 source_message_id=source_msg_id,
                 raw_message=raw_msg,
             )
-            await self.credit_service.create_payment(user_id, uuid.UUID(data["credit_card_id"]), dto, command_id)
+            await self.credit_service.create_payment(
+                user_id, uuid.UUID(data["credit_card_id"]), dto, command_id
+            )
         elif intent == "create_transfer":
             dto = TransferCreate(
                 source_account_id=uuid.UUID(data["source_account_id"]),
@@ -698,22 +964,30 @@ class ConversationsService:
             )
             await self.transfers_service.create_transfer(user_id, dto)
         else:
-            raise UnsupportedConversationalIntentError(f"Operación no soportada automáticamente: {intent}")
+            raise UnsupportedConversationalIntentError(
+                f"Operación no soportada automáticamente: {intent}"
+            )
 
     async def _build_and_save_response(
-        self, user_id: uuid.UUID, msg_id: uuid.UUID, req: ConversationalRequest, 
-        response_text: str, intent: str, status: str, trace_id: uuid.UUID, 
+        self,
+        user_id: uuid.UUID,
+        msg_id: uuid.UUID,
+        req: ConversationalRequest,
+        response_text: str,
+        intent: str,
+        status: str,
+        trace_id: uuid.UUID,
         pending_action_id: uuid.UUID | None = None,
-        structured_data: dict | None = None
+        structured_data: dict | None = None,
     ) -> ConversationalResponse:
-        
+
         resp = ConversationalResponse(
             response_text=response_text,
             intent=intent,
             status=status,
             trace_id=trace_id,
             pending_action_id=pending_action_id,
-            structured_data=structured_data
+            structured_data=structured_data,
         )
 
         await self.repo.save_message(
@@ -725,12 +999,17 @@ class ConversationsService:
             intent=intent,
             response_data=resp.model_dump(mode="json"),
             external_message_id=req.external_message_id,
-            trace_id=trace_id
+            trace_id=trace_id,
         )
         return resp
 
     async def _build_and_save_multiple_actions_response(
-        self, user_id: uuid.UUID, msg_id: uuid.UUID, req: ConversationalRequest, trace_id: uuid.UUID, open_actions: list[PendingActionRead]
+        self,
+        user_id: uuid.UUID,
+        msg_id: uuid.UUID,
+        req: ConversationalRequest,
+        trace_id: uuid.UUID,
+        open_actions: list[PendingActionRead],
     ) -> ConversationalResponse:
         text_lines = ["Tienes varias operaciones pendientes:\n"]
         for i, act in enumerate(open_actions, 1):
@@ -755,11 +1034,13 @@ class ConversationsService:
                 desc = f"Creación de obligación {act.data.get('name', 'N/A')}"
             else:
                 desc = f"Operación pendiente ({intent_name})"
-            
+
             text_lines.append(f"{i}. {desc}")
-        
-        text_lines.append("\nResponde con el número de la operación que quieres continuar, o escribe \"cancelar todo\".")
-        
+
+        text_lines.append(
+            '\nResponde con el número de la operación que quieres continuar, o escribe "cancelar todo".'
+        )
+
         resp_text = "\n".join(text_lines)
         return await self._build_and_save_response(
             user_id, msg_id, req, resp_text, "unknown", "error", trace_id

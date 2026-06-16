@@ -32,14 +32,16 @@ class TransfersRepository:
                 constraint_name in ("transfers_command_id_key", "transfers_command_id_idx")
                 or "transfers_command_id_key" in error_msg
             )
-            
+
             if is_idempotency:
                 assert transfer.command_id is not None
                 existing = await self.get_by_command_id(transfer.command_id)
                 if existing:
                     return existing
 
-            raise ConflictError(message="Error de integridad al registrar transferencia", details=error_msg)
+            raise ConflictError(
+                message="Error de integridad al registrar transferencia", details=error_msg
+            )
 
         await self.session.refresh(transfer, ["source_account", "destination_account"])
         return transfer
@@ -47,7 +49,9 @@ class TransfersRepository:
     async def get_by_command_id(self, command_id: UUID) -> Transfer | None:
         stmt = (
             select(Transfer)
-            .options(selectinload(Transfer.source_account), selectinload(Transfer.destination_account))
+            .options(
+                selectinload(Transfer.source_account), selectinload(Transfer.destination_account)
+            )
             .where(Transfer.command_id == command_id)
         )
         result = await self.session.execute(stmt)
@@ -56,7 +60,9 @@ class TransfersRepository:
     async def get_by_id(self, transfer_id: UUID, user_id: UUID) -> Transfer:
         stmt = (
             select(Transfer)
-            .options(selectinload(Transfer.source_account), selectinload(Transfer.destination_account))
+            .options(
+                selectinload(Transfer.source_account), selectinload(Transfer.destination_account)
+            )
             .where(Transfer.id == transfer_id, Transfer.user_id == user_id)
         )
         result = await self.session.execute(stmt)
@@ -65,15 +71,19 @@ class TransfersRepository:
             raise NotFoundError(message="Transferencia no encontrada.")
         return transfer
 
-    async def list_transfers(self, user_id: UUID, limit: int = 50, offset: int = 0) -> tuple[list[Transfer], int]:
+    async def list_transfers(
+        self, user_id: UUID, limit: int = 50, offset: int = 0
+    ) -> tuple[list[Transfer], int]:
         # Ocurred_at doesn't exist on transfers, we use created_at for ordering.
         stmt = (
             select(Transfer)
-            .options(selectinload(Transfer.source_account), selectinload(Transfer.destination_account))
+            .options(
+                selectinload(Transfer.source_account), selectinload(Transfer.destination_account)
+            )
             .where(Transfer.user_id == user_id)
             .order_by(Transfer.created_at.desc())
         )
-        
+
         # Paginate
         page_stmt = stmt.limit(limit).offset(offset)
         result = await self.session.execute(page_stmt)
@@ -81,6 +91,7 @@ class TransfersRepository:
 
         # Count
         from sqlalchemy import func
+
         count_stmt = select(func.count()).select_from(Transfer).where(Transfer.user_id == user_id)
         count_result = await self.session.execute(count_stmt)
         total = cast(int, count_result.scalar_one())

@@ -50,14 +50,13 @@ from jwt import PyJWKClient  # noqa: E402
 # Configuración del cliente JWKS para caché
 _jwks_client: PyJWKClient | None = None
 
+
 def get_jwks_client() -> PyJWKClient:
     global _jwks_client
     if _jwks_client is None:
         url = f"{settings.SUPABASE_URL}/auth/v1/.well-known/jwks.json"
         _jwks_client = PyJWKClient(url)
     return _jwks_client
-
-
 
 
 async def get_current_user(
@@ -74,7 +73,7 @@ async def get_current_user(
                     email=request.headers.get("x-test-email", "test@example.com"),
                     is_dev=True,
                 )
-            
+
         return AuthenticatedUser(
             user_id=settings.DEV_USER_ID,
             email=settings.DEV_USER_EMAIL,
@@ -91,10 +90,10 @@ async def get_current_user(
     try:
         jwks_client = get_jwks_client()
         signing_key = jwks_client.get_signing_key_from_jwt(token)
-        
+
         # El issuer de Supabase Auth es el URL base + /auth/v1
         expected_issuer = f"{settings.SUPABASE_URL}/auth/v1"
-        
+
         # Para la audiencia, por defecto es 'authenticated'
         payload = jwt.decode(
             token,
@@ -102,13 +101,13 @@ async def get_current_user(
             algorithms=["ES256", "HS256", "RS256"],
             audience="authenticated",
             issuer=expected_issuer,
-            options={"verify_iss": True, "verify_aud": True, "verify_exp": True}
+            options={"verify_iss": True, "verify_aud": True, "verify_exp": True},
         )
-        
+
         user_id = payload.get("sub")
         if not user_id:
             raise AuthenticationError(message="Token inválido: falta claim 'sub'.")
-            
+
         role = payload.get("role")
         if role != "authenticated":
             raise AuthenticationError(message="Token inválido: rol no autorizado.")

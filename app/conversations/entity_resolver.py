@@ -4,15 +4,20 @@ from typing import Any
 
 # Type variables for generic resolution
 
+
 class AmbiguousEntityError(Exception):
     """Lanzada cuando la coincidencia parcial devuelve múltiples resultados."""
+
     def __init__(self, matches: list[Any], message: str = "Ambigüedad detectada"):
         self.matches = matches
         super().__init__(message)
 
+
 class EntityNotFoundError(Exception):
     """Lanzada cuando no se encuentra ninguna coincidencia."""
+
     pass
+
 
 def normalize_string(s: str) -> str:
     """Normaliza un string a minúsculas y elimina tildes/acentos."""
@@ -21,22 +26,31 @@ def normalize_string(s: str) -> str:
     s = s.lower()
     # Mapeo simple de tildes
     replacements = (
-        ("á", "a"), ("é", "e"), ("í", "i"), ("ó", "o"), ("ú", "u"),
-        ("ä", "a"), ("ë", "e"), ("ï", "i"), ("ö", "o"), ("ü", "u"),
-        ("ñ", "n")
+        ("á", "a"),
+        ("é", "e"),
+        ("í", "i"),
+        ("ó", "o"),
+        ("ú", "u"),
+        ("ä", "a"),
+        ("ë", "e"),
+        ("ï", "i"),
+        ("ö", "o"),
+        ("ü", "u"),
+        ("ñ", "n"),
     )
     for a, b in replacements:
         s = s.replace(a, b)
     # Remover caracteres especiales y múltiples espacios
-    s = re.sub(r'[^a-z0-9\s]', '', s)
-    s = re.sub(r'\s+', ' ', s).strip()
+    s = re.sub(r"[^a-z0-9\s]", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
     return s
+
 
 def resolve_entity[T](
     query: str | None,
     options: Sequence[T],
     name_extractor: Callable[[T], str],
-    allow_missing: bool = False
+    allow_missing: bool = False,
 ) -> T | None:
     """
     Resuelve una entidad textual contra una lista de opciones.
@@ -44,7 +58,7 @@ def resolve_entity[T](
     2. Exact match normalizado
     3. Coincidencia parcial única
     4. Múltiples -> AmbiguousEntityError
-    5. Cero -> EntityNotFoundError (o None si allow_missing=True pero la query sí existía, 
+    5. Cero -> EntityNotFoundError (o None si allow_missing=True pero la query sí existía,
        no obstante, el requerimiento dice "faltante -> pedir aclaración", entonces si
        query existe y no hace match, lanzamos EntityNotFoundError).
        Si query es None y allow_missing=False -> EntityNotFoundError.
@@ -55,13 +69,13 @@ def resolve_entity[T](
         raise EntityNotFoundError("Entidad requerida pero no provista.")
 
     norm_query = normalize_string(query)
-    
+
     # 1. Exact match normalizado
     exact_matches = []
     for opt in options:
         if normalize_string(name_extractor(opt)) == norm_query:
             exact_matches.append(opt)
-    
+
     if len(exact_matches) == 1:
         return exact_matches[0]
     if len(exact_matches) > 1:
@@ -90,7 +104,8 @@ def resolve_entity[T](
     if len(unique_partial_matches) == 1:
         return unique_partial_matches[0]
     if len(unique_partial_matches) > 1:
-        raise AmbiguousEntityError(unique_partial_matches, "Múltiples opciones coinciden parcialmente.")
-    
-    raise EntityNotFoundError(f"No se encontró ninguna coincidencia para '{query}'.")
+        raise AmbiguousEntityError(
+            unique_partial_matches, "Múltiples opciones coinciden parcialmente."
+        )
 
+    raise EntityNotFoundError(f"No se encontró ninguna coincidencia para '{query}'.")

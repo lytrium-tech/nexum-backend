@@ -74,6 +74,7 @@ async def health_check() -> HealthResponse:
         service=settings.APP_NAME,
     )
 
+
 @api_router.get(
     "/health/readiness",
     response_model=HealthResponse,

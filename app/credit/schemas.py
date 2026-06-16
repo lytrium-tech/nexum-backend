@@ -90,6 +90,7 @@ class CreditCardStatusRead(BaseModel):
     purchases_count: int
     payments_count: int
 
+
 class CreditSummaryRead(BaseModel):
     total_credit_limit: Decimal
     total_debt: Decimal

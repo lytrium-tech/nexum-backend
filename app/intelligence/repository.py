@@ -18,7 +18,9 @@ class IntelligenceRepository:
         result = await self.session.execute(query, {"user_id": user_id})
         return dict(result.mappings().first() or {})
 
-    async def get_cashflow_metrics(self, user_id: uuid.UUID, month_start: datetime, next_month_start: datetime) -> dict[str, Any]:
+    async def get_cashflow_metrics(
+        self, user_id: uuid.UUID, month_start: datetime, next_month_start: datetime
+    ) -> dict[str, Any]:
         query = text(
             "SELECT "
             "COALESCE(SUM(CASE WHEN event_type = 'income' THEN amount ELSE 0 END), 0) as income, "
@@ -26,7 +28,9 @@ class IntelligenceRepository:
             "FROM financial_events "
             "WHERE user_id = :user_id AND occurred_at >= :start AND occurred_at < :end"
         )
-        result = await self.session.execute(query, {"user_id": user_id, "start": month_start, "end": next_month_start})
+        result = await self.session.execute(
+            query, {"user_id": user_id, "start": month_start, "end": next_month_start}
+        )
         return dict(result.mappings().first() or {})
 
     async def get_debt_metrics(self, user_id: uuid.UUID) -> dict[str, Any]:
@@ -58,13 +62,17 @@ class IntelligenceRepository:
         result = await self.session.execute(query, {"user_id": user_id, "period": period})
         return dict(result.mappings().first() or {})
 
-    async def get_transfers_metrics(self, user_id: uuid.UUID, month_start: datetime, next_month_start: datetime) -> dict[str, Any]:
+    async def get_transfers_metrics(
+        self, user_id: uuid.UUID, month_start: datetime, next_month_start: datetime
+    ) -> dict[str, Any]:
         query = text(
             "SELECT COALESCE(SUM(amount), 0) as monthly_transfer_volume "
             "FROM transfers "
             "WHERE user_id = :user_id AND created_at >= :start AND created_at < :end"
         )
-        result = await self.session.execute(query, {"user_id": user_id, "start": month_start, "end": next_month_start})
+        result = await self.session.execute(
+            query, {"user_id": user_id, "start": month_start, "end": next_month_start}
+        )
         return dict(result.mappings().first() or {})
 
     async def get_recent_activity(self, user_id: uuid.UUID, limit: int = 5) -> list[dict[str, Any]]:
@@ -78,7 +86,9 @@ class IntelligenceRepository:
         return [dict(r) for r in result.mappings().all()]
 
     async def get_financial_snapshot(self, user_id: uuid.UUID) -> dict[str, Any] | None:
-        query = text("SELECT * FROM public.v_financial_snapshot_current_month WHERE user_id = :user_id")
+        query = text(
+            "SELECT * FROM public.v_financial_snapshot_current_month WHERE user_id = :user_id"
+        )
         result = await self.session.execute(query, {"user_id": user_id})
         row = result.mappings().first()
         return dict(row) if row else None
@@ -90,7 +100,9 @@ class IntelligenceRepository:
         return dict(row) if row else None
 
     async def get_consumption_summary(self, user_id: uuid.UUID) -> dict[str, Any] | None:
-        query = text("SELECT * FROM public.v_consumption_summary_current_month WHERE user_id = :user_id")
+        query = text(
+            "SELECT * FROM public.v_consumption_summary_current_month WHERE user_id = :user_id"
+        )
         result = await self.session.execute(query, {"user_id": user_id})
         row = result.mappings().first()
         return dict(row) if row else None
@@ -111,6 +123,8 @@ class IntelligenceRepository:
         return [dict(r) for r in result.mappings().all()]
 
     async def get_pending_obligations(self, user_id: uuid.UUID) -> list[dict[str, Any]]:
-        query = text("SELECT * FROM public.v_pending_obligations_current_month WHERE user_id = :user_id")
+        query = text(
+            "SELECT * FROM public.v_pending_obligations_current_month WHERE user_id = :user_id"
+        )
         result = await self.session.execute(query, {"user_id": user_id})
         return [dict(r) for r in result.mappings().all()]

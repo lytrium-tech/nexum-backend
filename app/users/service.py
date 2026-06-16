@@ -28,20 +28,22 @@ class UserService:
 
         return UserRead.model_validate(user)
 
-    async def onboard_user(self, identity: AuthenticatedIdentity, payload: UserOnboardingRequest) -> UserOnboardingResponse:
+    async def onboard_user(
+        self, identity: AuthenticatedIdentity, payload: UserOnboardingRequest
+    ) -> UserOnboardingResponse:
         if identity.is_dev:
             user = await self.repository.get_by_id(UUID(identity.user_id))
         else:
             user = await self.repository.get_by_auth_id(identity.user_id)
-            
+
         if user:
             return UserOnboardingResponse(
                 created=False,
                 onboarding_completed=True,
                 profile=UserRead.model_validate(user),
-                next_step="create_account"
+                next_step="create_account",
             )
-            
+
         try:
             db_user = User(
                 auth_user_id=UUID(identity.user_id) if not identity.is_dev else None,
@@ -49,7 +51,7 @@ class UserService:
                 name=clean_presentation_name(payload.name),
                 timezone=payload.timezone,
                 currency=payload.currency,
-                status="active"
+                status="active",
             )
             created = await self.repository.create_user(db_user)
             await self.repository.session.flush()
@@ -57,7 +59,7 @@ class UserService:
                 created=True,
                 onboarding_completed=True,
                 profile=UserRead.model_validate(created),
-                next_step="create_account"
+                next_step="create_account",
             )
         except IntegrityError:
             if identity.is_dev:
@@ -68,5 +70,5 @@ class UserService:
                 created=False,
                 onboarding_completed=True,
                 profile=UserRead.model_validate(user),
-                next_step="create_account"
+                next_step="create_account",
             )

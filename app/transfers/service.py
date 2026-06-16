@@ -81,7 +81,7 @@ class TransfersService:
                 existing = await self.transfers_repo.get_by_command_id(payload.command_id)
                 if existing:
                     return TransferResult.model_validate(existing)
-            
+
             self.transfers_repo.session.add(transfer)
             await self.transfers_repo.session.flush()
 
@@ -95,10 +95,10 @@ class TransfersService:
                 amount=payload.amount,
                 description=payload.description,
                 source="backend",
-                command_id=None, # command_id está en transfer, si lo ponemos aquí chocaría. Podríamos usar UUID5 pero lo evitamos
+                command_id=None,  # command_id está en transfer, si lo ponemos aquí chocaría. Podríamos usar UUID5 pero lo evitamos
                 transfer_id=transfer.id,
                 source_message_id=payload.source_message_id,
-                occurred_at=payload.occurred_at
+                occurred_at=payload.occurred_at,
             )
             out_result = await self.ledger_repo.insert_event(out_event_create)
 
@@ -115,7 +115,7 @@ class TransfersService:
                 command_id=None,
                 transfer_id=transfer.id,
                 source_message_id=payload.source_message_id,
-                occurred_at=payload.occurred_at
+                occurred_at=payload.occurred_at,
             )
             in_result = await self.ledger_repo.insert_event(in_event_create)
 
@@ -128,12 +128,13 @@ class TransfersService:
 
             res = TransferResult.model_validate(transfer)
             res.ledger_events = LedgerEventsRef(
-                out_event_id=out_result.event.id,
-                in_event_id=in_result.event.id
+                out_event_id=out_result.event.id, in_event_id=in_result.event.id
             )
             return res
 
-    async def list_transfers(self, user_id: UUID, limit: int = 50, offset: int = 0) -> tuple[list[Transfer], int]:
+    async def list_transfers(
+        self, user_id: UUID, limit: int = 50, offset: int = 0
+    ) -> tuple[list[Transfer], int]:
         return await self.transfers_repo.list_transfers(user_id, limit, offset)
 
     async def get_transfer(self, transfer_id: UUID, user_id: UUID) -> TransferResult:

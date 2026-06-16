@@ -91,8 +91,6 @@ async def cleanup():
             )
             logger.info(f"Cuentas eliminadas: {res.rowcount}")
 
-
-
     except Exception as e:
         logger.error(f"Fallo en limpieza: {e}")
     finally:

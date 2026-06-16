@@ -44,8 +44,14 @@ async def check_db_state(obligation_id: str, command_id: str):
                 "(debe ser 1 a pesar del retry)"
             )
 
-            txs = await conn.execute(text("SELECT count(*) FROM public.financial_events WHERE event_type = 'obligation_payment'"))
-            logger.info(f" -> Filas en public.financial_events (obligation_payments): {txs.scalar()}")
+            txs = await conn.execute(
+                text(
+                    "SELECT count(*) FROM public.financial_events WHERE event_type = 'obligation_payment'"
+                )
+            )
+            logger.info(
+                f" -> Filas en public.financial_events (obligation_payments): {txs.scalar()}"
+            )
     finally:
         await engine.dispose()
 
@@ -103,7 +109,11 @@ async def run_smoke():
         # 6. Crear obligación monthly
         r = await client.post(
             f"{base_url}/api/v1/obligations",
-            json={"name": f"Obligacion Monthly {uuid.uuid4().hex[:6]}", "amount": "100", "frequency": "monthly"},
+            json={
+                "name": f"Obligacion Monthly {uuid.uuid4().hex[:6]}",
+                "amount": "100",
+                "frequency": "monthly",
+            },
             headers=headers,
         )
         r.raise_for_status()
@@ -183,7 +193,11 @@ async def run_smoke():
         # 11. Crear obligación once
         r = await client.post(
             f"{base_url}/api/v1/obligations",
-            json={"name": f"Obligacion Once {uuid.uuid4().hex[:6]}", "amount": "50", "frequency": "once"},
+            json={
+                "name": f"Obligacion Once {uuid.uuid4().hex[:6]}",
+                "amount": "50",
+                "frequency": "once",
+            },
             headers=headers,
         )
         r.raise_for_status()

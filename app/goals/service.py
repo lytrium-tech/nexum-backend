@@ -39,15 +39,37 @@ class GoalService:
         self.account_repo = account_repo
         self.ledger_repo = ledger_repo
 
+    def _current_period(self) -> str:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/Bogota")
+        now = datetime.now(tz)
+        return f"{now.year}-{now.month:02d}"
+
     async def list_goals(self, auth_user_id: UUID) -> list[GoalRead]:
         goals = await self.repository.list_active(auth_user_id)
-        return [GoalRead.model_validate(g) for g in goals]
+        period = self._current_period()
+        contributions = await self.repository.get_period_contributions(auth_user_id, period)
+
+        results = []
+        for g in goals:
+            gr = GoalRead.model_validate(g)
+            gr.contributed_this_period = contributions.get(g.id, Decimal("0.00"))
+            results.append(gr)
+        return results
 
     async def get_goal(self, auth_user_id: UUID, goal_id: UUID) -> GoalRead:
         goal = await self._get_goal_or_404(goal_id)
         if goal.user_id != auth_user_id:
             raise GoalForbiddenError()
-        return GoalRead.model_validate(goal)
+
+        period = self._current_period()
+        contributions = await self.repository.get_period_contributions(auth_user_id, period)
+
+        gr = GoalRead.model_validate(goal)
+        gr.contributed_this_period = contributions.get(goal.id, Decimal("0.00"))
+        return gr
 
     async def create_goal(self, auth_user_id: UUID, payload: GoalCreate) -> GoalRead:
         norm_name = normalize_name(payload.name)
@@ -63,18 +85,22 @@ class GoalService:
             name=clean_presentation_name(payload.name),
             target_amount=payload.target_amount,
             target_date=payload.target_date,
-            current_amount=Decimal("0"),
             is_active=True,
             status="active",
         )
         created = await self.repository.create(db_goal)
-        await self.repository.session.refresh(created)
-        return GoalRead.model_validate(created)
+        gr = GoalRead.model_validate(created)
+        gr.contributed_this_period = Decimal("0.00")
+        return gr
 
     async def update_goal(self, auth_user_id: UUID, goal_id: UUID, payload: GoalUpdate) -> GoalRead:
-        goal = await self._get_goal_or_404(goal_id)
+        goal = await self._get_goal_or_404_for_update(goal_id)
         if goal.user_id != auth_user_id:
             raise GoalForbiddenError()
+        if not goal.is_active:
+            raise GoalNotActiveError()
+        if goal.status == "completed":
+            raise GoalCompletedError()
 
         if payload.name is not None:
             norm_name = normalize_name(payload.name)
@@ -90,13 +116,19 @@ class GoalService:
             if payload.target_amount < goal.current_amount:
                 raise GoalTargetAmountError()
             goal.target_amount = payload.target_amount
+            if goal.current_amount >= goal.target_amount:
+                goal.status = "completed"
 
         if payload.target_date is not None:
             goal.target_date = payload.target_date
 
         await self.repository.session.flush()
-        await self.repository.session.refresh(goal)
-        return GoalRead.model_validate(goal)
+
+        period = self._current_period()
+        contributions = await self.repository.get_period_contributions(auth_user_id, period)
+        gr = GoalRead.model_validate(goal)
+        gr.contributed_this_period = contributions.get(goal.id, Decimal("0.00"))
+        return gr
 
     async def delete_goal(self, auth_user_id: UUID, goal_id: UUID) -> None:
         goal = await self._get_goal_or_404(goal_id)

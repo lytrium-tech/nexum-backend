@@ -7,26 +7,20 @@ import httpx
 API_URL = "https://api.nexum.lytrium.tech"
 TEST_TOKEN = os.environ.get("NEXUM_PROD_TEST_TOKEN")
 
+
 async def run_smoke():
     if not TEST_TOKEN:
         print("FAIL: NEXUM_PROD_TEST_TOKEN is not set.")
         sys.exit(1)
 
     print(f"=== Iniciando Smoke Test Autenticado Onboarding en {API_URL} ===")
-    
-    headers = {
-        "Authorization": f"Bearer {TEST_TOKEN}",
-        "Content-Type": "application/json"
-    }
+
+    headers = {"Authorization": f"Bearer {TEST_TOKEN}", "Content-Type": "application/json"}
 
     async with httpx.AsyncClient(base_url=API_URL, headers=headers, timeout=30.0) as client:
         # 1. Bootstrap inicial
         print("\n--- 1. Bootstrap inicial ---")
-        payload = {
-            "name": "Smoke Test User",
-            "timezone": "America/Bogota",
-            "currency": "COP"
-        }
+        payload = {"name": "Smoke Test User", "timezone": "America/Bogota", "currency": "COP"}
         resp = await client.post("/api/v1/users/me/bootstrap", json=payload)
         print(f"Status: {resp.status_code}")
         print(f"Body: {resp.json()}")
@@ -68,6 +62,7 @@ async def run_smoke():
         assert resp.status_code in (200, 201), f"Conversations failed: {resp.status_code}"
 
     print("\n=== Smoke Test completado con éxito ===")
+
 
 if __name__ == "__main__":
     try:

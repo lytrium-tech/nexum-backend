@@ -30,11 +30,13 @@ class GoalRead(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    contributed_this_period: Decimal = Decimal("0.00")
+
     model_config = ConfigDict(from_attributes=True)
 
     @computed_field
     def remaining_amount(self) -> Decimal:
-        return max(Decimal("0"), self.target_amount - self.current_amount)
+        return max(Decimal("0.00"), self.target_amount - self.current_amount)
 
     @computed_field
     def progress_percentage(self) -> Decimal:
@@ -43,25 +45,51 @@ class GoalRead(BaseModel):
                 round((self.current_amount / self.target_amount) * Decimal("100"), 2),
                 Decimal("100"),
             )
-        return Decimal("0")
+        return Decimal("0.00")
+
+    @computed_field
+    def is_flexible(self) -> bool:
+        return self.target_date is None
 
     @computed_field
     def monthly_required(self) -> Decimal | None:
-        if not self.target_date or self.target_amount <= 0:
+        if self.is_flexible or self.target_amount <= 0:
             return None
         today = datetime.now(UTC).date()
+        if today >= self.target_date:
+            return self.remaining_amount
+
         days_left = (self.target_date - today).days
         months_left = max(Decimal(days_left) / Decimal("30"), Decimal("1"))
         return round(self.remaining_amount / months_left, 2)
 
     @computed_field
-    def daily_required(self) -> Decimal | None:
-        if not self.target_date or self.target_amount <= 0:
-            return None
-        today = datetime.now(UTC).date()
-        days_left = (self.target_date - today).days
-        days_left_dec = max(Decimal(days_left), Decimal("1"))
-        return round(self.remaining_amount / days_left_dec, 2)
+    def required_this_period(self) -> Decimal:
+        if self.is_flexible:
+            return Decimal("0.00")
+        if self.status == "completed" or self.remaining_amount == 0:
+            return Decimal("0.00")
+        return self.monthly_required or Decimal("0.00")
+
+    @computed_field
+    def remaining_required_this_period(self) -> Decimal:
+        if self.is_flexible:
+            return Decimal("0.00")
+
+        remaining = self.required_this_period - self.contributed_this_period
+        return max(Decimal("0.00"), remaining)
+
+    @computed_field
+    def period_status(self) -> str:
+        if self.remaining_amount == 0 or self.status == "completed":
+            return "completed"
+        if self.is_flexible:
+            return "flexible"
+        if self.contributed_this_period == 0:
+            return "pending"
+        if self.remaining_required_this_period > 0:
+            return "partial"
+        return "covered"
 
 
 class GoalContributionCreate(BaseModel):

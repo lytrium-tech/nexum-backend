@@ -18,9 +18,11 @@ from app.users.dependencies import CurrentUserProfile
 
 router = APIRouter(prefix="/ledger", tags=["ledger"])
 
+
 def get_ledger_service(session: AsyncSession = Depends(get_db_session)) -> LedgerService:
     repo = LedgerRepository(session)
     return LedgerService(repo)
+
 
 @router.get("/events", response_model=LedgerEventsResponse)
 async def list_events(
@@ -42,10 +44,10 @@ async def list_events(
     Lista el historial de eventos financieros del usuario.
     """
     # Para validar el filter de ownership: si el usuario intenta filtrar por account_id ajena,
-    # en list_events devolverá 0 si la account_id no coincide (porque está ligada al mismo usuario 
-    # si usamos un AND account_id = X AND user_id = Y). Pero el requerimiento dice: 
+    # en list_events devolverá 0 si la account_id no coincide (porque está ligada al mismo usuario
+    # si usamos un AND account_id = X AND user_id = Y). Pero el requerimiento dice:
     # "usuario A no puede filtrar por account_id de B... Debe devolver 403 o 404".
-    # Lo mismo para category. 
+    # Lo mismo para category.
     # Por tanto, validamos en el router usando repo methods:
     if account_id:
         await service.repository.check_account_ownership(account_id, user.id)
@@ -69,8 +71,9 @@ async def list_events(
 
     return LedgerEventsResponse(
         items=[LedgerEventDetail.model_validate(item) for item in items],
-        pagination=LedgerPaginationInfo(limit=limit, offset=offset, total=total)
+        pagination=LedgerPaginationInfo(limit=limit, offset=offset, total=total),
     )
+
 
 @router.get("/events/{event_id}", response_model=LedgerEventDetail)
 async def get_event_detail(
@@ -83,6 +86,7 @@ async def get_event_detail(
     """
     return await service.get_event_detail(user.id, event_id)
 
+
 @router.get("/summary", response_model=LedgerSummaryResponse)
 async def get_summary(
     user: CurrentUserProfile,
@@ -94,6 +98,7 @@ async def get_summary(
     Resumen financiero agrupado para un periodo dado.
     """
     return await service.get_summary(user.id, date_from, date_to)
+
 
 @router.get("/timeline", response_model=LedgerTimelineResponse)
 async def get_timeline(

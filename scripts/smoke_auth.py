@@ -7,7 +7,7 @@ from app.main import app
 
 async def run_smoke():
     print("=== Iniciando Smoke Test Auth Local ===")
-    
+
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         # 1. /health
         resp = await client.get("/health")
@@ -26,15 +26,14 @@ async def run_smoke():
         print("OK: Acceso sin token -> 401")
 
         # 4. Token invalido
-        resp = await client.get("/api/v1/intelligence/snapshot", headers={"Authorization": "Bearer fake"})
+        resp = await client.get(
+            "/api/v1/intelligence/snapshot", headers={"Authorization": "Bearer fake"}
+        )
         assert resp.status_code == 401
         print("OK: Acceso token invalido -> 401")
 
         # 5. CORS permitido para localhost
-        headers = {
-            "Origin": "http://localhost:3000",
-            "Access-Control-Request-Method": "GET"
-        }
+        headers = {"Origin": "http://localhost:3000", "Access-Control-Request-Method": "GET"}
         resp = await client.options("/health", headers=headers)
         assert resp.status_code == 200
         print("OK: CORS preflight localhost -> 200")
@@ -43,6 +42,6 @@ async def run_smoke():
         # En development CORS_ORIGINS esta configurado a localhost, pero DEBUG=True podria estar sobreescribiendo.
         pass
 
+
 if __name__ == "__main__":
     asyncio.run(run_smoke())
-

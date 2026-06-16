@@ -41,7 +41,7 @@ async def seed():
         async with engine.begin() as conn:
             await conn.execute(query, {"id": dev_user_id, "email": dev_email})
             logger.info("Usuario de desarrollo asegurado en public.users.")
-            
+
             query_cat = text("""
                 INSERT INTO public.categories (id, user_id, name, type, is_active)
                 VALUES ('00000000-0000-0000-0000-000000000000'::UUID, NULL, 'sin_clasificar', 'expense', true)

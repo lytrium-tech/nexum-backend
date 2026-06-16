@@ -81,7 +81,11 @@ async def main() -> None:
         acc_2 = await post_json(
             client,
             "/accounts",
-            {"name": f"Snapshot Secondary {uuid.uuid4().hex[:6]}", "type": "bank", "currency": "COP"},
+            {
+                "name": f"Snapshot Secondary {uuid.uuid4().hex[:6]}",
+                "type": "bank",
+                "currency": "COP",
+            },
             headers_a,
         )
 
@@ -127,13 +131,21 @@ async def main() -> None:
         paid_obligation = await post_json(
             client,
             "/obligations",
-            {"name": f"Snapshot Paid Obligation {uuid.uuid4().hex[:6]}", "amount": "300000.00", "frequency": "monthly"},
+            {
+                "name": f"Snapshot Paid Obligation {uuid.uuid4().hex[:6]}",
+                "amount": "300000.00",
+                "frequency": "monthly",
+            },
             headers_a,
         )
         await post_json(
             client,
             "/obligations",
-            {"name": f"Snapshot Pending Obligation {uuid.uuid4().hex[:6]}", "amount": "900000.00", "frequency": "monthly"},
+            {
+                "name": f"Snapshot Pending Obligation {uuid.uuid4().hex[:6]}",
+                "amount": "900000.00",
+                "frequency": "monthly",
+            },
             headers_a,
         )
         await post_json(
@@ -160,7 +172,11 @@ async def main() -> None:
         await post_json(
             client,
             f"/credit/cards/{card['id']}/purchases",
-            {"amount": "500000.00", "description": "snapshot credit purchase", "installments_total": 1},
+            {
+                "amount": "500000.00",
+                "description": "snapshot credit purchase",
+                "installments_total": 1,
+            },
             headers_a,
             {"Idempotency-Key": str(uuid.uuid4())},
         )

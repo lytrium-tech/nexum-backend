@@ -1,0 +1,260 @@
+# NEXUM BACKEND V1.1 ROADMAP
+
+## Objetivo
+
+Backend V1 fue funcionalmente completado y permitió construir Frontend V1.
+
+Durante la integración completa frontend-backend se detectaron inconsistencias de producto, verdad financiera y experiencia conversacional.
+
+Backend V1.1 tiene como objetivo corregir dichas inconsistencias antes de una Alpha cerrada con usuarios reales.
+
+La prioridad ya no es agregar módulos grandes.
+
+La prioridad es:
+
+```text
+consistencia
+verdad financiera
+confianza del usuario
+experiencia conversacional
+```
+
+---
+
+# Principio Rector
+
+El backend es la única fuente de verdad financiera.
+
+Nunca:
+
+```text
+Frontend calcula métricas críticas.
+LLM calcula métricas críticas.
+```
+
+Siempre:
+
+```text
+Backend calcula.
+Frontend muestra.
+LLM explica.
+```
+
+---
+
+# Estado Actual
+
+Completado:
+
+```text
+Accounts
+Categories
+Cash
+Goals
+Obligations
+Credit Cards
+Transfers
+Ledger
+History
+Snapshot MVP
+Conversational Core
+Traceability
+Ownership
+Security Hardening
+```
+
+---
+
+# Backend V1.1
+
+## Sprint 1 — Financial Truth
+
+Objetivo:
+
+Eliminar contradicciones financieras.
+
+Incluye:
+
+```text
+opening_balance
+balance_adjustment
+snapshot consistency
+committed_outflows
+payment_required
+free_money
+safe_money
+ask_free_money
+```
+
+Resultado esperado:
+
+```text
+Home y Chat muestran exactamente la misma realidad financiera.
+```
+
+---
+
+## Sprint 2 — Categories Lifecycle
+
+Objetivo:
+
+Cerrar inconsistencias de categorías.
+
+Incluye:
+
+```text
+include_inactive
+reactivación
+sin_clasificar
+fallbacks
+restricciones de edición
+```
+
+Resultado esperado:
+
+```text
+Categorías seguras y recuperables.
+```
+
+---
+
+## Sprint 3 — Goals Consistency
+
+Objetivo:
+
+Corregir la lógica mensual de metas.
+
+Incluye:
+
+```text
+required_this_period
+remaining_required_this_period
+contributed_this_period
+aportes extra
+metas flexibles
+recalculo mensual
+```
+
+Resultado esperado:
+
+```text
+Metas matemáticamente correctas.
+```
+
+---
+
+## Sprint 4 — Obligations V1.1
+
+Objetivo:
+
+Permitir obligaciones reales.
+
+Incluye:
+
+```text
+fixed_full_payment
+partial_allowed
+variable_amount
+remaining_amount
+period_status
+```
+
+Resultado esperado:
+
+```text
+Obligaciones útiles para casos reales.
+```
+
+---
+
+## Sprint 5 — Credit Semantics
+
+Objetivo:
+
+Convertir Credit Core en una representación financiera consistente.
+
+Incluye:
+
+```text
+current_debt
+available_credit
+statement_balance
+payment_required
+next_payment_estimate
+installments
+```
+
+Resultado esperado:
+
+```text
+Tarjetas de crédito comprensibles para el usuario.
+```
+
+---
+
+## Sprint 6 — Frontend Alignment
+
+Objetivo:
+
+Eliminar diferencias entre backend y frontend.
+
+Incluye:
+
+```text
+OpenAPI
+DTOs
+tipos
+responses
+contracts
+```
+
+Resultado esperado:
+
+```text
+Frontend y backend completamente alineados.
+```
+
+---
+
+## Sprint 7 — Regression & Alpha Readiness
+
+Objetivo:
+
+Preparar Alpha cerrada.
+
+Incluye:
+
+```text
+regresión completa
+smokes
+ownership
+traceability
+snapshot
+conversational flows
+```
+
+Resultado esperado:
+
+```text
+Backend V1.1 cerrado.
+Alpha Ready.
+```
+
+---
+
+# Fuera de Alcance V1.1
+
+No implementar todavía:
+
+```text
+Machine Learning
+Insights IA avanzados
+Presupuestos automáticos
+Predicción financiera
+WhatsApp productivo
+Peer Loans completos
+Net Worth avanzado
+Cashflow predictivo
+```
+
+Todo esto pertenece a V1.2 o posterior.

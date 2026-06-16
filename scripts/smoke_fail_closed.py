@@ -22,9 +22,10 @@ if not DB_URL:
 # asyncpg no soporta postgresql+asyncpg://
 DB_URL = DB_URL.replace("postgresql+asyncpg://", "postgresql://")
 
+
 async def run_smoke():
     logging.info("Iniciando prueba Smoke de Fail-Closed Conversacional...")
-    
+
     # 1. Health check
     async with httpx.AsyncClient() as client:
         resp = await client.get(f"{BASE_URL}/health")
@@ -32,7 +33,7 @@ async def run_smoke():
             logging.error("API no está arriba.")
             return
         logging.info("FastAPI Health OK.")
-        
+
         # 2. Insert fake pending action directly in DB
         action_id = str(uuid.uuid4())
         # We need the dev user ID
@@ -44,10 +45,18 @@ async def run_smoke():
 
         logging.info(f"Insertando pending_action falso con id {action_id}")
         conn = await asyncpg.connect(DB_URL)
-        await conn.execute("""
+        await conn.execute(
+            """
             INSERT INTO pending_actions (id, user_id, intent, data, missing_fields, status)
             VALUES ($1, $2, $3, $4, $5, $6)
-        """, action_id, user_id, "unsupported_intent", json.dumps({"amount": 500}), None, "awaiting_confirmation")
+        """,
+            action_id,
+            user_id,
+            "unsupported_intent",
+            json.dumps({"amount": 500}),
+            None,
+            "awaiting_confirmation",
+        )
         await conn.close()
 
         # 3. Confirm
@@ -55,19 +64,26 @@ async def run_smoke():
             "channel": "api",
             "message": "sí",
             "pending_action_id": action_id,
-            "external_message_id": f"smoke-fail-closed-confirm-{uuid.uuid4()}"
+            "external_message_id": f"smoke-fail-closed-confirm-{uuid.uuid4()}",
         }
         logging.info("Enviando confirmación 'sí' para un intent no soportado...")
-        resp_conf = await client.post(f"{API_URL}/conversations/message", json=confirm_payload, headers=AUTH_HEADERS)
+        resp_conf = await client.post(
+            f"{API_URL}/conversations/message", json=confirm_payload, headers=AUTH_HEADERS
+        )
         data_conf = resp_conf.json()
         logging.info(f"Respuesta de confirmación: {data_conf}")
-        
+
         # 4. Verify error and message
-        if data_conf.get("status") == "error" and "No se registró ningún movimiento" in data_conf.get("response_text", ""):
-            logging.info("Fail-Closed OK: La confirmación devolvió error controlado y el mensaje esperado.")
+        if data_conf.get(
+            "status"
+        ) == "error" and "No se registró ningún movimiento" in data_conf.get("response_text", ""):
+            logging.info(
+                "Fail-Closed OK: La confirmación devolvió error controlado y el mensaje esperado."
+            )
         else:
             logging.error(f"Fail-Closed FALLÓ: Estado devuelto {data_conf.get('status')}")
             assert False, "Fail-closed falló"
+
 
 if __name__ == "__main__":
     asyncio.run(run_smoke())

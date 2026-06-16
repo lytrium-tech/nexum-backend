@@ -32,4 +32,3 @@ class UserMeResponse(BaseModel):
     onboarding_completed: bool
     has_accounts: bool
     next_step: str
-

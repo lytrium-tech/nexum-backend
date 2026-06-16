@@ -11,8 +11,17 @@ from app.core.utils import clean_presentation_name, normalize_name
 class CategoryService:
     def __init__(self, repository: CategoryRepository):
         self.repository = repository
-    async def list_categories(self, auth_user_id: UUID) -> list[CategoryRead]:
-        categories = await self.repository.list_available(auth_user_id)
+
+    async def _get_category_or_404(self, category_id: UUID) -> Category:
+        category = await self.repository.get_by_id(category_id)
+        if not category:
+            raise NotFoundError("Category not found")
+        return category
+
+    async def list_categories(
+        self, auth_user_id: UUID, include_inactive: bool = False, type_: str | None = None
+    ) -> list[CategoryRead]:
+        categories = await self.repository.list_available(auth_user_id, include_inactive, type_)
         return [CategoryRead.model_validate(c) for c in categories]
 
     async def create_category(self, auth_user_id: UUID, payload: CategoryCreate) -> CategoryRead:
@@ -20,13 +29,16 @@ class CategoryService:
         if not norm_name:
             raise ValueError("El nombre no puede estar vacío.")
 
-        exists = await self.repository.check_name_exists(auth_user_id, norm_name)
+        exists = await self.repository.check_name_exists(
+            auth_user_id, norm_name, payload.type.value
+        )
         if exists:
             raise CategoryDuplicateError()
 
         db_category = Category(
             user_id=auth_user_id,
             name=clean_presentation_name(payload.name),
+            normalized_name=norm_name,
             type=payload.type.value,
             is_active=True,
         )
@@ -46,11 +58,14 @@ class CategoryService:
             norm_name = normalize_name(payload.name)
             if not norm_name:
                 raise ValueError("El nombre no puede estar vacío.")
-            if normalize_name(category.name) != norm_name:
-                exists = await self.repository.check_name_exists(auth_user_id, norm_name)
+            if category.normalized_name != norm_name:
+                exists = await self.repository.check_name_exists(
+                    auth_user_id, norm_name, category.type
+                )
                 if exists:
                     raise CategoryDuplicateError()
             category.name = clean_presentation_name(payload.name)
+            category.normalized_name = norm_name
 
         if payload.is_active is not None:
             category.is_active = payload.is_active

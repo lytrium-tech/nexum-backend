@@ -14,6 +14,7 @@ from app.accounts.schemas import AccountRead
 
 class TransferCreate(BaseModel):
     """Payload para crear transferencia."""
+
     source_account_id: UUID
     destination_account_id: UUID
     amount: Decimal = Field(..., gt=0, decimal_places=2)
@@ -40,5 +41,5 @@ class TransferResult(BaseModel):
     status: str
     ledger_events: LedgerEventsRef | None = None
     created_at: datetime
-    
+
     model_config = ConfigDict(from_attributes=True)

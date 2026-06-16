@@ -50,6 +50,7 @@ class LedgerService:
         # La validación de ownership se delega al repositorio porque
         # requiere acceso a bases de datos (consultas cruzadas).
         return await self.repository.insert_event(event_data)
+
     async def list_events(
         self,
         user_id: UUID,
@@ -82,6 +83,7 @@ class LedgerService:
 
     async def get_event_detail(self, user_id: UUID, event_id: UUID):
         from app.core.errors import NotFoundError
+
         event = await self.repository.get_event_detail(user_id, event_id)
         if not event:
             raise NotFoundError(message="Evento no encontrado.")
@@ -103,15 +105,18 @@ class LedgerService:
     ) -> list[dict]:
         from collections import defaultdict
         from decimal import Decimal
+
         events = await self.repository.get_timeline(user_id, date_from, date_to)
-        
+
         # Agrupar por día
-        groups = defaultdict(lambda: {
-            "income": Decimal("0"),
-            "expense": Decimal("0"),
-            "net": Decimal("0"),
-            "items": []
-        })
+        groups = defaultdict(
+            lambda: {
+                "income": Decimal("0"),
+                "expense": Decimal("0"),
+                "net": Decimal("0"),
+                "items": [],
+            }
+        )
 
         for event in events:
             date_str = event.occurred_at.strftime("%Y-%m-%d")
@@ -126,13 +131,15 @@ class LedgerService:
 
         result = []
         for date_str, data in groups.items():
-            result.append({
-                "date": date_str,
-                "income": data["income"],
-                "expense": data["expense"],
-                "net": data["net"],
-                "items": data["items"]
-            })
-            
+            result.append(
+                {
+                    "date": date_str,
+                    "income": data["income"],
+                    "expense": data["expense"],
+                    "net": data["net"],
+                    "items": data["items"],
+                }
+            )
+
         result.sort(key=lambda x: x["date"], reverse=True)
         return result

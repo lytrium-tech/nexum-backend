@@ -45,7 +45,7 @@ async def test_create_category_success(service, mock_repo):
 
     assert result.name == "Árbol"
     assert result.user_id == user_id
-    mock_repo.check_name_exists.assert_called_once_with(user_id, "arbol")
+    mock_repo.check_name_exists.assert_called_once_with(user_id, "arbol", "income")
 
 
 @pytest.mark.asyncio

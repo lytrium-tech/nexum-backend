@@ -21,10 +21,11 @@ async def get_me(
 ) -> UserRead:
     return await service.get_current_user_profile(identity)
 
+
 @router.post("/me/bootstrap", response_model=UserOnboardingResponse)
 async def bootstrap_user(
     payload: UserOnboardingRequest,
     identity: AuthenticatedIdentity,
-    service: UserService = Depends(get_user_service)
+    service: UserService = Depends(get_user_service),
 ) -> UserOnboardingResponse:
     return await service.onboard_user(identity, payload)

@@ -23,6 +23,8 @@ class EventType(StrEnum):
     MANUAL_ADJUSTMENT = "manual_adjustment"
     TRANSFER_OUT = "transfer_out"
     TRANSFER_IN = "transfer_in"
+    OPENING_BALANCE = "opening_balance"
+    BALANCE_ADJUSTMENT = "balance_adjustment"
 
 
 class Direction(StrEnum):

@@ -66,7 +66,9 @@ class CreditCardRepository:
             FROM credit_card_transactions
             WHERE credit_card_id = :card_id
         """)
-        result = await self.session.execute(query, {"card_id": card_id, "cycle_end": cycle_end_date})
+        result = await self.session.execute(
+            query, {"card_id": card_id, "cycle_end": cycle_end_date}
+        )
         row = result.fetchone()
         if row:
             return {
@@ -74,9 +76,12 @@ class CreditCardRepository:
                 "payments_count": int(row[1]),
                 "billed_purchases": Decimal(str(row[2])),
                 "unbilled_purchases": Decimal(str(row[3])),
-                "total_payments": Decimal(str(row[4]))
+                "total_payments": Decimal(str(row[4])),
             }
         return {
-            "purchases_count": 0, "payments_count": 0,
-            "billed_purchases": Decimal("0.00"), "unbilled_purchases": Decimal("0.00"), "total_payments": Decimal("0.00")
+            "purchases_count": 0,
+            "payments_count": 0,
+            "billed_purchases": Decimal("0.00"),
+            "unbilled_purchases": Decimal("0.00"),
+            "total_payments": Decimal("0.00"),
         }

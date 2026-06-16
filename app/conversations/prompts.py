@@ -1,4 +1,3 @@
-
 # Este prompt se envía a Gemini
 SYSTEM_PROMPT_TEMPLATE = """
 Eres Nexum, un asistente financiero experto.
@@ -28,20 +27,22 @@ Recuerda: Si el texto del usuario menciona alguna cuenta/tarjeta/meta/categoría
 extrae literalmente cómo la llamó el usuario. El sistema se encargará de resolver el nombre exacto.
 """
 
+
 def build_system_prompt(
     accounts: list[str],
     categories: list[str],
     credit_cards: list[str],
     goals: list[str],
-    obligations: list[str]
+    obligations: list[str],
 ) -> str:
     return SYSTEM_PROMPT_TEMPLATE.format(
         accounts=", ".join(accounts) if accounts else "Ninguna",
         categories=", ".join(categories) if categories else "Ninguna",
         credit_cards=", ".join(credit_cards) if credit_cards else "Ninguna",
         goals=", ".join(goals) if goals else "Ninguna",
-        obligations=", ".join(obligations) if obligations else "Ninguna"
+        obligations=", ".join(obligations) if obligations else "Ninguna",
     )
+
 
 # ────────────────────────────────────────────────────────────────────────────
 # Plantillas estáticas para responder lecturas
@@ -53,7 +54,7 @@ def render_read_response(intent: str, data: dict) -> str:
         return f"Tienes ${data.get('free_money', '0.00')} de dinero libre."
     elif intent == "ask_debt":
         cards_info = []
-        for cc in data.get('credit_cards', []):
+        for cc in data.get("credit_cards", []):
             cards_info.append(
                 f"- {cc.get('credit_card_name')}: Deuda total ${cc.get('estimated_current_debt', '0.00')} "
                 f"(Facturado: ${cc.get('billed_debt', '0.00')}, Sin facturar: ${cc.get('unbilled_debt', '0.00')}). "
@@ -63,18 +64,24 @@ def render_read_response(intent: str, data: dict) -> str:
         cards_str = "\\n".join(cards_info) if cards_info else "No tienes tarjetas registradas."
         return f"Tu deuda total de tarjetas de crédito es de ${data.get('total_estimated_credit_card_debt', '0.00')}.\\nDetalle:\\n{cards_str}"
     elif intent == "ask_cashflow":
-        return (f"Resumen de flujo de caja del mes:\n"
-                f"Ingresos: ${data.get('income', '0.00')}\n"
-                f"Consumo: ${data.get('total_consumption_committed', '0.00')}\n"
-                f"Flujo neto: ${data.get('net_cashflow', '0.00')}")
+        return (
+            f"Resumen de flujo de caja del mes:\n"
+            f"Ingresos: ${data.get('income', '0.00')}\n"
+            f"Consumo: ${data.get('total_consumption_committed', '0.00')}\n"
+            f"Flujo neto: ${data.get('net_cashflow', '0.00')}"
+        )
     elif intent == "ask_goals":
         return f"Tus aportes requeridos a metas este mes son ${data.get('goals_required_this_period', '0.00')}."
     elif intent == "ask_obligations":
-        return f"Tus obligaciones pendientes suman ${data.get('pending_obligations_total', '0.00')}."
+        return (
+            f"Tus obligaciones pendientes suman ${data.get('pending_obligations_total', '0.00')}."
+        )
     elif intent == "ask_financial_snapshot":
-        return (f"Aquí está tu resumen financiero:\n"
-                f"Dinero libre: ${data.get('free_money', '0.00')}\n"
-                f"Dinero seguro: ${data.get('safe_money', '0.00')}\n"
-                f"Deuda TC: ${data.get('total_credit_card_debt', '0.00')}\n"
-                f"Obligaciones pendientes: ${data.get('pending_obligations_total', '0.00')}")
+        return (
+            f"Aquí está tu resumen financiero:\n"
+            f"Dinero libre: ${data.get('free_money', '0.00')}\n"
+            f"Dinero seguro: ${data.get('safe_money', '0.00')}\n"
+            f"Deuda TC: ${data.get('total_credit_card_debt', '0.00')}\n"
+            f"Obligaciones pendientes: ${data.get('pending_obligations_total', '0.00')}"
+        )
     return "Aquí está la información solicitada."

@@ -1,4 +1,3 @@
-
 from fastapi import APIRouter, Depends
 
 from app.core.database import get_db_session

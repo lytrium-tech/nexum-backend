@@ -20,6 +20,7 @@ from app.users.schemas import UserRead
 
 router = APIRouter(prefix="/transfers", tags=["transfers"])
 
+
 def get_transfers_service(session: AsyncSession = Depends(get_db_session)) -> TransfersService:
     uow = UnitOfWork(session)
     return TransfersService(

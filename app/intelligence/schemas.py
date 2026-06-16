@@ -13,31 +13,49 @@ class SnapshotPeriod(BaseModel):
     month: str
     timezone: str
 
+
 class SnapshotCash(BaseModel):
     total_balance: Decimal
     active_accounts_count: int
+
 
 class SnapshotCashflow(BaseModel):
     income: Decimal
     expenses: Decimal
     net_cashflow: Decimal
 
+
 class SnapshotDebt(BaseModel):
     credit_card_total_debt: Decimal
     billed_debt: Decimal
     unbilled_debt: Decimal
+
 
 class SnapshotGoals(BaseModel):
     active_goals_count: int
     total_target: Decimal
     total_saved: Decimal
 
+
 class SnapshotObligations(BaseModel):
     pending_count: int
     pending_amount: Decimal
 
+
 class SnapshotTransfers(BaseModel):
     monthly_transfer_volume: Decimal
+
+
+class SnapshotTruth(BaseModel):
+    available_real: Decimal
+    committed_outflows: Decimal
+    free_money: Decimal
+    safe_money: Decimal
+    payment_required: Decimal
+    goals_required_this_period: Decimal
+    calculation_warnings: list[str]
+    data_quality: dict[str, str]
+
 
 class IntelligenceSnapshotRead(BaseModel):
     period: SnapshotPeriod
@@ -48,6 +66,7 @@ class IntelligenceSnapshotRead(BaseModel):
     obligations: SnapshotObligations
     transfers: SnapshotTransfers
     recent_activity: list[dict[str, Any]]
+    truth: SnapshotTruth
 
 
 class AccountBalanceRead(IntelligenceBase):

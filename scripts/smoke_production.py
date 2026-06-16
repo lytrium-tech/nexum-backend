@@ -7,9 +7,10 @@ import httpx
 API_URL = "https://api.nexum.lytrium.tech"
 TEST_TOKEN = os.environ.get("NEXUM_PROD_TEST_TOKEN")
 
+
 async def run_smoke():
     print(f"=== Iniciando Smoke Test Productivo en {API_URL} ===")
-    
+
     async with httpx.AsyncClient(base_url=API_URL, timeout=10.0) as client:
         # 1. /health
         resp = await client.get("/health")
@@ -35,23 +36,19 @@ async def run_smoke():
         assert resp.status_code == 401
         print("OK: Acceso sin token bloqueado (401)")
 
-        resp = await client.get("/api/v1/intelligence/snapshot", headers={"Authorization": "Bearer fake"})
+        resp = await client.get(
+            "/api/v1/intelligence/snapshot", headers={"Authorization": "Bearer fake"}
+        )
         assert resp.status_code == 401
         print("OK: Acceso token invalido bloqueado (401)")
 
         # 7 y 8. CORS
-        headers = {
-            "Origin": "https://nexum.lytrium.tech",
-            "Access-Control-Request-Method": "GET"
-        }
+        headers = {"Origin": "https://nexum.lytrium.tech", "Access-Control-Request-Method": "GET"}
         resp = await client.options("/health", headers=headers)
         assert resp.status_code == 200
         print("OK: CORS nexum.lytrium.tech")
 
-        headers_evil = {
-            "Origin": "https://evil.com",
-            "Access-Control-Request-Method": "GET"
-        }
+        headers_evil = {"Origin": "https://evil.com", "Access-Control-Request-Method": "GET"}
         resp = await client.options("/health", headers=headers_evil)
         # Nginx o FastAPI bloquean el CORS, FastAPI responde 400 Bad Request
         assert resp.status_code == 400
@@ -66,10 +63,10 @@ async def run_smoke():
         assert resp.status_code == 200
         print("OK: Balance exitoso")
 
+
 if __name__ == "__main__":
     try:
         asyncio.run(run_smoke())
     except AssertionError as e:
         print(f"FAIL: {e}")
         sys.exit(1)
-

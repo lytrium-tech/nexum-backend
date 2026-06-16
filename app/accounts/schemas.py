@@ -1,15 +1,20 @@
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.accounts.enums import AccountType
+from app.ledger.enums import EventType
 
 
 class AccountCreate(BaseModel):
     name: str = Field(min_length=1)
     type: AccountType
     currency: str = Field(default="COP")
+    initial_balance: Decimal = Field(
+        default=Decimal("0.00"), description="Saldo inicial para abrir la cuenta"
+    )
 
 
 class AccountUpdate(BaseModel):
@@ -35,3 +40,12 @@ class AccountSummary(BaseModel):
     accounts_count: int
     active_accounts_count: int
     currency: str
+
+
+class BalanceAdjustmentCreate(BaseModel):
+    amount: Decimal = Field(..., gt=0, description="Cantidad a ajustar (siempre positiva)")
+    direction: Literal["increase", "decrease"] = Field(
+        description="Si aumenta o disminuye el balance"
+    )
+    type: EventType = Field(description="opening_balance o balance_adjustment")
+    description: str | None = Field(None, max_length=255)

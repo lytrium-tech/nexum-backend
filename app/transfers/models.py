@@ -55,7 +55,9 @@ class Transfer(Base):
     currency: Mapped[str] = mapped_column(Text, nullable=False, server_default="COP")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    command_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), unique=True, nullable=True)
+    command_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), unique=True, nullable=True
+    )
     source_message_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     raw_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -74,8 +76,12 @@ class Transfer(Base):
     )
 
     # Relationships
-    source_account: Mapped["Account"] = relationship("Account", foreign_keys=[source_account_id], lazy="joined")
-    destination_account: Mapped["Account"] = relationship("Account", foreign_keys=[destination_account_id], lazy="joined")
+    source_account: Mapped["Account"] = relationship(
+        "Account", foreign_keys=[source_account_id], lazy="joined"
+    )
+    destination_account: Mapped["Account"] = relationship(
+        "Account", foreign_keys=[destination_account_id], lazy="joined"
+    )
 
     __table_args__ = (
         CheckConstraint("amount > 0", name="transfers_amount_check"),

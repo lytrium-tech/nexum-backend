@@ -62,7 +62,7 @@ def test_resolve_entity_ambiguous():
     ]
     with pytest.raises(AmbiguousEntityError) as exc:
         resolve_entity("tarjeta", options, lambda x: x.name)
-    
+
     assert len(exc.value.matches) == 2
 
 

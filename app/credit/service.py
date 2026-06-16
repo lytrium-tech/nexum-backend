@@ -175,14 +175,17 @@ class CreditCardService:
         account = await self.account_repo.get_by_id_for_update(payload.account_id)
         if not account:
             from app.core.errors import NotFoundError
+
             raise NotFoundError(message="Cuenta no encontrada.")
 
         if account.user_id != user_id or not account.is_active:
             from app.accounts.exceptions import AccountForbiddenError
+
             raise AccountForbiddenError()
 
         if account.balance < payload.amount:
             from app.cash.exceptions import InsufficientFundsError
+
             raise InsufficientFundsError()
 
         card = await self.repo.get_by_id_for_update(card_id)
@@ -248,7 +251,9 @@ class CreditCardService:
             account_balance=account.balance,
         )
 
-    async def get_card_status(self, user_id: uuid.UUID, card_id: uuid.UUID) -> 'CreditCardStatusRead':
+    async def get_card_status(
+        self, user_id: uuid.UUID, card_id: uuid.UUID
+    ) -> "CreditCardStatusRead":
         from datetime import date
 
         from app.credit.schemas import CreditCardStatusRead
@@ -260,6 +265,7 @@ class CreditCardService:
 
         current_date = date.today()
         from datetime import timedelta
+
         cycle_start, cycle_end, next_due = calculate_credit_card_dates(
             current_date, card.cutoff_day, card.due_day
         )
@@ -267,11 +273,11 @@ class CreditCardService:
         last_cutoff = cycle_start - timedelta(days=1)
         status_data = await self.repo.get_card_status_data(card.id, last_cutoff)
         _, monthly_pay = await self.repo.get_card_debt(card.id)
-        
+
         billed_purchases = status_data["billed_purchases"]
         unbilled_purchases = status_data["unbilled_purchases"]
         total_payments = status_data["total_payments"]
-        
+
         # Apply payments to billed purchases first
         billed_debt = billed_purchases - total_payments
         if billed_debt < 0:
@@ -279,7 +285,7 @@ class CreditCardService:
             billed_debt = Decimal("0.00")
         else:
             unbilled_debt = unbilled_purchases
-            
+
         total_debt = billed_debt + unbilled_debt
         available_credit = max(Decimal("0.00"), card.credit_limit - total_debt)
 
@@ -296,20 +302,21 @@ class CreditCardService:
             payment_due_day=card.due_day,
             next_payment_due_date=next_due.isoformat(),
             purchases_count=status_data["purchases_count"],
-            payments_count=status_data["payments_count"]
+            payments_count=status_data["payments_count"],
         )
 
-    async def get_credit_summary(self, user_id: uuid.UUID) -> 'CreditSummaryRead':
+    async def get_credit_summary(self, user_id: uuid.UUID) -> "CreditSummaryRead":
         from app.credit.schemas import CreditSummaryRead
+
         cards = await self.repo.get_all_for_user(user_id)
-        
+
         statuses = []
         for c in cards:
             statuses.append(await self.get_card_status(user_id, c.id))
-            
+
         return CreditSummaryRead(
             total_credit_limit=sum((s.credit_limit for s in statuses), Decimal("0.00")),
             total_debt=sum((s.total_debt for s in statuses), Decimal("0.00")),
             total_available_credit=sum((s.available_credit for s in statuses), Decimal("0.00")),
-            cards=statuses
+            cards=statuses,
         )

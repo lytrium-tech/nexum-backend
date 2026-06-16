@@ -25,7 +25,12 @@ async def main():
         print("INFO: Creando cuenta...")
         res = await client.post(
             f"{API_HOST}/api/v1/accounts",
-            json={"name": f"Cuenta Principal {uuid.uuid4().hex[:6]}", "type": "bank", "currency": "COP", "balance": "1000"},
+            json={
+                "name": f"Cuenta Principal {uuid.uuid4().hex[:6]}",
+                "type": "bank",
+                "currency": "COP",
+                "balance": "1000",
+            },
             headers=headers,
         )
         assert res.status_code == 201, res.text
@@ -63,7 +68,11 @@ async def main():
         target_date = (datetime.now() + timedelta(days=300)).strftime("%Y-%m-%d")
         res = await client.post(
             f"{API_HOST}/api/v1/goals",
-            json={"name": f"Viaje {uuid.uuid4().hex[:6]}", "target_amount": "1000", "target_date": target_date},
+            json={
+                "name": f"Viaje {uuid.uuid4().hex[:6]}",
+                "target_amount": "1000",
+                "target_date": target_date,
+            },
             headers=headers,
         )
         assert res.status_code == 201
@@ -80,7 +89,12 @@ async def main():
         print("INFO: Creando Obligation...")
         res = await client.post(
             f"{API_HOST}/api/v1/obligations",
-            json={"name": f"Internet {uuid.uuid4().hex[:6]}", "amount": "50", "frequency": "monthly", "due_day": 15},
+            json={
+                "name": f"Internet {uuid.uuid4().hex[:6]}",
+                "amount": "50",
+                "frequency": "monthly",
+                "due_day": 15,
+            },
             headers=headers,
         )
         assert res.status_code == 201

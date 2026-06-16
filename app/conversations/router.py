@@ -43,6 +43,7 @@ def get_conversations_service(
         transfers_service=transfers_service,
     )
 
+
 @router.post("/message", response_model=ConversationalResponse)
 async def process_message(
     request: ConversationalRequest,
@@ -55,14 +56,12 @@ async def process_message(
     Endpoint conversacional unificado para MVP.
     """
     eff_trace_id = uuid.UUID(trace_id) if trace_id else uuid.uuid4()
-    
+
     response = await service.handle_message(
-        user_id=current_profile.id,
-        request=request,
-        trace_id=eff_trace_id
+        user_id=current_profile.id, request=request, trace_id=eff_trace_id
     )
-    
+
     # Commit the transaction to save messages and pending actions
     await db.commit()
-    
+
     return response

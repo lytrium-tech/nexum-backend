@@ -39,7 +39,7 @@ class LedgerEventCreate(BaseModel):
     # raw_message permitido solo en entrada. Se recomienda omitir o redactar.
     raw_message: str | None = None
     source: str = Field(default="backend")
-    
+
     source_message_id: UUID | None = None
 
     occurred_at: datetime | None = None
@@ -87,6 +87,7 @@ class LedgerEventResult(BaseModel):
     Resultado de la operación de escritura en el Ledger.
     Incluye flag de idempotencia para notificar a capas superiores.
     """
+
     event: LedgerEventRead
     idempotent: bool = False
 
@@ -95,15 +96,18 @@ class LedgerEventResult(BaseModel):
 # Esquemas para Queries (Frontend Readiness)
 # ────────────────────────────────────────────────────────────────────────────
 
+
 class AccountRef(BaseModel):
     id: UUID
     name: str
     model_config = ConfigDict(from_attributes=True)
 
+
 class CategoryRef(BaseModel):
     id: UUID
     name: str
     model_config = ConfigDict(from_attributes=True)
+
 
 class LedgerEventDetail(BaseModel):
     id: UUID
@@ -118,7 +122,7 @@ class LedgerEventDetail(BaseModel):
     category: CategoryRef | None = None
     source: str
     raw_message: str | None = None
-    
+
     # Detalle adicional
     source_message_id: UUID | None = None
     command_id: UUID | None = None
@@ -127,14 +131,17 @@ class LedgerEventDetail(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
 class LedgerPaginationInfo(BaseModel):
     limit: int
     offset: int
     total: int
 
+
 class LedgerEventsResponse(BaseModel):
     items: list[LedgerEventDetail]
     pagination: LedgerPaginationInfo
+
 
 class LedgerSummaryResponse(BaseModel):
     total_income: Decimal
@@ -146,12 +153,14 @@ class LedgerSummaryResponse(BaseModel):
     total_credit_card_purchases: Decimal
     events_count: int
 
+
 class LedgerTimelineGroup(BaseModel):
     date: str
     income: Decimal
     expense: Decimal
     net: Decimal
     items: list[LedgerEventDetail]
+
 
 class LedgerTimelineResponse(BaseModel):
     groups: list[LedgerTimelineGroup]

@@ -18,15 +18,15 @@ def get_category_service(session: AsyncSession = Depends(get_db_session)) -> Cat
     return CategoryService(repo)
 
 
-
-
-
 @router.get("", response_model=list[CategoryRead])
 async def list_categories(
-    current_profile: CurrentUserProfile, service: CategoryService = Depends(get_category_service)
+    current_profile: CurrentUserProfile,
+    include_inactive: bool = False,
+    type: str | None = None,
+    service: CategoryService = Depends(get_category_service),
 ) -> list[CategoryRead]:
     user_id = current_profile.id
-    return await service.list_categories(user_id)
+    return await service.list_categories(user_id, include_inactive, type)
 
 
 @router.post("", response_model=CategoryRead, status_code=status.HTTP_201_CREATED)
@@ -60,7 +60,9 @@ async def update_category(
 
 @router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_category(
-    category_id: UUID, current_profile: CurrentUserProfile, session: AsyncSession = Depends(get_db_session)
+    category_id: UUID,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
 ) -> None:
     uow = UnitOfWork(session)
     async with uow.transaction():

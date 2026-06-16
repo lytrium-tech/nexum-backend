@@ -16,6 +16,7 @@ def mock_settings():
         mock_settings.SUPABASE_URL = "https://test.supabase.co"
         yield mock_settings
 
+
 @pytest.fixture
 def mock_jwks():
     with patch("app.core.security.get_jwks_client") as mock_get_client:
@@ -26,10 +27,12 @@ def mock_jwks():
         mock_get_client.return_value = mock_client
         yield mock_get_client
 
+
 @pytest.mark.asyncio
 async def test_missing_bearer(mock_settings):
     with pytest.raises(AuthenticationError):
         await get_current_user(MagicMock(), None)
+
 
 @pytest.mark.asyncio
 async def test_invalid_token(mock_settings, mock_jwks):
@@ -38,12 +41,14 @@ async def test_invalid_token(mock_settings, mock_jwks):
         with pytest.raises(AuthenticationError):
             await get_current_user(MagicMock(), creds)
 
+
 @pytest.mark.asyncio
 async def test_expired_token(mock_settings, mock_jwks):
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="expired_token")
     with patch("app.core.security.jwt.decode", side_effect=jwt.ExpiredSignatureError):
         with pytest.raises(AuthenticationError):
             await get_current_user(MagicMock(), creds)
+
 
 @pytest.mark.asyncio
 async def test_missing_sub(mock_settings, mock_jwks):
@@ -52,6 +57,7 @@ async def test_missing_sub(mock_settings, mock_jwks):
         with pytest.raises(AuthenticationError):
             await get_current_user(MagicMock(), creds)
 
+
 @pytest.mark.asyncio
 async def test_invalid_role(mock_settings, mock_jwks):
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")
@@ -59,14 +65,19 @@ async def test_invalid_role(mock_settings, mock_jwks):
         with pytest.raises(AuthenticationError):
             await get_current_user(MagicMock(), creds)
 
+
 @pytest.mark.asyncio
 async def test_valid_jwt(mock_settings, mock_jwks):
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")
-    with patch("app.core.security.jwt.decode", return_value={"sub": "123", "role": "authenticated", "email": "test@test.com"}):
+    with patch(
+        "app.core.security.jwt.decode",
+        return_value={"sub": "123", "role": "authenticated", "email": "test@test.com"},
+    ):
         user = await get_current_user(MagicMock(), creds)
         assert user.user_id == "123"
         assert user.email == "test@test.com"
         assert user.is_dev is False
+
 
 @pytest.mark.asyncio
 async def test_auth_bypass_dev():

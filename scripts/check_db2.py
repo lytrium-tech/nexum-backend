@@ -10,9 +10,12 @@ async def main():
     async for s in get_db_session():
         res = await s.execute(text("SELECT id, amount FROM transfers"))
         print("TRANSFERS:", res.all())
-        
-        res2 = await s.execute(text("SELECT name, balance FROM accounts WHERE name IN ('Nequi', 'Bancolombia')"))
+
+        res2 = await s.execute(
+            text("SELECT name, balance FROM accounts WHERE name IN ('Nequi', 'Bancolombia')")
+        )
         print("ACCOUNTS:", res2.all())
         break
+
 
 asyncio.run(main())

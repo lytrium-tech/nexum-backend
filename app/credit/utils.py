@@ -16,24 +16,29 @@ def calculate_credit_card_dates(
         except ValueError:
             # E.g. Feb 30 -> handle by clamping to month end
             import calendar
+
             last_day = calendar.monthrange(current_date.year, current_date.month)[1]
             cycle_end = current_date.replace(day=min(cutoff_day, last_day))
-            
+
         start_month = cycle_end.month - 1
         start_year = cycle_end.year
         if start_month == 0:
             start_month = 12
             start_year -= 1
         import calendar
+
         last_day_start = calendar.monthrange(start_year, start_month)[1]
         actual_cutoff = min(cutoff_day, last_day_start)
         cycle_start = date(start_year, start_month, actual_cutoff) + timedelta(days=1)
     else:
         # We are past the cutoff day this month. The current cycle ends next month.
         import calendar
+
         last_day = calendar.monthrange(current_date.year, current_date.month)[1]
-        cycle_start = date(current_date.year, current_date.month, min(cutoff_day, last_day)) + timedelta(days=1)
-        
+        cycle_start = date(
+            current_date.year, current_date.month, min(cutoff_day, last_day)
+        ) + timedelta(days=1)
+
         end_month = current_date.month + 1
         end_year = current_date.year
         if end_month == 13:
@@ -53,8 +58,9 @@ def calculate_credit_card_dates(
         if due_month == 13:
             due_month = 1
             due_year += 1
-            
+
     import calendar
+
     last_day_due = calendar.monthrange(due_year, due_month)[1]
     next_due = date(due_year, due_month, min(due_day, last_day_due))
 

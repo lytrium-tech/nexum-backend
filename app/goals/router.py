@@ -28,9 +28,6 @@ def get_goal_service(session: AsyncSession = Depends(get_db_session)) -> GoalSer
     return GoalService(repo, account_repo, ledger_repo)
 
 
-
-
-
 @router.post("", response_model=GoalRead, status_code=status.HTTP_201_CREATED)
 async def create_goal(
     payload: GoalCreate,

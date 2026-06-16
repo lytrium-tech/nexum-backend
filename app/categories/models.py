@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Text, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -14,6 +14,7 @@ class Category(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_name: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     type: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool | None] = mapped_column(Boolean, nullable=True, server_default="true")
     created_at: Mapped[datetime | None] = mapped_column(
@@ -28,6 +29,9 @@ class Category(Base):
             "type = ANY (ARRAY['income', 'expense', 'credit_card', "
             "'obligation', 'goal', 'transfer', 'system'])",
             name="categories_type_check",
+        ),
+        UniqueConstraint(
+            "user_id", "type", "normalized_name", name="uq_category_user_type_normalized_name"
         ),
     )
 
