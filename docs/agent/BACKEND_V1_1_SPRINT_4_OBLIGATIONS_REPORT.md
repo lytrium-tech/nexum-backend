@@ -180,3 +180,181 @@ Siguiente acción requerida antes del cierre:
 - Confirmar `docker compose ps` en estado `healthy`.
 
 No avanzar a Sprint 5 hasta aprobación explícita posterior a esa verificación.
+
+## 25. Git State Verification
+Verificación ejecutada antes del cierre formal:
+
+```bash
+git status --short
+git branch --show-current
+git log --oneline -10
+git diff --stat
+git diff
+git diff --cached
+git show --stat 7925d7f
+```
+
+Resultado:
+- Rama local: `main`.
+- `7925d7f` corresponde a `feat: implement goals consistency v1.1`, es decir Sprint 3.
+- No existía commit posterior a `7925d7f` antes de cerrar Sprint 4.
+- Los cambios de Sprint 4 seguían en working tree local.
+- No era cierto que el Sprint 4 completo estuviera desplegado en `7925d7f`.
+- El working tree no contenía solo `Dockerfile`; contenía cambios de obligations, intelligence, goals, tests, scripts, reporte y healthcheck.
+- `git diff --cached` estaba vacío antes de preparar el commit.
+
+Archivos revisados e incluidos en el commit funcional de Sprint 4:
+- `app/goals/schemas.py`
+- `app/goals/service.py`
+- `app/intelligence/service.py`
+- `app/obligations/exceptions.py`
+- `app/obligations/models.py`
+- `app/obligations/repository.py`
+- `app/obligations/schemas.py`
+- `app/obligations/service.py`
+- `docker-compose.yml`
+- `docs/agent/BACKEND_V1_1_SPRINT_4_OBLIGATIONS_REPORT.md`
+- `scripts/migrate_v11_sprint4.py`
+- `scripts/smoke_categories_lifecycle_v11.py`
+- `scripts/smoke_goals_consistency_v11.py`
+- `scripts/smoke_obligations_v11.py`
+- `tests/unit/test_goals.py`
+- `tests/unit/test_intelligence.py`
+- `tests/unit/test_obligations.py`
+
+Archivo no incluido intencionalmente:
+- `docs/agent/BACKEND_V1_1_SPRINT_3_GOALS_CONSISTENCY_REPORT.md`, porque estaba no trackeado y no pertenece al cierre de Sprint 4.
+
+## 26. Sprint 4 Commit
+Commit funcional de Sprint 4:
+
+```text
+690a797 feat: complete obligations v1.1 sprint 4
+```
+
+Commit operativo posterior para alinear la configuración productiva y restaurar el healthcheck del contenedor:
+
+```text
+5905b31 fix: restore backend container healthcheck
+```
+
+Estado de hashes validado:
+- HEAD local: `5905b31`.
+- `origin/main`: `5905b31`.
+- VPS `/opt/nexum-backend`: `5905b31`.
+
+## 27. Docker Healthcheck Fix
+Se evaluaron dos opciones:
+
+```text
+A. instalar curl en la imagen
+B. cambiar el healthcheck a una herramienta ya disponible en la imagen
+```
+
+Solución elegida: B.
+
+Motivo:
+- La imagen ya contiene Python.
+- `urllib.request` está disponible en la librería estándar.
+- Evita instalar `curl` y reduce dependencias del contenedor.
+- Mantiene el healthcheck activo.
+- Es compatible con la imagen `python:3.13-slim`.
+
+Healthcheck final:
+
+```yaml
+healthcheck:
+  test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 10s
+```
+
+Además se versionó la configuración productiva real usada en VPS:
+- Servicio `api`.
+- Contenedor `nexum_backend_api`.
+- Puerto `127.0.0.1:8010:8000`.
+- Red `nexum_backend_network`.
+- `Dockerfile` con `COPY pyproject.toml README.md uv.lock .` para build reproducible con `uv sync --no-dev`.
+
+Durante el deploy se detectaron cambios locales previos en la VPS (`Dockerfile`, `docker-compose.yml`, `docker-compose.prod.yml`). No se descartaron ni sobrescribieron a ciegas. Se guardó respaldo con:
+
+```bash
+git stash push -m pre-sprint4-deploy-local-vps-config -- Dockerfile docker-compose.yml
+```
+
+## 28. Final Production Verification
+Regresión ejecutada antes del deploy:
+
+```text
+python -m uv run pytest tests/ -v: 137 passed, 1 warning
+python -m uv run ruff check .: All checks passed
+python -m uv run python scripts/smoke_obligations_v11.py: passed
+python -m uv run python scripts/smoke_financial_truth_v11.py: passed
+python -m uv run python scripts/smoke_goals_consistency_v11.py: passed
+python -m uv run python scripts/smoke_categories_lifecycle_v11.py: passed
+python -m uv run python scripts/smoke_ledger_history.py: passed
+python -m uv run python scripts/smoke_traceability.py: passed
+python -m uv run python scripts/smoke_ownership.py: passed
+```
+
+Deploy productivo ejecutado:
+
+```bash
+ssh lytrium-vps
+cd /opt/nexum-backend
+git pull origin main
+git rev-parse --short HEAD
+docker compose build --no-cache
+docker compose up -d
+```
+
+Hash desplegado en VPS:
+
+```text
+5905b31
+```
+
+Resultado `docker compose ps`:
+
+```text
+NAME                IMAGE               COMMAND                  SERVICE   CREATED          STATUS                    PORTS
+nexum_backend_api   nexum-backend-api   ".venv/bin/uvicorn a..."   api       58 seconds ago   Up 56 seconds (healthy)   127.0.0.1:8010->8000/tcp
+```
+
+Resultado `/health`:
+
+```json
+{"status":"ok","service":"nexum-backend"}
+```
+
+Resultado `/health/readiness`:
+
+```json
+{"status":"ok","service":"nexum-backend"}
+```
+
+Estado Git en VPS posterior:
+
+```text
+5905b31
+?? docker-compose.prod.yml
+```
+
+Nota: `docker-compose.prod.yml` permanece no trackeado en VPS y no fue modificado durante el cierre.
+
+## 29. Formal Closure
+Sprint 4 puede cerrarse formalmente: sí.
+
+Motivo:
+- Sprint 4 ya no está únicamente en working tree local.
+- La implementación funcional fue versionada en `690a797`.
+- El fix operativo del healthcheck y la configuración productiva fueron versionados en `5905b31`.
+- `HEAD local`, `origin/main` y VPS quedaron alineados en `5905b31`.
+- La batería de tests, lint y smokes solicitada pasó.
+- El deploy productivo fue ejecutado con `docker compose build --no-cache`.
+- El contenedor quedó `healthy`.
+- `/health` y `/health/readiness` respondieron OK.
+
+No avanzar a Sprint 5 hasta aprobación explícita.
