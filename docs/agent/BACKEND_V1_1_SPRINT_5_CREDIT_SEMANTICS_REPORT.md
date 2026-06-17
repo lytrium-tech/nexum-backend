@@ -88,3 +88,200 @@ Pendiente operativo antes de cierre productivo:
 - Verificar `/health`, `/health/readiness` y estado Docker.
 
 No se avanzó a Sprint 6.
+
+## 24. Git State Review
+Revisión previa al staging ejecutada en `main`:
+
+```bash
+git status --short
+git branch --show-current
+git log --oneline -10
+git diff --stat
+git diff
+git diff --check
+```
+
+Clasificación de archivos versionados:
+- `app/credit/models.py`: Sprint 5 legítimo.
+- `app/credit/repository.py`: Sprint 5 legítimo.
+- `app/credit/router.py`: Sprint 5 legítimo.
+- `app/credit/schemas.py`: Sprint 5 legítimo.
+- `app/credit/service.py`: Sprint 5 legítimo.
+- `app/intelligence/schemas.py`: Sprint 5 legítimo.
+- `app/intelligence/service.py`: Sprint 5 legítimo.
+- `app/conversations/prompts.py`: Sprint 5 legítimo.
+- `tests/unit/test_credit.py`: Sprint 5 legítimo.
+- `tests/unit/test_intelligence.py`: Sprint 5 legítimo.
+- `scripts/migrate_v11_sprint5.py`: Sprint 5 legítimo.
+- `scripts/smoke_credit_semantics_v11.py`: Sprint 5 legítimo.
+- `scripts/smoke_traceability.py`: smoke/regresión válida.
+- `Dockerfile`: cambio operativo válido para incluir `scripts/` en la imagen.
+- `docs/agent/BACKEND_V1_1_SPRINT_5_CREDIT_SEMANTICS_AUDIT.md`: documentación válida.
+- `docs/agent/BACKEND_V1_1_SPRINT_5_CREDIT_SEMANTICS_REPORT.md`: documentación válida.
+
+No se identificaron residuos de debugging, cambios ajenos ni archivos sensibles.
+
+## 25. Data Audit
+Auditoría productiva previa a migración:
+- `cards`: 67.
+- `purchases`: 65, total `11250000.00`.
+- `payments`: 32, total `3420000.00`.
+- `installments_total_invalid`: 0.
+- `debt_negative_candidates`: 0.
+- `payments_exceeding_purchases`: 0.
+- `limit_lower_than_debt`: 0.
+- `missing_credit_event_link`: 0.
+- `credit_events_without_tx`: 0.
+
+Hallazgo: `credit_card_installments`, `network` y `franchise` ya existían en producción antes de ejecutar la migración Sprint 5.
+
+Validación de esa estructura preexistente:
+- `installment_rows`: 118.
+- `installment_duplicate_purchase_number`: 0.
+- `purchase_without_installments`: 0.
+- `installment_without_purchase`: 0.
+- `installment_principal_mismatch`: 0.
+- FKs presentes: 3.
+- Índices esperados presentes: 3.
+
+No se detectaron inconsistencias bloqueantes.
+
+## 26. Migration Execution
+Secuencia productiva:
+
+```bash
+ssh lytrium-vps
+cd /opt/nexum-backend
+git pull origin main
+git rev-parse --short HEAD
+docker compose build --no-cache
+docker compose run --rm api sh -lc 'cd /app && PYTHONPATH=/app .venv/bin/python scripts/migrate_v11_sprint5.py'
+```
+
+Resultado de migración:
+
+```text
+INFO: Migrating credit semantics to Sprint 5...
+INFO: Backfilling installment schedule for existing purchases...
+INFO: Sprint 5 migration completed.
+```
+
+Validación post-migración:
+- `installment_rows`: 118.
+- `installment_duplicate_purchase_number`: 0.
+- `purchase_without_installments`: 0.
+- `installment_without_purchase`: 0.
+- `installment_principal_mismatch`: 0.
+- `network_column`: 1.
+- `franchise_column`: 1.
+- `indexes`: 3.
+- `fk_count`: 3.
+- `purchases`: 65, total `11250000.00`.
+- `payments`: 32, total `3420000.00`.
+
+La migración fue idempotente y no creó deuda adicional ni duplicó cuotas.
+
+## 27. Production Smoke
+Primer intento con bypass de test fue rechazado por producción con `401 Unauthorized`, comportamiento esperado porque `AUTH_BYPASS_ENABLED=true` está prohibido en producción.
+
+Smoke productivo final ejecutado contra la API desplegada con JWT real de Supabase generado para usuarios efímeros controlados.
+
+Cobertura validada:
+- Crear usuario/bootstrap real.
+- Crear cuenta con saldo inicial.
+- Crear tarjeta con límite y metadata.
+- Crear compra de una cuota.
+- Validar idempotencia de compra.
+- Crear compra de varias cuotas.
+- Consultar installment schedule.
+- Confirmar que compras con tarjeta no reducen cash.
+- Consultar `current_debt`.
+- Consultar `available_credit`.
+- Consultar `billed_debt` y `unbilled_debt`.
+- Consultar `payment_required`.
+- Consultar `next_payment_estimate`.
+- Confirmar `statement_balance = null` y `data_quality.next_payment_estimate = estimated`.
+- Confirmar que `committed_outflows` usa `payment_required`.
+- Pagar tarjeta.
+- Confirmar que cash y deuda disminuyen.
+- Confirmar idempotencia de pago.
+- Confirmar bloqueo de sobrepago.
+- Confirmar ownership.
+
+Resultado:
+
+```text
+PROD_CREDIT_SEMANTICS_API_SMOKE_PASSED
+```
+
+No se limpió data productiva creada por el smoke porque no existe mecanismo de cleanup seguro aprobado; los datos usan emails con prefijo `prod_credit_semantics_` y dominio `nexum-smoke.local`.
+
+## 28. Commit and Deploy
+Commit de implementación:
+
+```text
+afb336f feat: implement credit semantics v1.1
+```
+
+Push:
+
+```text
+origin/main = afb336f
+```
+
+Commit desplegado tras `git pull origin main` en VPS:
+
+```text
+afb336f
+```
+
+Commit documental final: este reporte se versiona en commit documental separado posterior al deploy.
+
+## 29. Docker Health
+Deploy ejecutado:
+
+```bash
+docker compose up -d
+docker compose ps
+curl -s https://api.nexum.lytrium.tech/health
+curl -s https://api.nexum.lytrium.tech/health/readiness
+git rev-parse --short HEAD
+```
+
+Resultado `docker compose ps`:
+
+```text
+NAME                IMAGE               COMMAND                  SERVICE   CREATED         STATUS                   PORTS
+nexum_backend_api   nexum-backend-api   ".venv/bin/uvicorn a…"   api       3 minutes ago   Up 3 minutes (healthy)   127.0.0.1:8010->8000/tcp
+```
+
+Health/readiness:
+
+```json
+{"status":"ok","service":"nexum-backend"}
+{"status":"ok","service":"nexum-backend"}
+```
+
+Commit desplegado:
+
+```text
+afb336f
+```
+
+## 30. Formal Closure
+Sprint 5 puede cerrarse formalmente a nivel técnico y productivo.
+
+Reglas finales cerradas:
+- Source of truth: `credit_card_transactions` enlazadas a `financial_events`.
+- `payment_required = billed_debt`.
+- `next_payment_estimate` se mantiene separado y marcado `estimated`.
+- `statement_balance = null` y `data_quality.statement_balance = not_available`.
+- Installment schedule distribuye capital; no crea deuda, intereses ni cargos automáticos.
+
+Limitaciones conocidas:
+- No existe statement persistido.
+- No existe motor de intereses, mora, pago mínimo bancario ni cuota de manejo automática.
+- `credit_cards.current_debt` sigue presente por compatibilidad de esquema, pero queda obsoleto de facto y no participa en cálculos.
+- Datos de smoke productivo quedan persistidos como data controlada por falta de cleanup seguro aprobado.
+
+No se avanzó a Sprint 6.
