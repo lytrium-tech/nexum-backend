@@ -94,7 +94,7 @@ class GoalService:
         return gr
 
     async def update_goal(self, auth_user_id: UUID, goal_id: UUID, payload: GoalUpdate) -> GoalRead:
-        goal = await self._get_goal_or_404_for_update(goal_id)
+        goal = await self._get_goal_or_404(goal_id)
         if goal.user_id != auth_user_id:
             raise GoalForbiddenError()
         if not goal.is_active:

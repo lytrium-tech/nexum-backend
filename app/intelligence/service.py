@@ -61,7 +61,28 @@ class IntelligenceService:
 
         # Sprint 1 - Financial Truth MVP
         available_real = self._safe_decimal(cash.get("total_balance"))
-        pending_obligations = self._safe_decimal(obligations.get("pending_amount"))
+
+        # Sprint 4 - Obligations V1.1
+        # committed_outflows rule: only include remaining_amount for active
+        # obligations that are still pending or partially paid this period.
+        # Already-paid obligations contribute 0.
+        # Inactive obligations are excluded by list_active().
+        from app.obligations.repository import ObligationRepository
+        from app.obligations.schemas import ObligationRead
+        
+        obligation_repo = ObligationRepository(self.session)
+        user_obligations = await obligation_repo.list_active(user_id)
+        obligation_payments = await obligation_repo.get_period_payments(user_id, period_str)
+        
+        pending_obligations = Decimal("0.00")
+        for o in user_obligations:
+            or_read = ObligationRead.model_validate(o)
+            or_read.paid_this_period = obligation_payments.get(o.id, Decimal("0.00"))
+            # Only count obligations that are not fully paid this period
+            if or_read.period_status in ("pending", "partial", "overdue"):
+                rem = or_read.remaining_amount
+                if rem is not None and rem > 0:
+                    pending_obligations += rem
 
         # payment_required: billed_debt if exists, else next_payment_estimate.
         payment_required = billed_debt if billed_debt > 0 else Decimal("0.00")

@@ -1,3 +1,4 @@
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import select
@@ -40,6 +41,17 @@ class ObligationRepository:
             if normalize_name(obligation.name) == norm_name:
                 return True
         return False
+
+    async def get_period_payments(self, user_id: UUID, period: str) -> dict[UUID, Decimal]:
+        from sqlalchemy import func
+        stmt = (
+            select(ObligationPayment.obligation_id, func.sum(ObligationPayment.amount))
+            .where(ObligationPayment.user_id == user_id)
+            .where(ObligationPayment.period == period)
+            .group_by(ObligationPayment.obligation_id)
+        )
+        result = await self.session.execute(stmt)
+        return {row[0]: Decimal(str(row[1] or 0)) for row in result.all()}
 
     async def create(self, obligation: Obligation) -> Obligation:
         self.session.add(obligation)

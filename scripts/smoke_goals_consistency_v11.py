@@ -1,7 +1,7 @@
 import asyncio
+import datetime
 import logging
 import uuid
-import datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -50,7 +50,7 @@ async def run_smoke():
         logger.info("1. Crear cuenta con saldo inicial")
         resp = await client.post(
             f"{API_URL}/accounts",
-            json={"name": "Nequi Goals", "type": "wallet", "balance": "500000.00"},
+            json={"name": "Nequi Goals", "type": "wallet", "initial_balance": "500000.00"},
             headers=headers,
         )
         resp.raise_for_status()

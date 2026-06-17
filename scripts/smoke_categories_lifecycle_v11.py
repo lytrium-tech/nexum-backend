@@ -1,8 +1,8 @@
 import asyncio
 import logging
 import uuid
-import httpx
 
+import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.database import get_engine, init_engine

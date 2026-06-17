@@ -61,7 +61,8 @@ class GoalRead(BaseModel):
 
         days_left = (self.target_date - today).days
         months_left = max(Decimal(days_left) / Decimal("30"), Decimal("1"))
-        return round(self.remaining_amount / months_left, 2)
+        start_of_period_remaining = self.remaining_amount + self.contributed_this_period
+        return round(start_of_period_remaining / months_left, 2)
 
     @computed_field
     def required_this_period(self) -> Decimal:

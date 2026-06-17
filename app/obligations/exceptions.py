@@ -31,3 +31,19 @@ class ObligationAmountMismatchError(HTTPException):
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Payment amount must match the obligation quota: {required_amount}",
         )
+
+
+class ObligationAlreadyPaidError(HTTPException):
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This obligation has already been paid for this period",
+        )
+
+
+class ObligationOverpaymentError(HTTPException):
+    def __init__(self, remaining: str) -> None:
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Payment exceeds remaining amount for this period: {remaining}",
+        )
