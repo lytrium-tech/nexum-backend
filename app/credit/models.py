@@ -25,6 +25,8 @@ class CreditCard(Base):
     management_fee: Mapped[Decimal] = mapped_column(Numeric, default=Decimal("0.00"))
     monthly_interest_rate: Mapped[Decimal] = mapped_column(Numeric, default=Decimal("0.00"))
     annual_interest_rate: Mapped[Decimal] = mapped_column(Numeric, default=Decimal("0.00"))
+    network: Mapped[str | None] = mapped_column(String, nullable=True)
+    franchise: Mapped[str | None] = mapped_column(String, nullable=True)
     currency: Mapped[str] = mapped_column(String, default="COP")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -62,6 +64,31 @@ class CreditCardTransaction(Base):
     source: Mapped[str] = mapped_column(String, default="backend")
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class CreditCardInstallment(Base):
+    __tablename__ = "credit_card_installments"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    credit_card_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("credit_cards.id"), nullable=False
+    )
+    purchase_transaction_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("credit_card_transactions.id"), nullable=False
+    )
+    installment_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    installments_total: Mapped[int] = mapped_column(Integer, nullable=False)
+    principal_amount: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
+    scheduled_period: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, server_default="pending")
+    paid_amount: Mapped[Decimal] = mapped_column(Numeric, nullable=False, default=Decimal("0.00"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

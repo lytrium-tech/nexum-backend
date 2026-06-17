@@ -56,9 +56,11 @@ def render_read_response(intent: str, data: dict) -> str:
         cards_info = []
         for cc in data.get("credit_cards", []):
             cards_info.append(
-                f"- {cc.get('credit_card_name')}: Deuda total ${cc.get('estimated_current_debt', '0.00')} "
+                f"- {cc.get('credit_card_name')}: Deuda actual ${cc.get('current_debt', cc.get('estimated_current_debt', '0.00'))} "
                 f"(Facturado: ${cc.get('billed_debt', '0.00')}, Sin facturar: ${cc.get('unbilled_debt', '0.00')}). "
-                f"Cupo disponible: ${cc.get('estimated_available_credit', '0.00')}. "
+                f"Pago requerido: ${cc.get('payment_required', '0.00')}. "
+                f"Estimado próximo pago: ${cc.get('next_payment_estimate', '0.00')}. "
+                f"Cupo disponible: ${cc.get('available_credit', cc.get('estimated_available_credit', '0.00'))}. "
                 f"Próximo pago: {cc.get('next_payment_due_date', 'N/A')}."
             )
         cards_str = "\\n".join(cards_info) if cards_info else "No tienes tarjetas registradas."

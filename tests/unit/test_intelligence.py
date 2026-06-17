@@ -111,6 +111,8 @@ async def test_get_snapshot_success(intelligence_service, mock_intelligence_repo
     assert result.debt.credit_card_total_debt == Decimal("500.00")
     assert result.debt.billed_debt == Decimal("300.00")
     assert result.debt.unbilled_debt == Decimal("200.00")
+    assert result.truth.payment_required == Decimal("300.00")
+    assert result.truth.committed_outflows == Decimal("300.00")
     assert result.goals.active_goals_count == 1
     assert result.obligations.pending_amount == Decimal("100.00")
     assert result.transfers.monthly_transfer_volume == Decimal("400.00")

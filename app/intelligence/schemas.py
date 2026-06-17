@@ -2,7 +2,7 @@ import uuid
 from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class IntelligenceBase(BaseModel):
@@ -29,6 +29,8 @@ class SnapshotDebt(BaseModel):
     credit_card_total_debt: Decimal
     billed_debt: Decimal
     unbilled_debt: Decimal
+    payment_required: Decimal = Decimal("0.00")
+    next_payment_estimate: Decimal = Decimal("0.00")
 
 
 class SnapshotGoals(BaseModel):
@@ -110,13 +112,19 @@ class IntelligenceCreditCardRead(IntelligenceBase):
     credit_card_name: str
     credit_limit: Decimal | None
     estimated_current_debt: Decimal
+    current_debt: Decimal | None = None
     billed_debt: Decimal | None = None
     unbilled_debt: Decimal | None = None
     estimated_available_credit: Decimal | None
+    available_credit: Decimal | None = None
+    payment_required: Decimal | None = None
+    next_payment_estimate: Decimal | None = None
+    statement_balance: Decimal | None = None
     monthly_cc_payment: Decimal
     cutoff_day: int | None
     due_day: int | None
     next_payment_due_date: str | None = None
+    data_quality: dict[str, str] = Field(default_factory=dict)
 
 
 class IntelligenceDebtRead(IntelligenceBase):

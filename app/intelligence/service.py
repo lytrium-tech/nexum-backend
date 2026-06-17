@@ -58,6 +58,9 @@ class IntelligenceService:
         credit_summary = await CreditCardService(self.session).get_credit_summary(user_id)
         billed_debt = sum((card.billed_debt for card in credit_summary.cards), Decimal("0.00"))
         unbilled_debt = sum((card.unbilled_debt for card in credit_summary.cards), Decimal("0.00"))
+        next_payment_estimate = sum(
+            (card.next_payment_estimate for card in credit_summary.cards), Decimal("0.00")
+        )
 
         # Sprint 1 - Financial Truth MVP
         available_real = self._safe_decimal(cash.get("total_balance"))
@@ -84,15 +87,14 @@ class IntelligenceService:
                 if rem is not None and rem > 0:
                     pending_obligations += rem
 
-        # payment_required: billed_debt if exists, else next_payment_estimate.
-        payment_required = billed_debt if billed_debt > 0 else Decimal("0.00")
+        # Sprint 5 - Credit Semantics V1.1: required payment is only billed debt.
+        payment_required = billed_debt
 
-        data_quality = {}
-        if billed_debt <= 0:
-            payment_required = sum(
-                (card.next_payment_estimate for card in credit_summary.cards), Decimal("0.00")
-            )
-            data_quality["payment_required"] = "mvp_estimated"
+        data_quality = {
+            "payment_required": "billed_debt",
+            "next_payment_estimate": "estimated",
+            "statement_balance": "not_available",
+        }
 
         from app.goals.repository import GoalRepository
 
@@ -144,6 +146,8 @@ class IntelligenceService:
                 "credit_card_total_debt": credit_summary.total_debt,
                 "billed_debt": billed_debt,
                 "unbilled_debt": unbilled_debt,
+                "payment_required": payment_required,
+                "next_payment_estimate": next_payment_estimate,
             },
             goals={
                 "active_goals_count": goals.get("active_goals_count", 0),
@@ -198,7 +202,7 @@ class IntelligenceService:
         explanation = {
             "step_1": "Tomamos todo el dinero disponible en cuentas líquidas.",
             "step_2": "Restamos las obligaciones pendientes del mes actual.",
-            "step_3": "Restamos la deuda de tarjetas de crédito o su estimado.",
+            "step_3": "Restamos el pago requerido de tarjetas de crédito ya facturado.",
             "step_4": "Restamos el dinero necesario para cumplir tus metas de este mes.",
             "result": "El saldo resultante es tu dinero libre, descontando compromisos inminentes.",
         }
@@ -254,13 +258,19 @@ class IntelligenceService:
                     credit_card_name=cc.name,
                     credit_limit=cc.credit_limit,
                     estimated_current_debt=cc.total_debt,
+                    current_debt=cc.current_debt,
                     billed_debt=cc.billed_debt,
                     unbilled_debt=cc.unbilled_debt,
                     estimated_available_credit=cc.available_credit,
+                    available_credit=cc.available_credit,
+                    payment_required=cc.payment_required,
+                    next_payment_estimate=cc.next_payment_estimate,
+                    statement_balance=cc.statement_balance,
                     monthly_cc_payment=cc.monthly_cc_payment,
                     cutoff_day=cc.cutoff_day,
                     due_day=cc.payment_due_day,
                     next_payment_due_date=cc.next_payment_due_date,
+                    data_quality=cc.data_quality,
                 )
             )
 

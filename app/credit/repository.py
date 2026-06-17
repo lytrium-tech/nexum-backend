@@ -5,7 +5,7 @@ from decimal import Decimal
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.credit.models import CreditCard, CreditCardTransaction
+from app.credit.models import CreditCard, CreditCardInstallment, CreditCardTransaction
 
 
 class CreditCardRepository:
@@ -49,6 +49,44 @@ class CreditCardRepository:
         self.session.add(transaction)
         await self.session.flush()
 
+    async def add_installments(self, installments: list[CreditCardInstallment]) -> None:
+        self.session.add_all(installments)
+        await self.session.flush()
+
+    async def list_installments(
+        self, card_id: uuid.UUID, user_id: uuid.UUID
+    ) -> list[CreditCardInstallment]:
+        result = await self.session.execute(
+            select(CreditCardInstallment)
+            .where(
+                CreditCardInstallment.credit_card_id == card_id,
+                CreditCardInstallment.user_id == user_id,
+            )
+            .order_by(
+                CreditCardInstallment.scheduled_period.asc(),
+                CreditCardInstallment.installment_number.asc(),
+            )
+        )
+        return list(result.scalars().all())
+
+    async def list_pending_installments_for_update(
+        self, card_id: uuid.UUID, user_id: uuid.UUID
+    ) -> list[CreditCardInstallment]:
+        result = await self.session.execute(
+            select(CreditCardInstallment)
+            .where(
+                CreditCardInstallment.credit_card_id == card_id,
+                CreditCardInstallment.user_id == user_id,
+                CreditCardInstallment.status != "paid",
+            )
+            .order_by(
+                CreditCardInstallment.scheduled_period.asc(),
+                CreditCardInstallment.installment_number.asc(),
+            )
+            .with_for_update()
+        )
+        return list(result.scalars().all())
+
     async def get_transaction_by_event(self, event_id: uuid.UUID) -> CreditCardTransaction | None:
         result = await self.session.execute(
             select(CreditCardTransaction).where(CreditCardTransaction.event_id == event_id)
@@ -85,3 +123,14 @@ class CreditCardRepository:
             "unbilled_purchases": Decimal("0.00"),
             "total_payments": Decimal("0.00"),
         }
+
+    async def get_next_payment_estimate(self, card_id: uuid.UUID) -> Decimal:
+        query = text("""
+            SELECT COALESCE(SUM(principal_amount - paid_amount), 0) AS estimate
+            FROM credit_card_installments
+            WHERE credit_card_id = :card_id
+              AND status != 'paid'
+              AND scheduled_period = to_char((now() AT TIME ZONE 'America/Bogota'), 'YYYY-MM')
+        """)
+        result = await self.session.execute(query, {"card_id": card_id})
+        return Decimal(str(result.scalar_one_or_none() or 0))

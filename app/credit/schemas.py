@@ -10,6 +10,11 @@ class CreditCardBase(BaseModel):
     credit_limit: Decimal = Field(..., gt=0)
     cutoff_day: int = Field(..., ge=1, le=31)
     due_day: int = Field(..., ge=1, le=31)
+    management_fee: Decimal = Field(default=Decimal("0.00"), ge=0)
+    monthly_interest_rate: Decimal = Field(default=Decimal("0.00"), ge=0)
+    annual_interest_rate: Decimal = Field(default=Decimal("0.00"), ge=0)
+    network: str | None = None
+    franchise: str | None = None
     currency: str = "COP"
 
 
@@ -23,20 +28,33 @@ class CreditCardUpdate(BaseModel):
     credit_limit: Decimal | None = Field(None, gt=0)
     cutoff_day: int | None = Field(None, ge=1, le=31)
     due_day: int | None = Field(None, ge=1, le=31)
+    management_fee: Decimal | None = Field(None, ge=0)
+    monthly_interest_rate: Decimal | None = Field(None, ge=0)
+    annual_interest_rate: Decimal | None = Field(None, ge=0)
+    network: str | None = None
+    franchise: str | None = None
     is_active: bool | None = None
 
 
 class CreditCardRead(CreditCardBase):
     id: uuid.UUID
     is_active: bool
-    # Campos que vienen de la BD/Vista
+    current_debt: Decimal = Decimal("0.00")
+    available_credit: Decimal = Decimal("0.00")
+    billed_debt: Decimal = Decimal("0.00")
+    unbilled_debt: Decimal = Decimal("0.00")
+    payment_required: Decimal = Decimal("0.00")
+    next_payment_estimate: Decimal = Decimal("0.00")
+    statement_balance: Decimal | None = None
+    data_quality: dict[str, str] = Field(default_factory=dict)
+    # Deprecated aliases kept temporarily for frontend compatibility.
     estimated_current_debt: Decimal = Decimal("0.00")
     monthly_cc_payment: Decimal = Decimal("0.00")
 
     @computed_field
     @property
     def estimated_available_credit(self) -> Decimal:
-        return max(Decimal("0.00"), self.credit_limit - self.estimated_current_debt)
+        return self.available_credit
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -55,6 +73,8 @@ class CreditCardPurchaseResult(BaseModel):
     event_id: uuid.UUID | None = None
     transaction_id: uuid.UUID | None = None
     amount: Decimal
+    current_debt: Decimal
+    available_credit: Decimal
     estimated_current_debt: Decimal
     estimated_available_credit: Decimal
 
@@ -71,6 +91,8 @@ class CreditCardPaymentResult(BaseModel):
     event_id: uuid.UUID | None = None
     transaction_id: uuid.UUID | None = None
     amount: Decimal
+    current_debt: Decimal
+    available_credit: Decimal
     estimated_current_debt: Decimal
     account_balance: Decimal
 
@@ -79,20 +101,47 @@ class CreditCardStatusRead(BaseModel):
     card_id: uuid.UUID
     name: str
     credit_limit: Decimal
+    management_fee: Decimal = Decimal("0.00")
+    monthly_interest_rate: Decimal = Decimal("0.00")
+    annual_interest_rate: Decimal = Decimal("0.00")
+    network: str | None = None
+    franchise: str | None = None
+    current_debt: Decimal = Decimal("0.00")
     total_debt: Decimal
     billed_debt: Decimal
     unbilled_debt: Decimal
     available_credit: Decimal
+    payment_required: Decimal = Decimal("0.00")
+    next_payment_estimate: Decimal = Decimal("0.00")
+    statement_balance: Decimal | None = None
     monthly_cc_payment: Decimal
     cutoff_day: int
     payment_due_day: int
     next_payment_due_date: str
     purchases_count: int
     payments_count: int
+    data_quality: dict[str, str] = Field(default_factory=dict)
 
 
 class CreditSummaryRead(BaseModel):
     total_credit_limit: Decimal
     total_debt: Decimal
     total_available_credit: Decimal
+    total_monthly_cc_payment: Decimal = Decimal("0.00")
+    total_payment_required: Decimal = Decimal("0.00")
+    total_next_payment_estimate: Decimal = Decimal("0.00")
     cards: list[CreditCardStatusRead]
+
+
+class CreditCardInstallmentRead(BaseModel):
+    id: uuid.UUID
+    credit_card_id: uuid.UUID
+    purchase_transaction_id: uuid.UUID
+    installment_number: int
+    installments_total: int
+    principal_amount: Decimal
+    scheduled_period: str
+    status: str
+    paid_amount: Decimal
+
+    model_config = ConfigDict(from_attributes=True)

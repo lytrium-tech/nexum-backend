@@ -13,6 +13,7 @@ from app.credit.exceptions import (
 )
 from app.credit.schemas import (
     CreditCardCreate,
+    CreditCardInstallmentRead,
     CreditCardPaymentCreate,
     CreditCardPaymentResult,
     CreditCardPurchaseCreate,
@@ -180,5 +181,19 @@ async def get_card_status(
     service = get_credit_service(session)
     try:
         return await service.get_card_status(user_id, card_id)
+    except CreditCardNotFoundError:
+        raise HTTPException(status_code=404, detail="Credit card not found")
+
+
+@router.get("/cards/{card_id}/installments", response_model=list[CreditCardInstallmentRead])
+async def list_card_installments(
+    card_id: uuid.UUID,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+):
+    user_id = current_profile.id
+    service = get_credit_service(session)
+    try:
+        return await service.list_installments(user_id, card_id)
     except CreditCardNotFoundError:
         raise HTTPException(status_code=404, detail="Credit card not found")

@@ -64,6 +64,12 @@ async def main():
     print(f"Starting test with trace_id: {trace_id_str}")
 
     async with httpx.AsyncClient(timeout=30.0) as client:
+        await client.post(
+            "http://127.0.0.1:8000/api/v1/conversations/message",
+            json={"message": "cancelar", "channel": "api"},
+            headers={"x-user-id": user_id, "x-trace-id": str(uuid.uuid4())},
+        )
+
         # 1. Send first message
         msg1 = "Gasté 20.000 en Almuerzo de la cuenta Efectivo"
         r1 = await client.post(
@@ -73,7 +79,7 @@ async def main():
         )
         r1.raise_for_status()
         resp1 = r1.json()
-        assert resp1["status"] == "awaiting_confirmation", resp1
+        assert resp1["status"] in ("awaiting_clarification", "awaiting_confirmation"), resp1
         action_id = resp1["pending_action_id"]
         assert action_id is not None
 
@@ -97,33 +103,56 @@ async def main():
         )
         assert str(pa["source_message_id"]) == str(inbound1["id"])
 
-        # 2. Send confirmation message
-        msg2 = "sí"
-        trace_id_str2 = str(uuid.uuid4())
-        headers2 = {"x-user-id": user_id, "x-trace-id": trace_id_str2}
-        r2 = await client.post(
+        if resp1["status"] == "awaiting_clarification":
+            # 2. Send clarification message when the NLU did not resolve the account.
+            msg2 = "Efectivo"
+            trace_id_str2 = str(uuid.uuid4())
+            headers2 = {"x-user-id": user_id, "x-trace-id": trace_id_str2}
+            r2 = await client.post(
+                "http://127.0.0.1:8000/api/v1/conversations/message",
+                json={"message": msg2, "channel": "api", "pending_action_id": action_id},
+                headers=headers2,
+            )
+            r2.raise_for_status()
+            resp2 = r2.json()
+            assert resp2["status"] == "awaiting_confirmation", resp2
+
+            # Verify inbound clarification message.
+            inbound2 = await conn.fetchrow(
+                "SELECT id, trace_id FROM messages WHERE message = $1 AND trace_id = $2 ORDER BY created_at DESC LIMIT 1",
+                msg2,
+                trace_id_str2,
+            )
+            assert inbound2 is not None
+            assert str(inbound2["trace_id"]) == trace_id_str2
+
+        # Send confirmation message.
+        confirmation_msg = "sí"
+        confirmation_trace_id = str(uuid.uuid4())
+        confirmation_headers = {"x-user-id": user_id, "x-trace-id": confirmation_trace_id}
+        confirmation_response = await client.post(
             "http://127.0.0.1:8000/api/v1/conversations/message",
-            json={"message": msg2, "channel": "api", "pending_action_id": action_id},
-            headers=headers2,
+            json={"message": confirmation_msg, "channel": "api", "pending_action_id": action_id},
+            headers=confirmation_headers,
         )
-        r2.raise_for_status()
-        resp2 = r2.json()
-        assert resp2["status"] == "completed", resp2
+        confirmation_response.raise_for_status()
+        confirmation_data = confirmation_response.json()
+        assert confirmation_data["status"] == "completed", confirmation_data
 
         # Verify inbound confirmation message
-        inbound2 = await conn.fetchrow(
+        inbound3 = await conn.fetchrow(
             "SELECT id, trace_id FROM messages WHERE message = $1 AND trace_id = $2 ORDER BY created_at DESC LIMIT 1",
-            msg2,
-            trace_id_str2,
+            confirmation_msg,
+            confirmation_trace_id,
         )
-        assert inbound2 is not None
-        assert str(inbound2["trace_id"]) == trace_id_str2
+        assert inbound3 is not None
+        assert str(inbound3["trace_id"]) == confirmation_trace_id
 
         # Verify pending action confirmation_message_id
         pa2 = await conn.fetchrow(
             "SELECT confirmation_message_id FROM pending_actions WHERE id = $1", action_id
         )
-        assert str(pa2["confirmation_message_id"]) == str(inbound2["id"])
+        assert str(pa2["confirmation_message_id"]) == str(inbound3["id"])
 
         # Verify financial event
         fe = await conn.fetchrow(
@@ -134,11 +163,11 @@ async def main():
         assert str(fe["source_message_id"]) == str(inbound1["id"])
         assert fe["raw_message"] == msg1, f"Expected '{msg1}', got '{fe['raw_message']}'"
 
-        # Verify outbound message has the same trace_id as the request that generated it (trace_id_str2)
+        # Verify outbound message has the same trace_id as the request that generated it.
         outbound2 = await conn.fetchrow(
             "SELECT trace_id FROM messages WHERE response_data->>'response_text' = '¡Operación registrada con éxito!' AND direction = 'outbound' ORDER BY created_at DESC LIMIT 1"
         )
-        assert str(outbound2["trace_id"]) == trace_id_str2
+        assert str(outbound2["trace_id"]) == confirmation_trace_id
 
         print("API Direct test...")
         r_api = await client.post(

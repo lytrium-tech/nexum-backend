@@ -22,6 +22,7 @@ RUN uv sync --no-dev
 
 # Copiar código fuente
 COPY app/ ./app/
+COPY scripts/ ./scripts/
 
 # Usuario no-root para seguridad
 RUN addgroup --system nexum && adduser --system --group nexum
