@@ -15,7 +15,7 @@ WORKDIR /app
 RUN pip install uv
 
 # Copiar archivos de dependencias
-COPY pyproject.toml .
+COPY pyproject.toml README.md uv.lock .
 
 # Instalar dependencias (sin dev)
 RUN uv sync --no-dev

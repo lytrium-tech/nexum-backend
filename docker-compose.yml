@@ -1,25 +1,24 @@
-# ─────────────────────────────────────────────
-# Nexum Backend — docker-compose.yml
-# ─────────────────────────────────────────────
-# NOTA: Este archivo existe únicamente como parte del repositorio.
-# NO ejecutar localmente. La validación con Docker se realizará
-# en la VPS previa autorización explícita.
-# ─────────────────────────────────────────────
-
 services:
-  backend:
+  api:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: nexum-backend
+    container_name: nexum_backend_api
     env_file:
       - .env
+    command: [".venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
-      - "8000:8000"
-    restart: unless-stopped
+      - "127.0.0.1:8010:8000"
+    restart: always
+    networks:
+      - nexum_backend_network
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+
+networks:
+  nexum_backend_network:
+    driver: bridge
