@@ -133,7 +133,7 @@ Para probar el flujo transaccional de Cash contra Supabase localmente sin JWT:
 
 2. Verifica tu conexión de base de datos de manera segura:
    ```bash
-   python -m uv run python scripts/check_db.py
+   python -m uv run python scripts/db/check_db.py
    ```
 
 3. En una terminal nueva, levanta el servidor local:
@@ -143,15 +143,15 @@ Para probar el flujo transaccional de Cash contra Supabase localmente sin JWT:
 
 4. En la primera terminal, ejecuta el script de semilla (crea tu usuario dev):
    ```bash
-   python -m uv run python scripts/seed_dev.py
+   python -m uv run python scripts/dev/seed_dev.py
    ```
 
 5. Lanza la simulación completa del Cash Domain (crea cuenta, transacciona, falla a propósito y valida idempotencia):
    ```bash
-   python -m uv run python scripts/smoke_cash.py
+   python -m uv run python scripts/smoke/smoke_cash.py
    ```
 
 6. Una vez probados todos los flujos, limpia tu base de datos si lo deseas (borra transacciones y cuentas pero deja tu dev_user):
    ```bash
-   python -m uv run python scripts/cleanup_dev.py
+   python -m uv run python scripts/dev/cleanup_dev.py
    ```

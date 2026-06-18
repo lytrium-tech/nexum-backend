@@ -34,7 +34,7 @@ Se ejecutó un script de migración para alterar el `CHECK CONSTRAINT` llamado `
 *   El renderizado estático en `app/conversations/prompts.py` usa `data.get("free_money_result", "0.00")` desde el `FreeMoneyRead` corregido.
 
 ## 6. Validación de Smokes (Tests)
-Se implementó `scripts/smoke_financial_truth_v11.py` el cual verifica el end-to-end:
+Se implementó `scripts/smoke/smoke_financial_truth_v11.py` el cual verifica el end-to-end:
 *   Creación de cuenta con balance inicial (500k COP).
 *   Ajuste de balance manual (+100k COP).
 *   Verificación de que el saldo de cuentas aumenta pero `income` / `expense` de cashflow no se ve afectado.

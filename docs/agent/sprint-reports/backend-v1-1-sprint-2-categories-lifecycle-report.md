@@ -22,7 +22,7 @@ Bajo aprobación explícita, se ejecutó una limpieza segura:
 ---
 
 ## 2. Implementación de Restricciones (Database Constraints)
-Una vez limpia la base de datos, se creó y aplicó la migración `scripts/migrate_v11_sprint2.py`:
+Una vez limpia la base de datos, se creó y aplicó la migración `scripts/migration/migrate_v11_sprint2.py`:
 - Se agregó la columna `normalized_name` a la tabla `categories`.
 - Se aplicó la normalización a todas las filas existentes en base de datos.
 - Se agregó un `UniqueConstraint` en `(user_id, type, normalized_name)` bajo el nombre `uq_category_user_type_normalized_name`. Esto garantiza unicidad incluso en categorías inactivas a nivel de esquema.
@@ -37,7 +37,7 @@ Una vez limpia la base de datos, se creó y aplicó la migración `scripts/migra
 ---
 
 ## 4. Pruebas y Validación (Smoke Tests)
-Se creó el script de regresión `scripts/smoke_categories_lifecycle_v11.py` el cual cubre el ciclo completo:
+Se creó el script de regresión `scripts/smoke/smoke_categories_lifecycle_v11.py` el cual cubre el ciclo completo:
 1. Validar que `sin_clasificar` existe y es global.
 2. Intentar editar la categoría global (falla con 403 Forbidden).
 3. Crear una categoría privada (Transporte).

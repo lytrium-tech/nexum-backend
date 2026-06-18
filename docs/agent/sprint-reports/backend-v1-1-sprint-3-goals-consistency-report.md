@@ -42,7 +42,7 @@ Todo es 100% retrocompatible con la V1.0. No fue necesario modificar los eventos
 Se ejecutó la suite completa de unit testing en backend que corre a través de Pydantic usando Pytest (`pytest tests/ -v`). Se validaron integraciones profundas en el modelo asíncrono para verificar que el servicio no introdujo inestabilidades generales. Todos los tests superados sin errores.
 
 ## 11. Smoke Tests
-Se introdujo `scripts/smoke_goals_consistency_v11.py`, probando los flujos vitales e indirectos (como afectaciones a "Truth" y "Ledger"). Todas las revisiones de regresión contra Accounts, Categories, History y Traceability pasaron con normalidad y los comandos informaron `=== SMOKE TEST: PASSED ===`.
+Se introdujo `scripts/smoke/smoke_goals_consistency_v11.py`, probando los flujos vitales e indirectos (como afectaciones a "Truth" y "Ledger"). Todas las revisiones de regresión contra Accounts, Categories, History y Traceability pasaron con normalidad y los comandos informaron `=== SMOKE TEST: PASSED ===`.
 
 ## 12. Migrations
 No se generaron o requirieron alteraciones o migraciones DDL / Destructivas a los esquemas de bases de datos para soportar los nuevos campos, ya que toda la inteligencia de metas se implementó de forma derivada y relacional desde el Backend de manera determinística, protegiendo los datos antiguos y eliminando cuellos de botella por consistencia en cache/storage.

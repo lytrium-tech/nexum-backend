@@ -2,11 +2,23 @@
 # Nexum Backend — .gitignore
 # ─────────────────────────────────────────────
 
-# Agent configuration — never track local MCP credentials
+# --- Local agent configuration ---
+AGENTS.md
 .agents/
 docs/codex/
 
-# Entorno virtual y uv
+# --- Agent outputs ---
+docs/agent/*
+!docs/agent/audits/
+!docs/agent/audits/**
+!docs/agent/cleanup/
+!docs/agent/cleanup/**
+!docs/agent/reports/
+!docs/agent/reports/**
+!docs/agent/sprint-reports/
+!docs/agent/sprint-reports/**
+
+# --- Python, uv & virtual environments ---
 .venv/
 .uv/
 __pycache__/
@@ -17,38 +29,39 @@ __pycache__/
 dist/
 build/
 
-# Variables de entorno (nunca subir secretos)
+# --- Environment variables / secrets ---
 .env
 .env.local
 .env.*.local
 
-# Pytest y coverage
+# --- Testing / coverage / lint caches ---
 .pytest_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 coverage.xml
 
-# Ruff / linters
-.ruff_cache/
+# --- Database / migrations cache ---
+migrations/__pycache__/
 
-# Editors
+# --- Temporary root scripts / recovery ---
+append_test.py
+fix.py
+fix_*.py
+recover*.py
+scratch_*.py
+
+# --- Local artifacts / logs ---
+artifacts/
+logs/
+*.log
+
+# --- IDEs / editors ---
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# Logs locales
-logs/
-*.log
-
-# Alembic — el directorio migrations sí se versiona
-# pero los archivos .pyc dentro no
-migrations/__pycache__/
-
-# macOS
+# --- OS files ---
 .DS_Store
-
-# Windows
 Thumbs.db
-scratch_*.py
-recover*.py

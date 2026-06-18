@@ -29,11 +29,11 @@ El Sprint 4 se completó con éxito. El objetivo principal era mejorar el ciclo 
    - El comando `pytest tests/` fue ejecutado pasando el 100% (131 pruebas).
 
 2. **Smoke / Regression Tests:**
-   - Se ejecutó `scripts/smoke_obligations_v11.py` logrando completar y validar flujos exitosos y conflictos HTTP 409 cuando se intenta pagar un `fixed_full_payment` más de una vez.
+   - Se ejecutó `scripts/smoke/smoke_obligations_v11.py` logrando completar y validar flujos exitosos y conflictos HTTP 409 cuando se intenta pagar un `fixed_full_payment` más de una vez.
    - Se ejecutaron los scripts de regresión obligatoria:
-     - `scripts/smoke_financial_truth_v11.py`
-     - `scripts/smoke_categories_lifecycle_v11.py`
-     - `scripts/smoke_goals_consistency_v11.py`
+     - `scripts/smoke/smoke_financial_truth_v11.py`
+     - `scripts/smoke/smoke_categories_lifecycle_v11.py`
+     - `scripts/smoke/smoke_goals_consistency_v11.py`
    - Todos pasaron exitosamente.
 
 ## Aprendizajes y Observaciones
@@ -60,13 +60,13 @@ Resultado técnico:
 Comandos ejecutados:
 - `python -m uv run pytest tests/ -v`: 137 passed, 1 warning.
 - `python -m uv run ruff check .`: All checks passed.
-- `python -m uv run python scripts/smoke_obligations_v11.py`: passed.
-- `python -m uv run python scripts/smoke_financial_truth_v11.py`: passed.
-- `python -m uv run python scripts/smoke_goals_consistency_v11.py`: passed.
-- `python -m uv run python scripts/smoke_categories_lifecycle_v11.py`: passed.
-- `python -m uv run python scripts/smoke_ledger_history.py`: passed.
-- `python -m uv run python scripts/smoke_traceability.py`: passed.
-- `python -m uv run python scripts/smoke_ownership.py`: passed.
+- `python -m uv run python scripts/smoke/smoke_obligations_v11.py`: passed.
+- `python -m uv run python scripts/smoke/smoke_financial_truth_v11.py`: passed.
+- `python -m uv run python scripts/smoke/smoke_goals_consistency_v11.py`: passed.
+- `python -m uv run python scripts/smoke/smoke_categories_lifecycle_v11.py`: passed.
+- `python -m uv run python scripts/smoke/smoke_ledger_history.py`: passed.
+- `python -m uv run python scripts/smoke/smoke_traceability.py`: passed.
+- `python -m uv run python scripts/smoke/smoke_ownership.py`: passed.
 
 ## 19. committed_outflows Final Rule
 Regla final validada:
@@ -214,10 +214,10 @@ Archivos revisados e incluidos en el commit funcional de Sprint 4:
 - `app/obligations/service.py`
 - `docker-compose.yml`
 - `docs/agent/BACKEND_V1_1_SPRINT_4_OBLIGATIONS_REPORT.md`
-- `scripts/migrate_v11_sprint4.py`
-- `scripts/smoke_categories_lifecycle_v11.py`
-- `scripts/smoke_goals_consistency_v11.py`
-- `scripts/smoke_obligations_v11.py`
+- `scripts/migration/migrate_v11_sprint4.py`
+- `scripts/smoke/smoke_categories_lifecycle_v11.py`
+- `scripts/smoke/smoke_goals_consistency_v11.py`
+- `scripts/smoke/smoke_obligations_v11.py`
 - `tests/unit/test_goals.py`
 - `tests/unit/test_intelligence.py`
 - `tests/unit/test_obligations.py`
@@ -290,13 +290,13 @@ Regresión ejecutada antes del deploy:
 ```text
 python -m uv run pytest tests/ -v: 137 passed, 1 warning
 python -m uv run ruff check .: All checks passed
-python -m uv run python scripts/smoke_obligations_v11.py: passed
-python -m uv run python scripts/smoke_financial_truth_v11.py: passed
-python -m uv run python scripts/smoke_goals_consistency_v11.py: passed
-python -m uv run python scripts/smoke_categories_lifecycle_v11.py: passed
-python -m uv run python scripts/smoke_ledger_history.py: passed
-python -m uv run python scripts/smoke_traceability.py: passed
-python -m uv run python scripts/smoke_ownership.py: passed
+python -m uv run python scripts/smoke/smoke_obligations_v11.py: passed
+python -m uv run python scripts/smoke/smoke_financial_truth_v11.py: passed
+python -m uv run python scripts/smoke/smoke_goals_consistency_v11.py: passed
+python -m uv run python scripts/smoke/smoke_categories_lifecycle_v11.py: passed
+python -m uv run python scripts/smoke/smoke_ledger_history.py: passed
+python -m uv run python scripts/smoke/smoke_traceability.py: passed
+python -m uv run python scripts/smoke/smoke_ownership.py: passed
 ```
 
 Deploy productivo ejecutado:

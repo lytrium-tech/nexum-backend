@@ -12,7 +12,7 @@ API_HOST = os.getenv("API_HOST", "http://localhost:8000")
 DEV_USER_ID = str(settings.DEV_USER_ID)
 
 
-from scripts.cleanup_dev import cleanup  # noqa: E402
+from scripts.dev.cleanup_dev import cleanup  # noqa: E402
 
 
 async def main():

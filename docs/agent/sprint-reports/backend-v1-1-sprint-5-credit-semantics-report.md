@@ -19,7 +19,7 @@ El resultado cumple el objetivo del roadmap: tarjetas de crédito comprensibles 
 1. Modelos y migración:
    - Se agregaron `network` y `franchise` a tarjetas.
    - Se agregó `CreditCardInstallment` y tabla `credit_card_installments`.
-   - Se creó `scripts/migrate_v11_sprint5.py` con migración aditiva y backfill de cuotas.
+   - Se creó `scripts/migration/migrate_v11_sprint5.py` con migración aditiva y backfill de cuotas.
 
 2. Contrato Credit V1.1:
    - `CreditCardRead` y `CreditCardStatusRead` exponen `current_debt`, `available_credit`, `payment_required`, `next_payment_estimate`, `statement_balance` y `data_quality`.
@@ -38,22 +38,22 @@ El resultado cumple el objetivo del roadmap: tarjetas de crédito comprensibles 
    - Respuestas conversacionales de deuda distinguen deuda actual, pago requerido y estimación.
 
 5. Operación y smokes:
-   - Se agregó `scripts/smoke_credit_semantics_v11.py`.
-   - Se actualizó `scripts/smoke_traceability.py` para seguir el flujo real de clarificación antes de confirmación y limpiar acciones pendientes al inicio.
+   - Se agregó `scripts/smoke/smoke_credit_semantics_v11.py`.
+   - Se actualizó `scripts/smoke/smoke_traceability.py` para seguir el flujo real de clarificación antes de confirmación y limpiar acciones pendientes al inicio.
    - `Dockerfile` copia `scripts/` para permitir migraciones/smokes dentro de imagen.
 
 ## Validaciones Ejecutadas
 - `python -m uv run ruff check .`: All checks passed.
 - `python -m uv run pytest tests/unit/test_credit.py tests/unit/test_intelligence.py -v`: 15 passed.
 - `python -m uv run pytest tests/ -v`: 140 passed, 1 warning.
-- `python -m uv run python scripts/smoke_credit_semantics_v11.py`: passed.
-- `python -m uv run python scripts/smoke_credit_core.py`: passed.
-- `python -m uv run python scripts/smoke_financial_truth_v11.py`: passed.
-- `python -m uv run python scripts/smoke_obligations_v11.py`: passed.
-- `python -m uv run python scripts/smoke_goals_consistency_v11.py`: passed.
-- `python -m uv run python scripts/smoke_ledger_history.py`: passed.
-- `python -m uv run python scripts/smoke_traceability.py`: passed.
-- `python -m uv run python scripts/smoke_ownership.py`: passed.
+- `python -m uv run python scripts/smoke/smoke_credit_semantics_v11.py`: passed.
+- `python -m uv run python scripts/smoke/smoke_credit_core.py`: passed.
+- `python -m uv run python scripts/smoke/smoke_financial_truth_v11.py`: passed.
+- `python -m uv run python scripts/smoke/smoke_obligations_v11.py`: passed.
+- `python -m uv run python scripts/smoke/smoke_goals_consistency_v11.py`: passed.
+- `python -m uv run python scripts/smoke/smoke_ledger_history.py`: passed.
+- `python -m uv run python scripts/smoke/smoke_traceability.py`: passed.
+- `python -m uv run python scripts/smoke/smoke_ownership.py`: passed.
 
 ## Auditoría Productiva Previa
 La auditoría previa aprobada no encontró bloqueantes para la migración:
@@ -112,9 +112,9 @@ Clasificación de archivos versionados:
 - `app/conversations/prompts.py`: Sprint 5 legítimo.
 - `tests/unit/test_credit.py`: Sprint 5 legítimo.
 - `tests/unit/test_intelligence.py`: Sprint 5 legítimo.
-- `scripts/migrate_v11_sprint5.py`: Sprint 5 legítimo.
-- `scripts/smoke_credit_semantics_v11.py`: Sprint 5 legítimo.
-- `scripts/smoke_traceability.py`: smoke/regresión válida.
+- `scripts/migration/migrate_v11_sprint5.py`: Sprint 5 legítimo.
+- `scripts/smoke/smoke_credit_semantics_v11.py`: Sprint 5 legítimo.
+- `scripts/smoke/smoke_traceability.py`: smoke/regresión válida.
 - `Dockerfile`: cambio operativo válido para incluir `scripts/` en la imagen.
 - `docs/agent/BACKEND_V1_1_SPRINT_5_CREDIT_SEMANTICS_AUDIT.md`: documentación válida.
 - `docs/agent/BACKEND_V1_1_SPRINT_5_CREDIT_SEMANTICS_REPORT.md`: documentación válida.
@@ -155,7 +155,7 @@ cd /opt/nexum-backend
 git pull origin main
 git rev-parse --short HEAD
 docker compose build --no-cache
-docker compose run --rm api sh -lc 'cd /app && PYTHONPATH=/app .venv/bin/python scripts/migrate_v11_sprint5.py'
+docker compose run --rm api sh -lc 'cd /app && PYTHONPATH=/app .venv/bin/python scripts/migration/migrate_v11_sprint5.py'
 ```
 
 Resultado de migración:
