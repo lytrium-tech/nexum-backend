@@ -20,3 +20,8 @@ Current organization decisions:
 - Scripts were moved and selected obsolete helpers were removed, but no scripts were executed.
 - SQL snapshots were kept in place and not executed.
 - `scripts/smoke/smoke_intelligence.py` now imports `cleanup` from `scripts/dev/cleanup_dev.py`.
+
+## Current Sprint Status
+
+- **Sprint 5 (Credit Semantics)**: Completed and validated.
+- **Sprint 6**: Audited and confirmed as NOT_STARTED. No implementation or technical scope exists yet.
