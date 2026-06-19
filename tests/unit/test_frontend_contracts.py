@@ -63,7 +63,7 @@ def test_snapshot_truth_contract():
 
 
 def test_openapi_contains_v11_fields():
-    with open("openapi.json", "r") as f:
+    with open("openapi.json") as f:
         spec = json.load(f)
 
     schemas = spec.get("components", {}).get("schemas", {})
