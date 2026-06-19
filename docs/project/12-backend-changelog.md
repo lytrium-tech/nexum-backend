@@ -1,7 +1,7 @@
 # Changelog del Backend
 
 ## [v1.1.0-alpha] - Backend V1.1 Closed Alpha
-- Sprint 7 regression & alpha readiness passed.
+- Sprint 7 regression & alpha readiness passed. Backend V1.1 closed. Production verified. Alpha Ready.
 - Financial Truth, Credit Semantics, and Obligations V1.1 successfully deployed to production.
 - OpenAPI schemas aligned for frontend consumption.
 - Security and Ownership hardened.

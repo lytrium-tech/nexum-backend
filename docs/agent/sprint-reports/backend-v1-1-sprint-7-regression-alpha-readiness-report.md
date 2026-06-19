@@ -48,7 +48,7 @@ All local smoke tests successfully passed against the active local backend.
 - Deprecated aliases remain in the contract for backward compatibility.
 
 ## 16. Alpha Readiness Verdict
-**PASS**. The backend is Alpha Ready.
+**PASS**. Backend V1.1 closed. Production verified. Alpha Ready.
 
 ## 17. Next Steps
 - Proceed with frontend integration based on the V1.1 `openapi.json` contract.
