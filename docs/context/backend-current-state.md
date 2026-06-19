@@ -23,7 +23,8 @@ Current organization decisions:
 
 ## Current Sprint Status
 
-- **Sprint 4 (Obligations V1.1)**: Completed and validated (Audit Freeze passed).
-- **Sprint 5 (Credit Semantics)**: Completed and validated (Audit Freeze passed).
-- **Sprint 6 (Frontend Alignment)**: Completed and validated (Audit Freeze passed).
-- **Backend V1.1 Readiness**: Backend V1.1 is fully implemented and audited. Ready for Sprint 7.
+- **Sprint 4 (Obligations V1.1)**: Completed and validated.
+- **Sprint 5 (Credit Semantics)**: Completed and validated.
+- **Sprint 6 (Frontend Alignment)**: Completed and validated.
+- **Sprint 7 (Regression & Alpha Readiness)**: Completed.
+- **Backend V1.1 Readiness**: Backend V1.1 is fully closed. Backend is ready for Closed Alpha.

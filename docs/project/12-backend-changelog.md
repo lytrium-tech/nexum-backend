@@ -1,10 +1,10 @@
 # Changelog del Backend
 
-## [v1.1.0-alpha.preview] - V1.1 Audit Freeze
-- Sprint 4 audit freeze: passed
-- Sprint 5 audit freeze: passed
-- Sprint 6 audit freeze: passed
-- Backend V1.1 ready for Sprint 7
+## [v1.1.0-alpha] - Backend V1.1 Closed Alpha
+- Sprint 7 regression & alpha readiness passed.
+- Financial Truth, Credit Semantics, and Obligations V1.1 successfully deployed to production.
+- OpenAPI schemas aligned for frontend consumption.
+- Security and Ownership hardened.
 
 ## [v0.1.0-alpha] - Alpha Privada
 - MVP Técnico finalizado.
