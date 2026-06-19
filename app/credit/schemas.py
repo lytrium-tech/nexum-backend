@@ -40,6 +40,7 @@ class CreditCardRead(CreditCardBase):
     id: uuid.UUID
     is_active: bool
     current_debt: Decimal = Decimal("0.00")
+    total_debt: Decimal = Decimal("0.00")
     available_credit: Decimal = Decimal("0.00")
     billed_debt: Decimal = Decimal("0.00")
     unbilled_debt: Decimal = Decimal("0.00")

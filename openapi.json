@@ -365,6 +365,64 @@
         }
       }
     },
+    "/api/v1/accounts/{account_id}/balance-adjustments": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Create Balance Adjustment",
+        "operationId": "create_balance_adjustment_api_v1_accounts__account_id__balance_adjustments_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Account Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BalanceAdjustmentCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/categories": {
       "get": {
         "tags": [
@@ -372,27 +430,65 @@
         ],
         "summary": "List Categories",
         "operationId": "list_categories_api_v1_categories_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "include_inactive",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Inactive"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Type"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
+                  "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/CategoryRead"
                   },
-                  "type": "array",
                   "title": "Response List Categories Api V1 Categories Get"
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
+        }
       },
       "post": {
         "tags": [
@@ -400,15 +496,20 @@
         ],
         "summary": "Create Category",
         "operationId": "create_category_api_v1_categories_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CategoryCreate"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "201": {
@@ -431,12 +532,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
+        }
       }
     },
     "/api/v1/categories/{category_id}": {
@@ -1663,6 +1759,58 @@
         }
       }
     },
+    "/api/v1/credit/cards/{card_id}/installments": {
+      "get": {
+        "tags": [
+          "Credit"
+        ],
+        "summary": "List Card Installments",
+        "operationId": "list_card_installments_api_v1_credit_cards__card_id__installments_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Card Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CreditCardInstallmentRead"
+                  },
+                  "title": "Response List Card Installments Api V1 Credit Cards  Card Id  Installments Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/ledger/events": {
       "get": {
         "tags": [
@@ -2562,6 +2710,20 @@
             "type": "string",
             "title": "Currency",
             "default": "COP"
+          },
+          "initial_balance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              }
+            ],
+            "title": "Initial Balance",
+            "description": "Saldo inicial para abrir la cuenta",
+            "default": "0.00"
           }
         },
         "type": "object",
@@ -2702,6 +2864,56 @@
         },
         "type": "object",
         "title": "AccountUpdate"
+      },
+      "BalanceAdjustmentCreate": {
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              }
+            ],
+            "title": "Amount",
+            "description": "Cantidad a ajustar (siempre positiva)"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "increase",
+              "decrease"
+            ],
+            "title": "Direction",
+            "description": "Si aumenta o disminuye el balance"
+          },
+          "type": {
+            "$ref": "#/components/schemas/EventType",
+            "description": "opening_balance o balance_adjustment"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "amount",
+          "direction",
+          "type"
+        ],
+        "title": "BalanceAdjustmentCreate"
       },
       "CashExpenseCreate": {
         "properties": {
@@ -3179,6 +3391,70 @@
             "minimum": 1.0,
             "title": "Due Day"
           },
+          "management_fee": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              }
+            ],
+            "title": "Management Fee",
+            "default": "0.00"
+          },
+          "monthly_interest_rate": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              }
+            ],
+            "title": "Monthly Interest Rate",
+            "default": "0.00"
+          },
+          "annual_interest_rate": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              }
+            ],
+            "title": "Annual Interest Rate",
+            "default": "0.00"
+          },
+          "network": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Network"
+          },
+          "franchise": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Franchise"
+          },
           "currency": {
             "type": "string",
             "title": "Currency",
@@ -3194,6 +3470,64 @@
           "due_day"
         ],
         "title": "CreditCardCreate"
+      },
+      "CreditCardInstallmentRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "credit_card_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Credit Card Id"
+          },
+          "purchase_transaction_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Purchase Transaction Id"
+          },
+          "installment_number": {
+            "type": "integer",
+            "title": "Installment Number"
+          },
+          "installments_total": {
+            "type": "integer",
+            "title": "Installments Total"
+          },
+          "principal_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Principal Amount"
+          },
+          "scheduled_period": {
+            "type": "string",
+            "title": "Scheduled Period"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "paid_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Paid Amount"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "credit_card_id",
+          "purchase_transaction_id",
+          "installment_number",
+          "installments_total",
+          "principal_amount",
+          "scheduled_period",
+          "status",
+          "paid_amount"
+        ],
+        "title": "CreditCardInstallmentRead"
       },
       "CreditCardPaymentCreate": {
         "properties": {
@@ -3281,6 +3615,16 @@
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Amount"
           },
+          "current_debt": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Current Debt"
+          },
+          "available_credit": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Available Credit"
+          },
           "estimated_current_debt": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -3296,6 +3640,8 @@
         "required": [
           "status",
           "amount",
+          "current_debt",
+          "available_credit",
           "estimated_current_debt",
           "account_balance"
         ],
@@ -3410,6 +3756,16 @@
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Amount"
           },
+          "current_debt": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Current Debt"
+          },
+          "available_credit": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Available Credit"
+          },
           "estimated_current_debt": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -3425,6 +3781,8 @@
         "required": [
           "status",
           "amount",
+          "current_debt",
+          "available_credit",
           "estimated_current_debt",
           "estimated_available_credit"
         ],
@@ -3459,6 +3817,46 @@
             "minimum": 1.0,
             "title": "Due Day"
           },
+          "management_fee": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Management Fee",
+            "default": "0.00"
+          },
+          "monthly_interest_rate": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Monthly Interest Rate",
+            "default": "0.00"
+          },
+          "annual_interest_rate": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Annual Interest Rate",
+            "default": "0.00"
+          },
+          "network": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Network"
+          },
+          "franchise": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Franchise"
+          },
           "currency": {
             "type": "string",
             "title": "Currency",
@@ -3472,6 +3870,67 @@
           "is_active": {
             "type": "boolean",
             "title": "Is Active"
+          },
+          "current_debt": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Current Debt",
+            "default": "0.00"
+          },
+          "total_debt": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Debt",
+            "default": "0.00"
+          },
+          "available_credit": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Available Credit",
+            "default": "0.00"
+          },
+          "billed_debt": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Billed Debt",
+            "default": "0.00"
+          },
+          "unbilled_debt": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Unbilled Debt",
+            "default": "0.00"
+          },
+          "payment_required": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Payment Required",
+            "default": "0.00"
+          },
+          "next_payment_estimate": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Next Payment Estimate",
+            "default": "0.00"
+          },
+          "statement_balance": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Statement Balance"
+          },
+          "data_quality": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Data Quality"
           },
           "estimated_current_debt": {
             "type": "string",
@@ -3521,6 +3980,52 @@
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Credit Limit"
           },
+          "management_fee": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Management Fee",
+            "default": "0.00"
+          },
+          "monthly_interest_rate": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Monthly Interest Rate",
+            "default": "0.00"
+          },
+          "annual_interest_rate": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Annual Interest Rate",
+            "default": "0.00"
+          },
+          "network": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Network"
+          },
+          "franchise": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Franchise"
+          },
+          "current_debt": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Current Debt",
+            "default": "0.00"
+          },
           "total_debt": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -3540,6 +4045,30 @@
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Available Credit"
+          },
+          "payment_required": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Payment Required",
+            "default": "0.00"
+          },
+          "next_payment_estimate": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Next Payment Estimate",
+            "default": "0.00"
+          },
+          "statement_balance": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Statement Balance"
           },
           "monthly_cc_payment": {
             "type": "string",
@@ -3565,6 +4094,13 @@
           "payments_count": {
             "type": "integer",
             "title": "Payments Count"
+          },
+          "data_quality": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Data Quality"
           }
         },
         "type": "object",
@@ -3653,6 +4189,76 @@
             ],
             "title": "Due Day"
           },
+          "management_fee": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Management Fee"
+          },
+          "monthly_interest_rate": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthly Interest Rate"
+          },
+          "annual_interest_rate": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Annual Interest Rate"
+          },
+          "network": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Network"
+          },
+          "franchise": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Franchise"
+          },
           "is_active": {
             "anyOf": [
               {
@@ -3685,6 +4291,24 @@
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Total Available Credit"
           },
+          "total_monthly_cc_payment": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Monthly Cc Payment",
+            "default": "0.00"
+          },
+          "total_payment_required": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Payment Required",
+            "default": "0.00"
+          },
+          "total_next_payment_estimate": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Next Payment Estimate",
+            "default": "0.00"
+          },
           "cards": {
             "items": {
               "$ref": "#/components/schemas/CreditCardStatusRead"
@@ -3711,6 +4335,24 @@
           "system"
         ],
         "title": "EventSource"
+      },
+      "EventType": {
+        "type": "string",
+        "enum": [
+          "income",
+          "expense",
+          "goal_contribution",
+          "obligation_payment",
+          "credit_card_purchase",
+          "credit_card_payment",
+          "manual_adjustment",
+          "transfer_out",
+          "transfer_in",
+          "opening_balance",
+          "balance_adjustment"
+        ],
+        "title": "EventType",
+        "description": "Cat\u00e1logo central de eventos financieros de Nexum.\nNo define impactos financieros directamente, solo categoriza el evento."
       },
       "FreeMoneyRead": {
         "properties": {
@@ -3991,6 +4633,12 @@
             "format": "date-time",
             "title": "Updated At"
           },
+          "contributed_this_period": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Contributed This Period",
+            "default": "0.00"
+          },
           "remaining_amount": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -4001,6 +4649,11 @@
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Progress Percentage",
+            "readOnly": true
+          },
+          "is_flexible": {
+            "type": "boolean",
+            "title": "Is Flexible",
             "readOnly": true
           },
           "monthly_required": {
@@ -4016,17 +4669,21 @@
             "title": "Monthly Required",
             "readOnly": true
           },
-          "daily_required": {
-            "anyOf": [
-              {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Daily Required",
+          "required_this_period": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Required This Period",
+            "readOnly": true
+          },
+          "remaining_required_this_period": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Remaining Required This Period",
+            "readOnly": true
+          },
+          "period_status": {
+            "type": "string",
+            "title": "Period Status",
             "readOnly": true
           }
         },
@@ -4043,8 +4700,11 @@
           "updated_at",
           "remaining_amount",
           "progress_percentage",
+          "is_flexible",
           "monthly_required",
-          "daily_required"
+          "required_this_period",
+          "remaining_required_this_period",
+          "period_status"
         ],
         "title": "GoalRead"
       },
@@ -4248,6 +4908,18 @@
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Estimated Current Debt"
           },
+          "current_debt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Debt"
+          },
           "billed_debt": {
             "anyOf": [
               {
@@ -4283,6 +4955,54 @@
               }
             ],
             "title": "Estimated Available Credit"
+          },
+          "available_credit": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available Credit"
+          },
+          "payment_required": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Required"
+          },
+          "next_payment_estimate": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Payment Estimate"
+          },
+          "statement_balance": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Statement Balance"
           },
           "monthly_cc_payment": {
             "type": "string",
@@ -4321,6 +5041,13 @@
               }
             ],
             "title": "Next Payment Due Date"
+          },
+          "data_quality": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Data Quality"
           }
         },
         "type": "object",
@@ -4530,6 +5257,9 @@
             },
             "type": "array",
             "title": "Recent Activity"
+          },
+          "truth": {
+            "$ref": "#/components/schemas/SnapshotTruth"
           }
         },
         "type": "object",
@@ -4541,7 +5271,8 @@
           "goals",
           "obligations",
           "transfers",
-          "recent_activity"
+          "recent_activity",
+          "truth"
         ],
         "title": "IntelligenceSnapshotRead"
       },
@@ -4859,9 +5590,17 @@
               {
                 "type": "string",
                 "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
               }
             ],
             "title": "Amount"
+          },
+          "payment_mode": {
+            "type": "string",
+            "title": "Payment Mode",
+            "default": "fixed_full_payment"
           },
           "due_day": {
             "anyOf": [
@@ -4907,8 +5646,7 @@
         },
         "type": "object",
         "required": [
-          "name",
-          "amount"
+          "name"
         ],
         "title": "ObligationCreate"
       },
@@ -5031,9 +5769,20 @@
             "title": "Name"
           },
           "amount": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Amount"
+          },
+          "payment_mode": {
+            "type": "string",
+            "title": "Payment Mode"
           },
           "due_day": {
             "anyOf": [
@@ -5091,6 +5840,59 @@
             "type": "string",
             "format": "date-time",
             "title": "Updated At"
+          },
+          "paid_this_period": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Paid This Period",
+            "default": "0.00"
+          },
+          "last_payment_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Payment At"
+          },
+          "remaining_amount": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Amount",
+            "readOnly": true
+          },
+          "is_pending": {
+            "type": "boolean",
+            "title": "Is Pending",
+            "readOnly": true
+          },
+          "period_status": {
+            "type": "string",
+            "title": "Period Status",
+            "readOnly": true
+          },
+          "next_due_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Due Date",
+            "readOnly": true
           }
         },
         "type": "object",
@@ -5099,6 +5901,7 @@
           "user_id",
           "name",
           "amount",
+          "payment_mode",
           "due_day",
           "frequency",
           "is_active",
@@ -5106,7 +5909,11 @@
           "currency",
           "metadata",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "remaining_amount",
+          "is_pending",
+          "period_status",
+          "next_due_date"
         ],
         "title": "ObligationRead"
       },
@@ -5139,6 +5946,17 @@
               }
             ],
             "title": "Amount"
+          },
+          "payment_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Mode"
           },
           "due_day": {
             "anyOf": [
@@ -5253,6 +6071,18 @@
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Unbilled Debt"
+          },
+          "payment_required": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Payment Required",
+            "default": "0.00"
+          },
+          "next_payment_estimate": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Next Payment Estimate",
+            "default": "0.00"
           }
         },
         "type": "object",
@@ -5338,6 +6168,66 @@
           "monthly_transfer_volume"
         ],
         "title": "SnapshotTransfers"
+      },
+      "SnapshotTruth": {
+        "properties": {
+          "available_real": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Available Real"
+          },
+          "committed_outflows": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Committed Outflows"
+          },
+          "free_money": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Free Money"
+          },
+          "safe_money": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Safe Money"
+          },
+          "payment_required": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Payment Required"
+          },
+          "goals_required_this_period": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Goals Required This Period"
+          },
+          "calculation_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Calculation Warnings"
+          },
+          "data_quality": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Data Quality"
+          }
+        },
+        "type": "object",
+        "required": [
+          "available_real",
+          "committed_outflows",
+          "free_money",
+          "safe_money",
+          "payment_required",
+          "goals_required_this_period",
+          "calculation_warnings",
+          "data_quality"
+        ],
+        "title": "SnapshotTruth"
       },
       "TransferCreate": {
         "properties": {

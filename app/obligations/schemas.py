@@ -58,6 +58,10 @@ class ObligationRead(BaseModel):
         return max(Decimal("0.00"), amt - self.paid_this_period)
 
     @computed_field
+    def is_pending(self) -> bool:
+        return self.period_status == "pending"
+
+    @computed_field
     def period_status(self) -> str:
         if not self.is_active:
             return "inactive"

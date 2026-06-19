@@ -120,6 +120,7 @@ class CreditCardService:
         return CreditCardRead(
             **card_data,
             current_debt=debt,
+            total_debt=debt,
             available_credit=status.available_credit,
             billed_debt=status.billed_debt,
             unbilled_debt=status.unbilled_debt,
