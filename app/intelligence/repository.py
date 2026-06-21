@@ -12,11 +12,20 @@ class IntelligenceRepository:
 
     async def get_cash_metrics(self, user_id: uuid.UUID) -> dict[str, Any]:
         query = text(
-            "SELECT COALESCE(SUM(balance), 0) as total_balance, COUNT(id) as active_accounts_count "
+            "SELECT COALESCE(SUM(balance), 0) as total_balance, COUNT(id) as active_accounts_count, COUNT(DISTINCT currency) as currency_count "
             "FROM accounts WHERE user_id = :user_id AND is_active = true"
         )
         result = await self.session.execute(query, {"user_id": user_id})
         return dict(result.mappings().first() or {})
+
+    async def get_cash_metrics_by_currency(self, user_id: uuid.UUID) -> list[dict[str, Any]]:
+        query = text(
+            "SELECT currency, COALESCE(SUM(balance), 0) as total_balance, COUNT(id) as active_accounts_count "
+            "FROM accounts WHERE user_id = :user_id AND is_active = true GROUP BY currency"
+        )
+        result = await self.session.execute(query, {"user_id": user_id})
+        return [dict(r) for r in result.mappings().all()]
+
 
     async def get_cashflow_metrics(
         self, user_id: uuid.UUID, month_start: datetime, next_month_start: datetime
@@ -28,7 +37,8 @@ class IntelligenceRepository:
             "COALESCE(SUM(CASE WHEN event_type = 'credit_card_purchase' THEN amount ELSE 0 END), 0) as credit_card_consumption_current_period, "
             "COALESCE(SUM(CASE WHEN event_type = 'credit_card_payment' THEN amount ELSE 0 END), 0) as debt_payments_current_period, "
             "COALESCE(SUM(CASE WHEN event_type = 'goal_contribution' THEN amount ELSE 0 END), 0) as goal_contributions_current_period, "
-            "COALESCE(SUM(CASE WHEN event_type = 'obligation_payment' THEN amount ELSE 0 END), 0) as obligation_payments_current_period "
+            "COALESCE(SUM(CASE WHEN event_type = 'obligation_payment' THEN amount ELSE 0 END), 0) as obligation_payments_current_period, "
+            "COUNT(DISTINCT currency) as currency_count "
             "FROM financial_events "
             "WHERE user_id = :user_id AND occurred_at >= :start AND occurred_at < :end"
         )
@@ -36,6 +46,26 @@ class IntelligenceRepository:
             query, {"user_id": user_id, "start": month_start, "end": next_month_start}
         )
         return dict(result.mappings().first() or {})
+
+    async def get_cashflow_metrics_by_currency(
+        self, user_id: uuid.UUID, month_start: datetime, next_month_start: datetime
+    ) -> list[dict[str, Any]]:
+        query = text(
+            "SELECT currency, "
+            "COALESCE(SUM(CASE WHEN event_type = 'income' THEN amount ELSE 0 END), 0) as income_current_period, "
+            "COALESCE(SUM(CASE WHEN event_type = 'expense' THEN amount ELSE 0 END), 0) as cash_expenses_current_period, "
+            "COALESCE(SUM(CASE WHEN event_type = 'credit_card_purchase' THEN amount ELSE 0 END), 0) as credit_card_consumption_current_period, "
+            "COALESCE(SUM(CASE WHEN event_type = 'credit_card_payment' THEN amount ELSE 0 END), 0) as debt_payments_current_period, "
+            "COALESCE(SUM(CASE WHEN event_type = 'goal_contribution' THEN amount ELSE 0 END), 0) as goal_contributions_current_period, "
+            "COALESCE(SUM(CASE WHEN event_type = 'obligation_payment' THEN amount ELSE 0 END), 0) as obligation_payments_current_period "
+            "FROM financial_events "
+            "WHERE user_id = :user_id AND occurred_at >= :start AND occurred_at < :end "
+            "GROUP BY currency"
+        )
+        result = await self.session.execute(
+            query, {"user_id": user_id, "start": month_start, "end": next_month_start}
+        )
+        return [dict(r) for r in result.mappings().all()]
 
     async def get_historical_cashflow_metrics(
         self, user_id: uuid.UUID, before: datetime

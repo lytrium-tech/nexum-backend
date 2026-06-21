@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,13 +50,57 @@ class IntelligenceService:
         transfers = await self.repo.get_transfers_metrics(user_id, month_start, next_month_start)
         recent = await self.repo.get_recent_activity(user_id, limit=5)
 
-        # Build Cashflow current period metrics
+        # Build Totals by currency
+        cash_by_currency = await self.repo.get_cash_metrics_by_currency(user_id)
+        cf_by_currency = await self.repo.get_cashflow_metrics_by_currency(
+            user_id, month_start, next_month_start
+        )
+
+        from app.intelligence.schemas import CurrencyMetrics
+
+        totals_by_currency: dict[str, CurrencyMetrics] = {}
+
+        def get_cm(curr: str) -> CurrencyMetrics:
+            curr = curr.upper()
+            if curr not in totals_by_currency:
+                totals_by_currency[curr] = CurrencyMetrics()
+            return totals_by_currency[curr]
+
+        for c in cash_by_currency:
+            curr = c["currency"].upper()
+            get_cm(curr).available_real += self._safe_decimal(c.get("total_balance"))
+
+        for c in cf_by_currency:
+            curr = c["currency"].upper()
+            cm = get_cm(curr)
+            cm.income_current_period += self._safe_decimal(c.get("income_current_period"))
+            cm.cash_expenses_current_period += self._safe_decimal(
+                c.get("cash_expenses_current_period")
+            )
+            cm.credit_card_consumption_current_period += self._safe_decimal(
+                c.get("credit_card_consumption_current_period")
+            )
+            cm.debt_payments_current_period += self._safe_decimal(
+                c.get("debt_payments_current_period")
+            )
+            cm.goal_contributions_current_period += self._safe_decimal(
+                c.get("goal_contributions_current_period")
+            )
+            cm.obligation_payments_current_period += self._safe_decimal(
+                c.get("obligation_payments_current_period")
+            )
+
+        # Build Cashflow current period metrics (global/legacy)
         income_current = self._safe_decimal(cf.get("income_current_period"))
         cash_expenses_current = self._safe_decimal(cf.get("cash_expenses_current_period"))
-        credit_card_consumption_current = self._safe_decimal(cf.get("credit_card_consumption_current_period"))
+        credit_card_consumption_current = self._safe_decimal(
+            cf.get("credit_card_consumption_current_period")
+        )
         debt_payments_current = self._safe_decimal(cf.get("debt_payments_current_period"))
         goal_contributions_current = self._safe_decimal(cf.get("goal_contributions_current_period"))
-        obligation_payments_current = self._safe_decimal(cf.get("obligation_payments_current_period"))
+        obligation_payments_current = self._safe_decimal(
+            cf.get("obligation_payments_current_period")
+        )
 
         net_cashflow_current = (
             income_current
@@ -80,6 +124,7 @@ class IntelligenceService:
         historical_income = self._safe_decimal(historical_cf.get("historical_income"))
         historical_expenses = self._safe_decimal(historical_cf.get("historical_expenses"))
         historical_net_cashflow = historical_income - historical_expenses
+
         # Credit Core is the source of truth for billed/unbilled debt separation.
         credit_summary = await CreditCardService(self.session).get_credit_summary(user_id)
         billed_debt = sum((card.billed_debt for card in credit_summary.cards), Decimal("0.00"))
@@ -88,33 +133,37 @@ class IntelligenceService:
             (card.next_payment_estimate for card in credit_summary.cards), Decimal("0.00")
         )
 
+        for card in credit_summary.cards:
+            curr = getattr(card, "currency", "COP").upper()
+            get_cm(curr).debt_payments_current_period += Decimal(
+                "0.00"
+            )  # it's already in cf_by_currency
+
         # Sprint 1 - Financial Truth MVP
         available_real = self._safe_decimal(cash.get("total_balance"))
 
-        # Sprint 4 - Obligations V1.1
-        # committed_outflows rule: only include remaining_amount for active
-        # obligations that are still pending or partially paid this period.
-        # Already-paid obligations contribute 0.
-        # Inactive obligations are excluded by list_active().
         from app.obligations.repository import ObligationRepository
         from app.obligations.schemas import ObligationRead
-        
+
         obligation_repo = ObligationRepository(self.session)
         user_obligations = await obligation_repo.list_active(user_id)
         obligation_payments = await obligation_repo.get_period_payments(user_id, period_str)
-        
+
         pending_obligations = Decimal("0.00")
         for o in user_obligations:
             or_read = ObligationRead.model_validate(o)
             or_read.paid_this_period = obligation_payments.get(o.id, Decimal("0.00"))
-            # Only count obligations that are not fully paid this period
             if or_read.period_status in ("pending", "partial", "overdue"):
                 rem = or_read.remaining_amount
                 if rem is not None and rem > 0:
                     pending_obligations += rem
+                    curr = o.currency.upper()
+                    get_cm(curr).committed_outflows += rem
 
-        # Sprint 5 - Credit Semantics V1.1: required payment is only billed debt.
         payment_required = billed_debt
+        for card in credit_summary.cards:
+            curr = getattr(card, "currency", "COP").upper()
+            get_cm(curr).committed_outflows += card.billed_debt
 
         data_quality = {
             "payment_required": "billed_debt",
@@ -128,8 +177,6 @@ class IntelligenceService:
         user_goals = await goal_repo.list_active(user_id)
 
         goals_required = Decimal("0.00")
-
-        # We need to compute remaining_required_this_period for each goal
         from app.goals.schemas import GoalRead
 
         if user_goals:
@@ -138,6 +185,8 @@ class IntelligenceService:
                 gr = GoalRead.model_validate(g)
                 gr.contributed_this_period = goal_contributions.get(g.id, Decimal("0.00"))
                 goals_required += gr.remaining_required_this_period
+                curr = g.currency.upper()
+                get_cm(curr).committed_outflows += gr.remaining_required_this_period
 
         committed_outflows = pending_obligations + payment_required + goals_required
 
@@ -148,6 +197,28 @@ class IntelligenceService:
         safe_money = free_money
         data_quality["safe_money"] = "computed_as_free_money"
 
+        calculation_warnings = []
+        if cash.get("currency_count", 0) > 1:
+            calculation_warnings.append(
+                "total_balance mixes multiple currencies without conversion"
+            )
+        if cf.get("currency_count", 0) > 1:
+            calculation_warnings.append("cashflow mixes multiple currencies without conversion")
+
+        # finalize currency metrics
+        for curr, cm in totals_by_currency.items():
+            cm.net_cashflow_current_period = (
+                cm.income_current_period
+                - cm.cash_expenses_current_period
+                - cm.goal_contributions_current_period
+                - cm.obligation_payments_current_period
+                - cm.debt_payments_current_period
+            )
+            cm.free_money = cm.available_real - cm.committed_outflows
+            if cm.free_money < 0:
+                cm.free_money = Decimal("0.00")
+            cm.safe_money = cm.free_money
+
         from app.intelligence.schemas import SnapshotTruth
 
         truth = SnapshotTruth(
@@ -157,57 +228,76 @@ class IntelligenceService:
             safe_money=safe_money,
             payment_required=payment_required,
             goals_required_this_period=goals_required,
-            calculation_warnings=[],
+            calculation_warnings=calculation_warnings,
             data_quality=data_quality,
         )
 
+        from app.intelligence.schemas import (
+            IntelligenceSnapshotRead,
+            HistoricalCashflow,
+            SnapshotCash,
+            SnapshotCashflow,
+            SnapshotDebt,
+            SnapshotGoals,
+            SnapshotObligations,
+            SnapshotPeriod,
+            SnapshotTransfers,
+        )
+
         return IntelligenceSnapshotRead(
-            period={"month": period_str, "timezone": "America/Bogota"},
-            cash={
-                "total_balance": self._safe_decimal(cash.get("total_balance")),
-                "active_accounts_count": cash.get("active_accounts_count", 0),
-            },
-            cashflow={
-                "income": income_legacy,
-                "expenses": expenses_legacy,
-                "net_cashflow": net_cashflow_legacy,
-                "income_current_period": income_current,
-                "cash_expenses_current_period": cash_expenses_current,
-                "credit_card_consumption_current_period": credit_card_consumption_current,
-                "debt_payments_current_period": debt_payments_current,
-                "goal_contributions_current_period": goal_contributions_current,
-                "obligation_payments_current_period": obligation_payments_current,
-                "committed_outflows_current_period": committed_outflows,
-                "net_cashflow_current_period": net_cashflow_current,
-            },
-            historical={
-                "income": historical_income,
-                "expenses": historical_expenses,
-                "net_cashflow": historical_net_cashflow,
-            },
-            debt={
-                "credit_card_total_debt": credit_summary.total_debt,
-                "billed_debt": billed_debt,
-                "unbilled_debt": unbilled_debt,
-                "payment_required": payment_required,
-                "next_payment_estimate": next_payment_estimate,
-            },
-            goals={
-                "active_goals_count": goals.get("active_goals_count", 0),
-                "total_target": self._safe_decimal(goals.get("total_target")),
-                "total_saved": self._safe_decimal(goals.get("total_saved")),
-            },
-            obligations={
-                "pending_count": obligations.get("pending_count", 0),
-                "pending_amount": self._safe_decimal(obligations.get("pending_amount")),
-            },
-            transfers={
-                "monthly_transfer_volume": self._safe_decimal(
+            period=SnapshotPeriod(
+                month=period_str,
+                start_date=month_start.isoformat(),
+                end_date=next_month_start.isoformat(),
+                timezone="America/Bogota",
+            ),
+            cash=SnapshotCash(
+                total_balance=available_real,
+                active_accounts_count=cash.get("active_accounts_count", 0),
+            ),
+            cashflow=SnapshotCashflow(
+                income=income_legacy,
+                expenses=expenses_legacy,
+                net_cashflow=net_cashflow_legacy,
+                income_current_period=income_current,
+                cash_expenses_current_period=cash_expenses_current,
+                credit_card_consumption_current_period=credit_card_consumption_current,
+                debt_payments_current_period=debt_payments_current,
+                goal_contributions_current_period=goal_contributions_current,
+                obligation_payments_current_period=obligation_payments_current,
+                committed_outflows_current_period=committed_outflows,
+                net_cashflow_current_period=net_cashflow_current,
+            ),
+            historical=HistoricalCashflow(
+                historical_income=historical_income,
+                historical_expenses=historical_expenses,
+                historical_net_cashflow=historical_net_cashflow,
+            ),
+            debt=SnapshotDebt(
+                credit_card_total_debt=billed_debt + unbilled_debt,
+                billed_debt=billed_debt,
+                unbilled_debt=unbilled_debt,
+                payment_required=payment_required,
+                next_payment_estimate=next_payment_estimate,
+                data_quality=data_quality,
+            ),
+            goals=SnapshotGoals(
+                active_goals_count=goals.get("active_goals_count", 0),
+                total_target=self._safe_decimal(goals.get("total_target_amount")),
+                total_saved=self._safe_decimal(goals.get("total_saved_amount")),
+            ),
+            obligations=SnapshotObligations(
+                pending_count=obligations.get("pending_count", 0),
+                pending_amount=self._safe_decimal(obligations.get("pending_amount")),
+            ),
+            transfers=SnapshotTransfers(
+                monthly_transfer_volume=self._safe_decimal(
                     transfers.get("monthly_transfer_volume")
-                )
-            },
+                ),
+            ),
             recent_activity=recent,
             truth=truth,
+            totals_by_currency=totals_by_currency,
         )
 
     async def get_balance(self, user_id: uuid.UUID) -> IntelligenceBalanceRead:
@@ -243,9 +333,9 @@ class IntelligenceService:
         free = snapshot.truth.free_money
 
         explanation = {
-            "step_1": "Tomamos todo el dinero disponible en cuentas líquidas.",
+            "step_1": "Tomamos todo el dinero disponible en cuentas l├¡quidas.",
             "step_2": "Restamos las obligaciones pendientes del mes actual.",
-            "step_3": "Restamos el pago requerido de tarjetas de crédito ya facturado.",
+            "step_3": "Restamos el pago requerido de tarjetas de cr├®dito ya facturado.",
             "step_4": "Restamos el dinero necesario para cumplir tus metas de este mes.",
             "result": "El saldo resultante es tu dinero libre, descontando compromisos inminentes.",
         }

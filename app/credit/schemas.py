@@ -107,6 +107,7 @@ class CreditCardStatusRead(BaseModel):
     annual_interest_rate: Decimal = Decimal("0.00")
     network: str | None = None
     franchise: str | None = None
+    currency: str = "COP"
     current_debt: Decimal = Decimal("0.00")
     total_debt: Decimal
     billed_debt: Decimal

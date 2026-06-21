@@ -405,6 +405,7 @@ class CreditCardService:
             annual_interest_rate=card.annual_interest_rate or Decimal("0.00"),
             network=card.network,
             franchise=card.franchise,
+            currency=card.currency,
             current_debt=total_debt,
             total_debt=total_debt,
             billed_debt=billed_debt,

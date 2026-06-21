@@ -76,6 +76,20 @@ async def test_get_snapshot_success(intelligence_service, mock_intelligence_repo
         "goal_contributions_current_period": Decimal("0.00"),
         "obligation_payments_current_period": Decimal("0.00"),
     }
+    mock_intelligence_repo.return_value.get_cash_metrics_by_currency.return_value = [
+        {"currency": "COP", "total_balance": Decimal("1000.00"), "active_accounts_count": 2}
+    ]
+    mock_intelligence_repo.return_value.get_cashflow_metrics_by_currency.return_value = [
+        {
+            "currency": "COP",
+            "income_current_period": Decimal("1500.00"),
+            "cash_expenses_current_period": Decimal("200.00"),
+            "credit_card_consumption_current_period": Decimal("0.00"),
+            "debt_payments_current_period": Decimal("0.00"),
+            "goal_contributions_current_period": Decimal("0.00"),
+            "obligation_payments_current_period": Decimal("0.00"),
+        }
+    ]
     mock_intelligence_repo.return_value.get_historical_cashflow_metrics.return_value = {
         "historical_income": Decimal("0.00"),
         "historical_expenses": Decimal("0.00"),
@@ -134,6 +148,8 @@ async def test_get_snapshot_empty_user(intelligence_service, mock_intelligence_r
     user_id = uuid.uuid4()
     mock_intelligence_repo.return_value.get_cash_metrics.return_value = {}
     mock_intelligence_repo.return_value.get_cashflow_metrics.return_value = {}
+    mock_intelligence_repo.return_value.get_cash_metrics_by_currency.return_value = []
+    mock_intelligence_repo.return_value.get_cashflow_metrics_by_currency.return_value = []
     mock_intelligence_repo.return_value.get_historical_cashflow_metrics.return_value = {}
     mock_intelligence_repo.return_value.get_goals_metrics.return_value = {}
     mock_intelligence_repo.return_value.get_obligations_metrics.return_value = {}
@@ -173,6 +189,16 @@ async def test_get_snapshot_transfers_do_not_change_cashflow(
         "income_current_period": Decimal("1000.00"),
         "cash_expenses_current_period": Decimal("200.00"),
     }
+    mock_intelligence_repo.return_value.get_cash_metrics_by_currency.return_value = [
+        {"currency": "COP", "total_balance": Decimal("1000.00")}
+    ]
+    mock_intelligence_repo.return_value.get_cashflow_metrics_by_currency.return_value = [
+        {
+            "currency": "COP",
+            "income_current_period": Decimal("1000.00"),
+            "cash_expenses_current_period": Decimal("200.00"),
+        }
+    ]
     mock_intelligence_repo.return_value.get_historical_cashflow_metrics.return_value = {}
     mock_intelligence_repo.return_value.get_goals_metrics.return_value = {}
     mock_intelligence_repo.return_value.get_obligations_metrics.return_value = {}
@@ -326,6 +352,16 @@ async def test_committed_outflows_excludes_paid_obligations(
         "income_current_period": Decimal("3000.00"),
         "cash_expenses_current_period": Decimal("500.00"),
     }
+    mock_intelligence_repo.return_value.get_cash_metrics_by_currency.return_value = [
+        {"currency": "COP", "total_balance": Decimal("5000.00")}
+    ]
+    mock_intelligence_repo.return_value.get_cashflow_metrics_by_currency.return_value = [
+        {
+            "currency": "COP",
+            "income_current_period": Decimal("3000.00"),
+            "cash_expenses_current_period": Decimal("500.00"),
+        }
+    ]
     mock_intelligence_repo.return_value.get_historical_cashflow_metrics.return_value = {}
     mock_intelligence_repo.return_value.get_goals_metrics.return_value = {}
     mock_intelligence_repo.return_value.get_obligations_metrics.return_value = {}

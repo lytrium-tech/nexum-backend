@@ -72,6 +72,19 @@ class SnapshotTruth(BaseModel):
     calculation_warnings: list[str]
     data_quality: dict[str, str]
 
+class CurrencyMetrics(BaseModel):
+    available_real: Decimal = Decimal("0.00")
+    committed_outflows: Decimal = Decimal("0.00")
+    free_money: Decimal = Decimal("0.00")
+    safe_money: Decimal = Decimal("0.00")
+    income_current_period: Decimal = Decimal("0.00")
+    cash_expenses_current_period: Decimal = Decimal("0.00")
+    credit_card_consumption_current_period: Decimal = Decimal("0.00")
+    debt_payments_current_period: Decimal = Decimal("0.00")
+    goal_contributions_current_period: Decimal = Decimal("0.00")
+    obligation_payments_current_period: Decimal = Decimal("0.00")
+    net_cashflow_current_period: Decimal = Decimal("0.00")
+
 
 class IntelligenceSnapshotRead(BaseModel):
     period: SnapshotPeriod
@@ -84,6 +97,7 @@ class IntelligenceSnapshotRead(BaseModel):
     transfers: SnapshotTransfers
     recent_activity: list[dict[str, Any]]
     truth: SnapshotTruth
+    totals_by_currency: dict[str, CurrencyMetrics] = Field(default_factory=dict)
 
 
 class AccountBalanceRead(IntelligenceBase):
