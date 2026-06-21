@@ -108,9 +108,11 @@ async def test_get_snapshot_success(intelligence_service, mock_intelligence_repo
     }
     mock_intelligence_repo.return_value.get_recent_activity.return_value = []
 
-    with patch("app.intelligence.service.CreditCardService") as mock_cc_service_class, \
-         patch("app.obligations.repository.ObligationRepository") as mock_obl_repo_class, \
-         patch("app.goals.repository.GoalRepository") as mock_goal_repo_class:
+    with (
+        patch("app.intelligence.service.CreditCardService") as mock_cc_service_class,
+        patch("app.obligations.repository.ObligationRepository") as mock_obl_repo_class,
+        patch("app.goals.repository.GoalRepository") as mock_goal_repo_class,
+    ):
         mock_cc_service_class.return_value.get_credit_summary = AsyncMock(
             return_value=build_credit_summary(
                 total_debt=Decimal("500.00"),
@@ -156,9 +158,11 @@ async def test_get_snapshot_empty_user(intelligence_service, mock_intelligence_r
     mock_intelligence_repo.return_value.get_transfers_metrics.return_value = {}
     mock_intelligence_repo.return_value.get_recent_activity.return_value = []
 
-    with patch("app.intelligence.service.CreditCardService") as mock_cc_service_class, \
-         patch("app.obligations.repository.ObligationRepository") as mock_obl_repo_class, \
-         patch("app.goals.repository.GoalRepository") as mock_goal_repo_class:
+    with (
+        patch("app.intelligence.service.CreditCardService") as mock_cc_service_class,
+        patch("app.obligations.repository.ObligationRepository") as mock_obl_repo_class,
+        patch("app.goals.repository.GoalRepository") as mock_goal_repo_class,
+    ):
         mock_cc_service_class.return_value.get_credit_summary = AsyncMock(
             return_value=build_credit_summary()
         )
@@ -207,9 +211,11 @@ async def test_get_snapshot_transfers_do_not_change_cashflow(
     }
     mock_intelligence_repo.return_value.get_recent_activity.return_value = []
 
-    with patch("app.intelligence.service.CreditCardService") as mock_cc_service_class, \
-         patch("app.obligations.repository.ObligationRepository") as mock_obl_repo_class, \
-         patch("app.goals.repository.GoalRepository") as mock_goal_repo_class:
+    with (
+        patch("app.intelligence.service.CreditCardService") as mock_cc_service_class,
+        patch("app.obligations.repository.ObligationRepository") as mock_obl_repo_class,
+        patch("app.goals.repository.GoalRepository") as mock_goal_repo_class,
+    ):
         mock_cc_service_class.return_value.get_credit_summary = AsyncMock(
             return_value=build_credit_summary()
         )
@@ -373,27 +379,47 @@ async def test_committed_outflows_excludes_paid_obligations(
     # 2. fixed_full_payment, amount=300, not paid -> should contribute 300
     # 3. partial_allowed, amount=400, paid 150 -> should contribute 250
     paid_obl = Obligation(
-        id=paid_obl_id, user_id=user_id, name="Paid", amount=Decimal("500"),
-        payment_mode="fixed_full_payment", is_active=True,
-        created_at=datetime.now(), updated_at=datetime.now(),
-        currency="COP", metadata_={},
+        id=paid_obl_id,
+        user_id=user_id,
+        name="Paid",
+        amount=Decimal("500"),
+        payment_mode="fixed_full_payment",
+        is_active=True,
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        currency="COP",
+        metadata_={},
     )
     pending_obl = Obligation(
-        id=pending_obl_id, user_id=user_id, name="Pending", amount=Decimal("300"),
-        payment_mode="fixed_full_payment", is_active=True,
-        created_at=datetime.now(), updated_at=datetime.now(),
-        currency="COP", metadata_={},
+        id=pending_obl_id,
+        user_id=user_id,
+        name="Pending",
+        amount=Decimal("300"),
+        payment_mode="fixed_full_payment",
+        is_active=True,
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        currency="COP",
+        metadata_={},
     )
     partial_obl = Obligation(
-        id=partial_obl_id, user_id=user_id, name="Partial", amount=Decimal("400"),
-        payment_mode="partial_allowed", is_active=True,
-        created_at=datetime.now(), updated_at=datetime.now(),
-        currency="COP", metadata_={},
+        id=partial_obl_id,
+        user_id=user_id,
+        name="Partial",
+        amount=Decimal("400"),
+        payment_mode="partial_allowed",
+        is_active=True,
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        currency="COP",
+        metadata_={},
     )
 
-    with patch("app.intelligence.service.CreditCardService") as mock_cc_service_class, \
-         patch("app.obligations.repository.ObligationRepository") as mock_obl_repo_class, \
-         patch("app.goals.repository.GoalRepository") as mock_goal_repo_class:
+    with (
+        patch("app.intelligence.service.CreditCardService") as mock_cc_service_class,
+        patch("app.obligations.repository.ObligationRepository") as mock_obl_repo_class,
+        patch("app.goals.repository.GoalRepository") as mock_goal_repo_class,
+    ):
         mock_cc_service_class.return_value.get_credit_summary = AsyncMock(
             return_value=build_credit_summary()
         )
@@ -402,9 +428,9 @@ async def test_committed_outflows_excludes_paid_obligations(
         )
         mock_obl_repo_class.return_value.get_period_payments = AsyncMock(
             return_value={
-                paid_obl_id: Decimal("500"),      # fully paid
+                paid_obl_id: Decimal("500"),  # fully paid
                 # pending_obl_id: not in dict -> 0 paid
-                partial_obl_id: Decimal("150"),    # partially paid
+                partial_obl_id: Decimal("150"),  # partially paid
             }
         )
         mock_goal_repo_class.return_value.list_active = AsyncMock(return_value=[])

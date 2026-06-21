@@ -76,7 +76,11 @@ async def run_smoke():
         logger.info("1. Crear cuenta con saldo inicial")
         r = await client.post(
             f"{API_URL}/accounts",
-            json={"name": f"Credit Cash {uuid.uuid4().hex[:6]}", "type": "bank", "initial_balance": "1000000.00"},
+            json={
+                "name": f"Credit Cash {uuid.uuid4().hex[:6]}",
+                "type": "bank",
+                "initial_balance": "1000000.00",
+            },
             headers=headers_a,
         )
         r.raise_for_status()
@@ -134,7 +138,11 @@ async def run_smoke():
         logger.info("4. Crear compra a varias cuotas")
         r = await client.post(
             f"{API_URL}/credit/cards/{card_id}/purchases",
-            json={"amount": "300000.00", "installments_total": 2, "description": "Installments purchase"},
+            json={
+                "amount": "300000.00",
+                "installments_total": 2,
+                "description": "Installments purchase",
+            },
             headers={**headers_a, "Idempotency-Key": str(uuid.uuid4())},
         )
         r.raise_for_status()
@@ -145,10 +153,14 @@ async def run_smoke():
         r.raise_for_status()
         installments = r.json()
         assert len(installments) == 3
-        principal_sum = sum((as_decimal(i["principal_amount"]) for i in installments), Decimal("0.00"))
+        principal_sum = sum(
+            (as_decimal(i["principal_amount"]) for i in installments), Decimal("0.00")
+        )
         assert principal_sum == Decimal("400000.00")
 
-        balance_after_purchase = await client.get(f"{API_URL}/intelligence/balance", headers=headers_a)
+        balance_after_purchase = await client.get(
+            f"{API_URL}/intelligence/balance", headers=headers_a
+        )
         balance_after_purchase.raise_for_status()
         assert as_decimal(balance_after_purchase.json()["total_available_real"]) == cash_before
 
@@ -191,9 +203,13 @@ async def run_smoke():
         payment_retry.raise_for_status()
         assert payment_retry.json()["status"] == "idempotent_retry"
 
-        balance_after_payment = await client.get(f"{API_URL}/intelligence/balance", headers=headers_a)
+        balance_after_payment = await client.get(
+            f"{API_URL}/intelligence/balance", headers=headers_a
+        )
         balance_after_payment.raise_for_status()
-        assert as_decimal(balance_after_payment.json()["total_available_real"]) == cash_before - Decimal("100000.00")
+        assert as_decimal(
+            balance_after_payment.json()["total_available_real"]
+        ) == cash_before - Decimal("100000.00")
 
         r = await client.get(f"{API_URL}/credit/cards/{card_id}/status", headers=headers_a)
         r.raise_for_status()

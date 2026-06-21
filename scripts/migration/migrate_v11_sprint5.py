@@ -18,7 +18,8 @@ async def migrate_sprint5():
         await conn.execute(text("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS network TEXT"))
         await conn.execute(text("ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS franchise TEXT"))
 
-        await conn.execute(text("""
+        await conn.execute(
+            text("""
             CREATE TABLE IF NOT EXISTS credit_card_installments (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 user_id UUID NOT NULL REFERENCES users(id),
@@ -42,19 +43,25 @@ async def migrate_sprint5():
                 CONSTRAINT credit_card_installments_unique_number
                     UNIQUE (purchase_transaction_id, installment_number)
             )
-        """))
+        """)
+        )
 
-        await conn.execute(text("""
+        await conn.execute(
+            text("""
             CREATE INDEX IF NOT EXISTS idx_credit_card_installments_card_period
             ON credit_card_installments (credit_card_id, scheduled_period)
-        """))
-        await conn.execute(text("""
+        """)
+        )
+        await conn.execute(
+            text("""
             CREATE INDEX IF NOT EXISTS idx_credit_card_installments_user_card
             ON credit_card_installments (user_id, credit_card_id)
-        """))
+        """)
+        )
 
         logger.info("Backfilling installment schedule for existing purchases...")
-        await conn.execute(text("""
+        await conn.execute(
+            text("""
             INSERT INTO credit_card_installments (
                 user_id,
                 credit_card_id,
@@ -98,7 +105,8 @@ async def migrate_sprint5():
                   FROM credit_card_installments cci
                   WHERE cci.purchase_transaction_id = cct.id
               )
-        """))
+        """)
+        )
 
         logger.info("Sprint 5 migration completed.")
 

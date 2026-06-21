@@ -91,7 +91,9 @@ def test_completed_goal_period_status_is_not_pending():
 def test_overfunded_goal_period_status_works():
     today = datetime.now(UTC).date()
     target_date = today + timedelta(days=90)
-    goal = _make_goal("COP", "100000.00", "50000.00", target_date, contributed_this_period="40000.00")
+    goal = _make_goal(
+        "COP", "100000.00", "50000.00", target_date, contributed_this_period="40000.00"
+    )
     assert goal.period_status == "overfunded"
 
 
@@ -105,9 +107,12 @@ def test_daily_required_this_period_is_rounded_upward():
     days = goal.days_remaining_in_period
     assert days > 0
     # Expected daily:
-    expected_daily = (Decimal("33350.00") / Decimal(str(days))).quantize(Decimal("1"), rounding="ROUND_CEILING")
+    expected_daily = (Decimal("33350.00") / Decimal(str(days))).quantize(
+        Decimal("1"), rounding="ROUND_CEILING"
+    )
     # Actually currency round up rounds up to next multiple of 50
-    expected_daily = ((Decimal("33350.00") / Decimal(str(days))) / Decimal("50")).quantize(Decimal("1"), rounding="ROUND_CEILING") * Decimal("50")
-    
-    assert goal.daily_required_this_period == expected_daily
+    expected_daily = ((Decimal("33350.00") / Decimal(str(days))) / Decimal("50")).quantize(
+        Decimal("1"), rounding="ROUND_CEILING"
+    ) * Decimal("50")
 
+    assert goal.daily_required_this_period == expected_daily

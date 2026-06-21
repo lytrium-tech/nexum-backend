@@ -141,7 +141,12 @@ async def test_payment_success_once_deactivates(
     payload = ObligationPaymentCreate(account_id=account_id, amount=Decimal("100"))
 
     mock_obligation = Obligation(
-        id=obligation_id, user_id=user_id, is_active=True, amount=Decimal("100"), frequency="once", payment_mode="fixed_full_payment"
+        id=obligation_id,
+        user_id=user_id,
+        is_active=True,
+        amount=Decimal("100"),
+        frequency="once",
+        payment_mode="fixed_full_payment",
     )
     mock_obligation_repo.get_by_id_for_update.return_value = mock_obligation
     mock_obligation_repo.get_period_payments.return_value = {}
@@ -207,9 +212,7 @@ async def test_fixed_full_payment_rejects_overpay(obligation_service, mock_oblig
 
 
 @pytest.mark.asyncio
-async def test_fixed_full_payment_rejects_second_payment(
-    obligation_service, mock_obligation_repo
-):
+async def test_fixed_full_payment_rejects_second_payment(obligation_service, mock_obligation_repo):
     """fixed_full_payment must reject a second payment in the same period."""
     from app.obligations.exceptions import ObligationAlreadyPaidError
 

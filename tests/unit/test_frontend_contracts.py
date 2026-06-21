@@ -47,7 +47,7 @@ def test_credit_card_read_contract():
         payment_required=Decimal("200.00"),
         next_payment_estimate=Decimal("100.00"),
         estimated_current_debt=Decimal("500.00"),
-        monthly_cc_payment=Decimal("100.00")
+        monthly_cc_payment=Decimal("100.00"),
     )
     assert card.total_debt == card.current_debt
     assert card.estimated_current_debt == card.current_debt

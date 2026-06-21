@@ -26,9 +26,15 @@ class HistoricalCashflow(BaseModel):
 
 
 class SnapshotCashflow(BaseModel):
-    income: Decimal = Field(..., description="[DEPRECATED] Use income_current_period or historical instead.")
-    expenses: Decimal = Field(..., description="[DEPRECATED] Use cash_expenses_current_period or historical instead.")
-    net_cashflow: Decimal = Field(..., description="[DEPRECATED] Use net_cashflow_current_period or historical instead.")
+    income: Decimal = Field(
+        ..., description="[DEPRECATED] Use income_current_period or historical instead."
+    )
+    expenses: Decimal = Field(
+        ..., description="[DEPRECATED] Use cash_expenses_current_period or historical instead."
+    )
+    net_cashflow: Decimal = Field(
+        ..., description="[DEPRECATED] Use net_cashflow_current_period or historical instead."
+    )
     income_current_period: Decimal = Decimal("0.00")
     cash_expenses_current_period: Decimal = Decimal("0.00")
     credit_card_consumption_current_period: Decimal = Decimal("0.00")
@@ -71,6 +77,7 @@ class SnapshotTruth(BaseModel):
     goals_required_this_period: Decimal
     calculation_warnings: list[str]
     data_quality: dict[str, str]
+
 
 class CurrencyMetrics(BaseModel):
     available_real: Decimal = Decimal("0.00")

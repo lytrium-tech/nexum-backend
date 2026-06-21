@@ -86,7 +86,11 @@ async def test_update_goal_target_less_than_current(goal_service, mock_goal_repo
     payload = GoalUpdate(target_amount=Decimal("50"))
 
     mock_goal = Goal(
-        user_id=user_id, current_amount=Decimal("100"), name="Test", target_amount=Decimal("200"), is_active=True
+        user_id=user_id,
+        current_amount=Decimal("100"),
+        name="Test",
+        target_amount=Decimal("200"),
+        is_active=True,
     )
     mock_goal_repo.get_by_id.return_value = mock_goal
     mock_goal_repo.get_period_contributions.return_value = {}

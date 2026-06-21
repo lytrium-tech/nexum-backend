@@ -3,19 +3,20 @@
 This document is the source of truth for the implemented and validated backend state.
 
 ## Global Context
-- Phase: Backend V1.2 - Sprint 0 (Database Cleanup & Views Pruning) Closed.
-- Database: Supabase PostgreSQL (Test Data wiped, Views Pruned, Reseeded).
+- Phase: Backend V1.2 Alpha Baseline Closed.
+- Database: Supabase PostgreSQL.
 - Architecture: Event-Sourced Ledger with Materialized Views for balance derivations.
 - Tech Stack: FastAPI, SQLAlchemy, Pydantic, PostgreSQL.
 
 ## Completed Features
-- **Sprint 0**: Test database wiped and reseeded with `DEV_USER_ID`. Legacy and unused views dropped.
-- **Sprint 6 (V1.1)**: Frontend contract alignment (snapshot truth vs frontend derivation separation).
-- **Sprint 5 (V1.1)**: Credit Cards refactored into event-sourcing with installments and billing engine basics.
-- **Sprint 4 (V1.1)**: Obligations implemented via Ledger.
-- **Sprint 3 (V1.1)**: Goals implemented via Ledger.
-- **Sprint 2**: Conversational memory and intelligence enhancements.
-- **Sprint 1**: Auth, Users, Cashflow, Categories basic Ledger.
+- **Sprint 7 (V1.2)**: Regression & Alpha Recheck. All V1.2 features validated.
+- **Sprint 6 (V1.2)**: Chat context audit & prompt safety. LLM operates strictly as NLU, backend calculates truth.
+- **Sprint 5 (V1.2)**: Credit Card cycle semantics, billed vs unbilled debt, next payment estimates.
+- **Sprint 4 (V1.2)**: Obligations period lifecycle, overdue semantics, account archiving (soft delete).
+- **Sprint 3 (V1.2)**: Goals period semantics, daily requirements, and currency minimum unit rounding.
+- **Sprint 2 (V1.2)**: Passive multi-currency aggregation (`totals_by_currency`) and currency minimum units.
+- **Sprint 1 (V1.2)**: Snapshot period semantics (`current_period` vs `historical`), cashflow subtypes (`credit_card_consumption`, `debt_payments`, etc.).
+- **Sprint 0 (V1.2)**: Database cleanup & views pruning.
 
 ## API Contracts
 - Exposed fully via `openapi.json` and mirrored to `../docs/contracts/openapi.json`.
@@ -25,20 +26,18 @@ This document is the source of truth for the implemented and validated backend s
 
 ## Financial Truth
 Backend explicitly owns financial calculations:
-- Frontend must not deduce `free_money`, `committed_outflows`, `available_credit`, `payment_required`.
-- Dashboard Snapshot currently aggregates some historical data, pending isolation in V1.2 Sprint 1.
+- Frontend must not deduce `free_money`, `committed_outflows`, `available_credit`, `payment_required`, `remaining_required_this_period`, or `totals_by_currency`.
+- "Backend calculates. Frontend represents. LLM explains."
 
 ## Subsystems Status
-- **Intelligence**: Operates Snapshot and AI integrations (Gemini). Chat is limited to single intents.
-- **Credit**: Dynamic debt calculations active.
-- **Goals**: Event-driven contributions.
-- **Obligations**: Periodic deductions via Ledger.
+- **Intelligence**: Operates Snapshot and AI integrations (Gemini).
+- **Credit**: Cycle-aware debt calculations active.
+- **Goals**: Event-driven contributions with period-aware requirements.
+- **Obligations**: Periodic deductions via Ledger with overdue and paid semantics.
 - **Transfers**: Handled as `transfer_in`/`transfer_out` events without altering `net_cashflow`.
+- **Conversations**: Rule-based prompt safety strictly enforces backend-calculated data over LLM hallucinations.
 
-## Pending for V1.2
-- Snapshot Period Semantics (Isolating current month from historical).
-- Passive Multi-Currency aggregation grouping.
-- Goal periodic requirement rounding.
-- Credit Card specific `debt_payment` vs `credit_card_consumption` logic.
-- Period lifecycle reactivation for Obligations.
-- Account / Category Archiving (Soft Delete).
+## Pending for V2 (Out of Scope for V1.2)
+- Complex banking engine for credit cards (Compound Interest).
+- Real-time foreign exchange (FX) rates.
+- Advanced AI financial advisor/scenario engine.

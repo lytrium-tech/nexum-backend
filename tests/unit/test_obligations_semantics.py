@@ -1,11 +1,9 @@
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-import pytest
-from app.obligations.schemas import ObligationRead, ObligationCreate
-from app.obligations.service import ObligationService
+from app.obligations.schemas import ObligationRead
 
 
 def test_paid_obligation_is_not_pending_in_same_period():

@@ -44,6 +44,7 @@ class ObligationRepository:
 
     async def get_period_payments(self, user_id: UUID, period: str) -> dict[UUID, Decimal]:
         from sqlalchemy import func
+
         stmt = (
             select(ObligationPayment.obligation_id, func.sum(ObligationPayment.amount))
             .where(ObligationPayment.user_id == user_id)

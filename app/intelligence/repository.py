@@ -26,7 +26,6 @@ class IntelligenceRepository:
         result = await self.session.execute(query, {"user_id": user_id})
         return [dict(r) for r in result.mappings().all()]
 
-
     async def get_cashflow_metrics(
         self, user_id: uuid.UUID, month_start: datetime, next_month_start: datetime
     ) -> dict[str, Any]:

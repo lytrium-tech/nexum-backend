@@ -1,5 +1,14 @@
 # Changelog del Backend
 
+## [v1.2.0-alpha] - Backend V1.2 Alpha Baseline
+- Sprint 7 regression passed. Backend V1.2 closed.
+- Snapshot period semantics & cashflow subtypes separated.
+- Passive multi-currency support and currency minimum units implemented.
+- Goals period semantics and rounding finalized.
+- Obligations period lifecycle and account archiving (soft delete) completed.
+- Credit Card cycle semantics stabilized (billed vs unbilled, next payment estimate).
+- Chat Context audited and Prompt Safety hardened.
+
 ## [v1.1.0-alpha] - Backend V1.1 Closed Alpha
 - Sprint 7 regression & alpha readiness passed. Backend V1.1 closed. Production verified. Alpha Ready.
 - Financial Truth, Credit Semantics, and Obligations V1.1 successfully deployed to production.
