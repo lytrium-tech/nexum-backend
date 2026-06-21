@@ -4692,6 +4692,11 @@
             ],
             "title": "Target Date"
           },
+          "currency": {
+            "type": "string",
+            "title": "Currency",
+            "default": "COP"
+          },
           "status": {
             "type": "string",
             "title": "Status"
@@ -4728,21 +4733,20 @@
             "title": "Progress Percentage",
             "readOnly": true
           },
+          "currency_minimum_unit": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Currency Minimum Unit",
+            "readOnly": true
+          },
           "is_flexible": {
             "type": "boolean",
             "title": "Is Flexible",
             "readOnly": true
           },
           "monthly_required": {
-            "anyOf": [
-              {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Monthly Required",
             "readOnly": true
           },
@@ -4762,6 +4766,17 @@
             "type": "string",
             "title": "Period Status",
             "readOnly": true
+          },
+          "days_remaining_in_period": {
+            "type": "integer",
+            "title": "Days Remaining In Period",
+            "readOnly": true
+          },
+          "daily_required_this_period": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Daily Required This Period",
+            "readOnly": true
           }
         },
         "type": "object",
@@ -4777,11 +4792,14 @@
           "updated_at",
           "remaining_amount",
           "progress_percentage",
+          "currency_minimum_unit",
           "is_flexible",
           "monthly_required",
           "required_this_period",
           "remaining_required_this_period",
-          "period_status"
+          "period_status",
+          "days_remaining_in_period",
+          "daily_required_this_period"
         ],
         "title": "GoalRead"
       },

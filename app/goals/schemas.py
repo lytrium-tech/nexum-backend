@@ -1,8 +1,11 @@
+import calendar
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
+
+from app.core.currency import get_minimum_unit, round_up_to_minimum_unit
 
 
 class GoalCreate(BaseModel):
@@ -25,6 +28,7 @@ class GoalRead(BaseModel):
     target_amount: Decimal
     current_amount: Decimal
     target_date: date | None
+    currency: str = "COP"
     status: str
     is_active: bool
     created_at: datetime
@@ -48,13 +52,17 @@ class GoalRead(BaseModel):
         return Decimal("0.00")
 
     @computed_field
+    def currency_minimum_unit(self) -> Decimal:
+        return get_minimum_unit(self.currency)
+
+    @computed_field
     def is_flexible(self) -> bool:
         return self.target_date is None
 
     @computed_field
-    def monthly_required(self) -> Decimal | None:
+    def monthly_required(self) -> Decimal:
         if self.is_flexible or self.target_amount <= 0:
-            return None
+            return Decimal("0.00")
         today = datetime.now(UTC).date()
         if today >= self.target_date:
             return self.remaining_amount
@@ -62,7 +70,8 @@ class GoalRead(BaseModel):
         days_left = (self.target_date - today).days
         months_left = max(Decimal(days_left) / Decimal("30"), Decimal("1"))
         start_of_period_remaining = self.remaining_amount + self.contributed_this_period
-        return round(start_of_period_remaining / months_left, 2)
+        raw_required = start_of_period_remaining / months_left
+        return round_up_to_minimum_unit(raw_required, self.currency)
 
     @computed_field
     def required_this_period(self) -> Decimal:
@@ -70,7 +79,7 @@ class GoalRead(BaseModel):
             return Decimal("0.00")
         if self.status == "completed" or self.remaining_amount == 0:
             return Decimal("0.00")
-        return self.monthly_required or Decimal("0.00")
+        return self.monthly_required
 
     @computed_field
     def remaining_required_this_period(self) -> Decimal:
@@ -86,11 +95,29 @@ class GoalRead(BaseModel):
             return "completed"
         if self.is_flexible:
             return "flexible"
-        if self.contributed_this_period == 0:
-            return "pending"
         if self.remaining_required_this_period > 0:
+            if self.contributed_this_period == 0:
+                return "pending"
             return "partial"
+        if self.contributed_this_period > self.required_this_period:
+            return "overfunded"
         return "covered"
+
+    @computed_field
+    def days_remaining_in_period(self) -> int:
+        today = datetime.now(UTC).date()
+        last_day = calendar.monthrange(today.year, today.month)[1]
+        return last_day - today.day
+
+    @computed_field
+    def daily_required_this_period(self) -> Decimal:
+        if self.remaining_required_this_period <= 0:
+            return Decimal("0.00")
+        days = self.days_remaining_in_period
+        if days <= 0:
+            return self.remaining_required_this_period
+        raw_daily = self.remaining_required_this_period / Decimal(str(days))
+        return round_up_to_minimum_unit(raw_daily, self.currency)
 
 
 class GoalContributionCreate(BaseModel):

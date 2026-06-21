@@ -54,6 +54,7 @@ async def test_create_goal_success(goal_service, mock_goal_repo):
         target_date=payload.target_date,
         is_active=True,
         status="active",
+        currency="COP",
         created_at=datetime.now(),
         updated_at=datetime.now(),
     )

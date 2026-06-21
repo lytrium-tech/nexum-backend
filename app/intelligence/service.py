@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, UTC
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -233,8 +233,8 @@ class IntelligenceService:
         )
 
         from app.intelligence.schemas import (
-            IntelligenceSnapshotRead,
             HistoricalCashflow,
+            IntelligenceSnapshotRead,
             SnapshotCash,
             SnapshotCashflow,
             SnapshotDebt,
