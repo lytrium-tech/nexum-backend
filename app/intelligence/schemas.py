@@ -19,10 +19,24 @@ class SnapshotCash(BaseModel):
     active_accounts_count: int
 
 
+class HistoricalCashflow(BaseModel):
+    income: Decimal = Decimal("0.00")
+    expenses: Decimal = Decimal("0.00")
+    net_cashflow: Decimal = Decimal("0.00")
+
+
 class SnapshotCashflow(BaseModel):
-    income: Decimal
-    expenses: Decimal
-    net_cashflow: Decimal
+    income: Decimal = Field(..., description="[DEPRECATED] Use income_current_period or historical instead.")
+    expenses: Decimal = Field(..., description="[DEPRECATED] Use cash_expenses_current_period or historical instead.")
+    net_cashflow: Decimal = Field(..., description="[DEPRECATED] Use net_cashflow_current_period or historical instead.")
+    income_current_period: Decimal = Decimal("0.00")
+    cash_expenses_current_period: Decimal = Decimal("0.00")
+    credit_card_consumption_current_period: Decimal = Decimal("0.00")
+    debt_payments_current_period: Decimal = Decimal("0.00")
+    goal_contributions_current_period: Decimal = Decimal("0.00")
+    obligation_payments_current_period: Decimal = Decimal("0.00")
+    committed_outflows_current_period: Decimal = Decimal("0.00")
+    net_cashflow_current_period: Decimal = Decimal("0.00")
 
 
 class SnapshotDebt(BaseModel):
@@ -63,6 +77,7 @@ class IntelligenceSnapshotRead(BaseModel):
     period: SnapshotPeriod
     cash: SnapshotCash
     cashflow: SnapshotCashflow
+    historical: HistoricalCashflow | None = None
     debt: SnapshotDebt
     goals: SnapshotGoals
     obligations: SnapshotObligations

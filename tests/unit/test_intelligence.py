@@ -69,8 +69,16 @@ async def test_get_snapshot_success(intelligence_service, mock_intelligence_repo
         "active_accounts_count": 2,
     }
     mock_intelligence_repo.return_value.get_cashflow_metrics.return_value = {
-        "income": Decimal("1500.00"),
-        "expenses": Decimal("200.00"),
+        "income_current_period": Decimal("1500.00"),
+        "cash_expenses_current_period": Decimal("200.00"),
+        "credit_card_consumption_current_period": Decimal("0.00"),
+        "debt_payments_current_period": Decimal("0.00"),
+        "goal_contributions_current_period": Decimal("0.00"),
+        "obligation_payments_current_period": Decimal("0.00"),
+    }
+    mock_intelligence_repo.return_value.get_historical_cashflow_metrics.return_value = {
+        "historical_income": Decimal("0.00"),
+        "historical_expenses": Decimal("0.00"),
     }
     mock_intelligence_repo.return_value.get_goals_metrics.return_value = {
         "active_goals_count": 1,
@@ -108,6 +116,9 @@ async def test_get_snapshot_success(intelligence_service, mock_intelligence_repo
     assert result.cashflow.income == Decimal("1500.00")
     assert result.cashflow.expenses == Decimal("200.00")
     assert result.cashflow.net_cashflow == Decimal("1300.00")
+    assert result.cashflow.income_current_period == Decimal("1500.00")
+    assert result.cashflow.cash_expenses_current_period == Decimal("200.00")
+    assert result.cashflow.net_cashflow_current_period == Decimal("1300.00")
     assert result.debt.credit_card_total_debt == Decimal("500.00")
     assert result.debt.billed_debt == Decimal("300.00")
     assert result.debt.unbilled_debt == Decimal("200.00")
@@ -123,6 +134,7 @@ async def test_get_snapshot_empty_user(intelligence_service, mock_intelligence_r
     user_id = uuid.uuid4()
     mock_intelligence_repo.return_value.get_cash_metrics.return_value = {}
     mock_intelligence_repo.return_value.get_cashflow_metrics.return_value = {}
+    mock_intelligence_repo.return_value.get_historical_cashflow_metrics.return_value = {}
     mock_intelligence_repo.return_value.get_goals_metrics.return_value = {}
     mock_intelligence_repo.return_value.get_obligations_metrics.return_value = {}
     mock_intelligence_repo.return_value.get_transfers_metrics.return_value = {}
@@ -158,9 +170,10 @@ async def test_get_snapshot_transfers_do_not_change_cashflow(
         "active_accounts_count": 2,
     }
     mock_intelligence_repo.return_value.get_cashflow_metrics.return_value = {
-        "income": Decimal("1000.00"),
-        "expenses": Decimal("200.00"),
+        "income_current_period": Decimal("1000.00"),
+        "cash_expenses_current_period": Decimal("200.00"),
     }
+    mock_intelligence_repo.return_value.get_historical_cashflow_metrics.return_value = {}
     mock_intelligence_repo.return_value.get_goals_metrics.return_value = {}
     mock_intelligence_repo.return_value.get_obligations_metrics.return_value = {}
     mock_intelligence_repo.return_value.get_transfers_metrics.return_value = {
@@ -310,9 +323,10 @@ async def test_committed_outflows_excludes_paid_obligations(
         "active_accounts_count": 1,
     }
     mock_intelligence_repo.return_value.get_cashflow_metrics.return_value = {
-        "income": Decimal("3000.00"),
-        "expenses": Decimal("500.00"),
+        "income_current_period": Decimal("3000.00"),
+        "cash_expenses_current_period": Decimal("500.00"),
     }
+    mock_intelligence_repo.return_value.get_historical_cashflow_metrics.return_value = {}
     mock_intelligence_repo.return_value.get_goals_metrics.return_value = {}
     mock_intelligence_repo.return_value.get_obligations_metrics.return_value = {}
     mock_intelligence_repo.return_value.get_transfers_metrics.return_value = {}

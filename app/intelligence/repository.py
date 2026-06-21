@@ -23,14 +23,32 @@ class IntelligenceRepository:
     ) -> dict[str, Any]:
         query = text(
             "SELECT "
-            "COALESCE(SUM(CASE WHEN event_type = 'income' THEN amount ELSE 0 END), 0) as income, "
-            "COALESCE(SUM(CASE WHEN event_type = 'expense' THEN amount ELSE 0 END), 0) as expenses "
+            "COALESCE(SUM(CASE WHEN event_type = 'income' THEN amount ELSE 0 END), 0) as income_current_period, "
+            "COALESCE(SUM(CASE WHEN event_type = 'expense' THEN amount ELSE 0 END), 0) as cash_expenses_current_period, "
+            "COALESCE(SUM(CASE WHEN event_type = 'credit_card_purchase' THEN amount ELSE 0 END), 0) as credit_card_consumption_current_period, "
+            "COALESCE(SUM(CASE WHEN event_type = 'credit_card_payment' THEN amount ELSE 0 END), 0) as debt_payments_current_period, "
+            "COALESCE(SUM(CASE WHEN event_type = 'goal_contribution' THEN amount ELSE 0 END), 0) as goal_contributions_current_period, "
+            "COALESCE(SUM(CASE WHEN event_type = 'obligation_payment' THEN amount ELSE 0 END), 0) as obligation_payments_current_period "
             "FROM financial_events "
             "WHERE user_id = :user_id AND occurred_at >= :start AND occurred_at < :end"
         )
         result = await self.session.execute(
             query, {"user_id": user_id, "start": month_start, "end": next_month_start}
         )
+        return dict(result.mappings().first() or {})
+
+    async def get_historical_cashflow_metrics(
+        self, user_id: uuid.UUID, before: datetime
+    ) -> dict[str, Any]:
+        # Historical metrics (all time before the current month)
+        query = text(
+            "SELECT "
+            "COALESCE(SUM(CASE WHEN event_type = 'income' THEN amount ELSE 0 END), 0) as historical_income, "
+            "COALESCE(SUM(CASE WHEN event_type IN ('expense', 'credit_card_payment', 'goal_contribution', 'obligation_payment') THEN amount ELSE 0 END), 0) as historical_expenses "
+            "FROM financial_events "
+            "WHERE user_id = :user_id AND occurred_at < :before"
+        )
+        result = await self.session.execute(query, {"user_id": user_id, "before": before})
         return dict(result.mappings().first() or {})
 
     async def get_debt_metrics(self, user_id: uuid.UUID) -> dict[str, Any]:

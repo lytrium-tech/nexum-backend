@@ -44,16 +44,42 @@ class IntelligenceService:
 
         cash = await self.repo.get_cash_metrics(user_id)
         cf = await self.repo.get_cashflow_metrics(user_id, month_start, next_month_start)
+        historical_cf = await self.repo.get_historical_cashflow_metrics(user_id, month_start)
         goals = await self.repo.get_goals_metrics(user_id)
         obligations = await self.repo.get_obligations_metrics(user_id, period_str)
         transfers = await self.repo.get_transfers_metrics(user_id, month_start, next_month_start)
         recent = await self.repo.get_recent_activity(user_id, limit=5)
 
-        # Build Cashflow
-        income = self._safe_decimal(cf.get("income"))
-        expenses = self._safe_decimal(cf.get("expenses"))
-        net_cashflow = income - expenses
+        # Build Cashflow current period metrics
+        income_current = self._safe_decimal(cf.get("income_current_period"))
+        cash_expenses_current = self._safe_decimal(cf.get("cash_expenses_current_period"))
+        credit_card_consumption_current = self._safe_decimal(cf.get("credit_card_consumption_current_period"))
+        debt_payments_current = self._safe_decimal(cf.get("debt_payments_current_period"))
+        goal_contributions_current = self._safe_decimal(cf.get("goal_contributions_current_period"))
+        obligation_payments_current = self._safe_decimal(cf.get("obligation_payments_current_period"))
 
+        net_cashflow_current = (
+            income_current
+            - cash_expenses_current
+            - goal_contributions_current
+            - obligation_payments_current
+            - debt_payments_current
+        )
+
+        # Legacy aliases for backward compatibility
+        income_legacy = income_current
+        expenses_legacy = (
+            cash_expenses_current
+            + goal_contributions_current
+            + obligation_payments_current
+            + debt_payments_current
+        )
+        net_cashflow_legacy = net_cashflow_current
+
+        # Historical
+        historical_income = self._safe_decimal(historical_cf.get("historical_income"))
+        historical_expenses = self._safe_decimal(historical_cf.get("historical_expenses"))
+        historical_net_cashflow = historical_income - historical_expenses
         # Credit Core is the source of truth for billed/unbilled debt separation.
         credit_summary = await CreditCardService(self.session).get_credit_summary(user_id)
         billed_debt = sum((card.billed_debt for card in credit_summary.cards), Decimal("0.00"))
@@ -141,7 +167,24 @@ class IntelligenceService:
                 "total_balance": self._safe_decimal(cash.get("total_balance")),
                 "active_accounts_count": cash.get("active_accounts_count", 0),
             },
-            cashflow={"income": income, "expenses": expenses, "net_cashflow": net_cashflow},
+            cashflow={
+                "income": income_legacy,
+                "expenses": expenses_legacy,
+                "net_cashflow": net_cashflow_legacy,
+                "income_current_period": income_current,
+                "cash_expenses_current_period": cash_expenses_current,
+                "credit_card_consumption_current_period": credit_card_consumption_current,
+                "debt_payments_current_period": debt_payments_current,
+                "goal_contributions_current_period": goal_contributions_current,
+                "obligation_payments_current_period": obligation_payments_current,
+                "committed_outflows_current_period": committed_outflows,
+                "net_cashflow_current_period": net_cashflow_current,
+            },
+            historical={
+                "income": historical_income,
+                "expenses": historical_expenses,
+                "net_cashflow": historical_net_cashflow,
+            },
             debt={
                 "credit_card_total_debt": credit_summary.total_debt,
                 "billed_debt": billed_debt,
