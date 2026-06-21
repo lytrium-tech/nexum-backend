@@ -12,8 +12,12 @@ class AccountRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def list_by_user(self, user_id: UUID) -> Sequence[Account]:
-        stmt = select(Account).where(Account.user_id == user_id, Account.is_active.is_(True))
+    async def list_by_user(
+        self, user_id: UUID, include_archived: bool = False
+    ) -> Sequence[Account]:
+        stmt = select(Account).where(Account.user_id == user_id)
+        if not include_archived:
+            stmt = stmt.where(Account.is_active.is_(True))
         result = await self.session.execute(stmt)
         return result.scalars().all()
 

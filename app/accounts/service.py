@@ -22,8 +22,12 @@ class AccountService:
         self.repository = repository
         self.ledger_repo = ledger_repo
 
-    async def list_accounts(self, auth_user_id: UUID) -> list[AccountRead]:
-        accounts = await self.repository.list_by_user(auth_user_id)
+    async def list_accounts(
+        self, auth_user_id: UUID, include_archived: bool = False
+    ) -> list[AccountRead]:
+        accounts = await self.repository.list_by_user(
+            auth_user_id, include_archived=include_archived
+        )
         return [AccountRead.model_validate(a) for a in accounts]
 
     async def get_account(self, auth_user_id: UUID, account_id: UUID) -> AccountRead:
@@ -96,11 +100,20 @@ class AccountService:
         return AccountRead.model_validate(account)
 
     async def delete_account(self, auth_user_id: UUID, account_id: UUID) -> None:
+        from sqlalchemy.exc import IntegrityError
+
         account = await self._get_account_or_404(account_id)
         if account.user_id != auth_user_id:
             raise AccountForbiddenError()
-        account.is_active = False
-        await self.repository.session.flush()
+
+        try:
+            await self.repository.session.delete(account)
+            await self.repository.session.flush()
+        except IntegrityError:
+            await self.repository.session.rollback()
+            raise ValueError(
+                "No se puede eliminar la cuenta porque tiene historial o dependencias financieras. Por favor, archívela."
+            )
 
     async def create_balance_adjustment(
         self, auth_user_id: UUID, account_id: UUID, payload: "BalanceAdjustmentCreate"

@@ -129,27 +129,49 @@
         ],
         "summary": "List Accounts",
         "operationId": "list_accounts_api_v1_accounts_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "include_archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Archived"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
+                  "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/AccountRead"
                   },
-                  "type": "array",
                   "title": "Response List Accounts Api V1 Accounts Get"
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
+        }
       },
       "post": {
         "tags": [
@@ -157,15 +179,20 @@
         ],
         "summary": "Create Account",
         "operationId": "create_account_api_v1_accounts_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/AccountCreate"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "201": {
@@ -188,12 +215,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
+        }
       }
     },
     "/api/v1/accounts/summary": {
@@ -5778,6 +5800,21 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Metadata"
+          },
+          "already_paid_this_period": {
+            "type": "boolean",
+            "title": "Already Paid This Period",
+            "default": false
+          },
+          "start_next_period": {
+            "type": "boolean",
+            "title": "Start Next Period",
+            "default": false
+          },
+          "pending_this_period": {
+            "type": "boolean",
+            "title": "Pending This Period",
+            "default": false
           }
         },
         "type": "object",

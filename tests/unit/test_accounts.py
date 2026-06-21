@@ -73,12 +73,29 @@ async def test_update_account_forbidden(service, mock_repo):
 
 
 @pytest.mark.asyncio
-async def test_delete_account_soft_delete(service, mock_repo):
+async def test_delete_account_hard_delete_success(service, mock_repo):
     user_id = uuid.uuid4()
     account_id = uuid.uuid4()
     acc = Account(id=account_id, user_id=user_id, is_active=True)
     mock_repo.get_by_id.return_value = acc
 
     await service.delete_account(user_id, account_id)
-    assert acc.is_active is False
+    mock_repo.session.delete.assert_called_once_with(acc)
     mock_repo.session.flush.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_delete_account_hard_delete_integrity_error(service, mock_repo):
+    from sqlalchemy.exc import IntegrityError
+
+    user_id = uuid.uuid4()
+    account_id = uuid.uuid4()
+    acc = Account(id=account_id, user_id=user_id, is_active=True)
+    mock_repo.get_by_id.return_value = acc
+
+    mock_repo.session.flush.side_effect = IntegrityError("msg", "params", "orig")
+
+    with pytest.raises(ValueError, match="No se puede eliminar la cuenta"):
+        await service.delete_account(user_id, account_id)
+
+    mock_repo.session.rollback.assert_called_once()

@@ -14,6 +14,9 @@ class ObligationCreate(BaseModel):
     frequency: str | None = None
     category_id: UUID | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    already_paid_this_period: bool = False
+    start_next_period: bool = False
+    pending_this_period: bool = False
 
 
 class ObligationUpdate(BaseModel):
@@ -48,13 +51,21 @@ class ObligationRead(BaseModel):
 
     @computed_field
     def remaining_amount(self) -> Decimal | None:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/Bogota")
+        current_period = f"{datetime.now(tz).year}-{datetime.now(tz).month:02d}"
+        if current_period in self.metadata.get("skip_periods", []):
+            return Decimal("0.00")
+
         if self.payment_mode == "variable_amount" and self.amount is None:
             return None
-        
+
         amt = self.amount or Decimal("0.00")
         if self.payment_mode == "fixed_full_payment":
             return Decimal("0.00") if self.paid_this_period > 0 else amt
-            
+
         return max(Decimal("0.00"), amt - self.paid_this_period)
 
     @computed_field
@@ -65,7 +76,17 @@ class ObligationRead(BaseModel):
     def period_status(self) -> str:
         if not self.is_active:
             return "inactive"
-            
+
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/Bogota")
+        now = datetime.now(tz)
+        current_period = f"{now.year}-{now.month:02d}"
+
+        if current_period in self.metadata.get("skip_periods", []):
+            return "paid"
+
         status = "pending"
         if self.payment_mode == "fixed_full_payment":
             status = "paid" if self.paid_this_period > 0 else "pending"
@@ -86,17 +107,13 @@ class ObligationRead(BaseModel):
                 status = "partial"
 
         if status != "paid" and self.due_day:
-            from datetime import datetime
-            from zoneinfo import ZoneInfo
-            tz = ZoneInfo("America/Bogota")
-            now = datetime.now(tz)
             try:
                 due_date = datetime(now.year, now.month, self.due_day).date()
                 if now.date() > due_date:
                     return "overdue"
             except ValueError:
                 pass
-                
+
         return status
 
     @computed_field
@@ -106,6 +123,7 @@ class ObligationRead(BaseModel):
             return None
         from datetime import datetime
         from zoneinfo import ZoneInfo
+
         tz = ZoneInfo("America/Bogota")
         now = datetime.now(tz)
         try:

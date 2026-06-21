@@ -28,10 +28,12 @@ def get_account_service(session: AsyncSession = Depends(get_db_session)) -> Acco
 
 @router.get("", response_model=list[AccountRead])
 async def list_accounts(
-    current_profile: CurrentUserProfile, service: AccountService = Depends(get_account_service)
+    current_profile: CurrentUserProfile,
+    include_archived: bool = False,
+    service: AccountService = Depends(get_account_service),
 ) -> list[AccountRead]:
     user_id = current_profile.id
-    return await service.list_accounts(user_id)
+    return await service.list_accounts(user_id, include_archived=include_archived)
 
 
 @router.get("/summary", response_model=AccountSummary)

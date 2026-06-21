@@ -40,16 +40,18 @@ class ObligationService:
     def _current_period(self) -> str:
         from datetime import datetime
         from zoneinfo import ZoneInfo
+
         tz = ZoneInfo("America/Bogota")
         now = datetime.now(tz)
         return f"{now.year}-{now.month:02d}"
 
     async def list_obligations(self, auth_user_id: UUID) -> list[ObligationRead]:
         from decimal import Decimal
+
         obligations = await self.repository.list_active(auth_user_id)
         period = self._current_period()
         payments = await self.repository.get_period_payments(auth_user_id, period)
-        
+
         results = []
         for o in obligations:
             o_read = ObligationRead.model_validate(o)
@@ -59,13 +61,14 @@ class ObligationService:
 
     async def get_obligation(self, auth_user_id: UUID, obligation_id: UUID) -> ObligationRead:
         from decimal import Decimal
+
         obligation = await self._get_obligation_or_404(obligation_id)
         if obligation.user_id != auth_user_id:
             raise ObligationForbiddenError()
-            
+
         period = self._current_period()
         payments = await self.repository.get_period_payments(auth_user_id, period)
-        
+
         o_read = ObligationRead.model_validate(obligation)
         o_read.paid_this_period = payments.get(obligation.id, Decimal("0.00"))
         return o_read
@@ -74,6 +77,7 @@ class ObligationService:
         self, auth_user_id: UUID, payload: ObligationCreate
     ) -> ObligationRead:
         from decimal import Decimal
+
         norm_name = normalize_name(payload.name)
         if not norm_name:
             raise ValueError("El nombre no puede estar vacío.")
@@ -81,6 +85,14 @@ class ObligationService:
         exists = await self.repository.check_name_exists(auth_user_id, norm_name)
         if exists:
             raise ValueError("Ya existe una obligación activa con este nombre.")
+
+        metadata = payload.metadata or {}
+        if payload.already_paid_this_period or payload.start_next_period:
+            period = self._current_period()
+            skip_periods = metadata.get("skip_periods", [])
+            if period not in skip_periods:
+                skip_periods.append(period)
+            metadata["skip_periods"] = skip_periods
 
         db_obligation = Obligation(
             user_id=auth_user_id,
@@ -91,11 +103,11 @@ class ObligationService:
             frequency=payload.frequency,
             category_id=payload.category_id,
             is_active=True,
-            metadata_=payload.metadata,
+            metadata_=metadata,
         )
         created = await self.repository.create(db_obligation)
         await self.repository.session.refresh(created)
-        
+
         o_read = ObligationRead.model_validate(created)
         o_read.paid_this_period = Decimal("0.00")
         return o_read
@@ -104,6 +116,7 @@ class ObligationService:
         self, auth_user_id: UUID, obligation_id: UUID, payload: ObligationUpdate
     ) -> ObligationRead:
         from decimal import Decimal
+
         obligation = await self._get_obligation_or_404(obligation_id)
         if obligation.user_id != auth_user_id:
             raise ObligationForbiddenError()
@@ -132,10 +145,10 @@ class ObligationService:
             obligation.metadata_ = payload.metadata
 
         await self.repository.session.flush()
-        
+
         period = self._current_period()
         payments = await self.repository.get_period_payments(auth_user_id, period)
-        
+
         o_read = ObligationRead.model_validate(obligation)
         o_read.paid_this_period = payments.get(obligation.id, Decimal("0.00"))
         return o_read
@@ -156,6 +169,7 @@ class ObligationService:
         idempotency_key: str | None,
     ) -> ObligationPaymentResult:
         from decimal import Decimal
+
         obligation = await self.repository.get_by_id_for_update(obligation_id)
         if not obligation:
             raise NotFoundError(message="Obligación no encontrada.")
