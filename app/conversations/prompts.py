@@ -5,16 +5,15 @@ Tu ÚNICA tarea es extraer la intención del usuario y las entidades nombradas d
 Devuelve los resultados ESTRICTAMENTE en formato JSON validando el esquema esperado.
 
 Reglas:
-1. No calcules saldos ni operaciones matemáticas.
-2. Si el usuario pregunta por saldo, asigna intent "ask_balance".
-3. Si el usuario registra un gasto, asigna intent "create_expense". Extrae 'amount', 'category' (si aplica), 'account' (si aplica).
-4. Si el usuario registra un ingreso, asigna intent "create_income".
-5. Si el usuario indica que movió o transfirió dinero de una cuenta propia a otra cuenta propia (ej. "pasé 100 mil de Nequi a Bancolombia"), asigna intent "create_transfer". Extrae 'amount', 'source_account' y 'destination_account'.
-6. Si el usuario confirma algo anterior, asigna "confirm_action".
-7. Si cancela algo, asigna "cancel_action".
-8. No asumas entidades si no están mencionadas.
-9. Para 'amount', usa números puros sin comas separadoras de miles ni símbolos. (ej. 50000).
-10. Extrae SIEMPRE TODAS las entidades mencionadas (account, source_account, destination_account, goal, obligation, credit_card, category, amount, etc.) sin importar la intención.
+1. No calcules saldos ni operaciones matemáticas. No calcules dinero libre sin backend. No mezcles monedas.
+2. Usa valores calculados por backend. No inventes UUIDs ni entidades que no existan.
+3. Si el usuario pregunta por saldo, asigna intent "ask_balance".
+4. Si el usuario registra un gasto, asigna intent "create_expense". Extrae 'amount', 'category', 'account'.
+5. Si el usuario registra un ingreso, asigna intent "create_income".
+6. Si el usuario transfiere dinero, asigna intent "create_transfer". Extrae 'amount', 'source_account' y 'destination_account'.
+7. Si el usuario pide consejo, asesoría financiera, o recomendaciones, asigna intent "ask_advice".
+8. Si la intención no está soportada o no es clara, asigna "unknown" (fail closed). Si el mensaje tiene múltiples intenciones complejas que no puedes resolver en una, asigna "unknown".
+9. Extrae SIEMPRE TODAS las entidades mencionadas. Para 'amount', usa números puros.
 
 Opciones disponibles para contexto:
 Cuentas: {accounts}
@@ -23,8 +22,7 @@ Tarjetas de Crédito: {credit_cards}
 Metas: {goals}
 Obligaciones: {obligations}
 
-Recuerda: Si el texto del usuario menciona alguna cuenta/tarjeta/meta/categoría de forma inexacta, 
-extrae literalmente cómo la llamó el usuario. El sistema se encargará de resolver el nombre exacto.
+Recuerda: Extrae literalmente cómo el usuario llamó a las entidades.
 """
 
 
@@ -85,5 +83,10 @@ def render_read_response(intent: str, data: dict) -> str:
             f"Dinero seguro: ${data.get('safe_money', '0.00')}\n"
             f"Deuda TC: ${data.get('total_credit_card_debt', '0.00')}\n"
             f"Obligaciones pendientes: ${data.get('pending_obligations_total', '0.00')}"
+        )
+    elif intent == "ask_advice":
+        return (
+            "Según tus datos actuales, podrías considerar revisar tu flujo de caja y deudas. "
+            "Nota: Esto no reemplaza asesoría financiera profesional."
         )
     return "Aquí está la información solicitada."

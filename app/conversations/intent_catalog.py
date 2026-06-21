@@ -21,6 +21,7 @@ IntentType = Literal[
     "confirm_action",
     "cancel_action",
     "clarify_action",
+    "ask_advice",
     "unknown",
 ]
 
@@ -34,6 +35,7 @@ def is_read_intent(intent: str) -> bool:
         "ask_goals",
         "ask_obligations",
         "ask_financial_snapshot",
+        "ask_advice",
     }
 
 
