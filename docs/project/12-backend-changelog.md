@@ -1,5 +1,11 @@
 # Changelog del Backend
 
+## [v1.3.0-alpha] - Backend V1.3 Alpha Blocker Fixes
+- Introduced `covered` period status for obligations paid outside Nexum.
+- Secured Snapshot multi-currency by zeroing global values when multiple currencies are present (`cross_currency_global_totals_disabled`).
+- Ledger events now require an explicit `currency` from source entities.
+- Restored `include_archived` querying capability for Accounts and Obligations list endpoints.
+
 ## [v1.2.0-alpha] - Backend V1.2 Alpha Baseline
 - Sprint 7 regression passed. Backend V1.2 closed.
 - Snapshot period semantics & cashflow subtypes separated.

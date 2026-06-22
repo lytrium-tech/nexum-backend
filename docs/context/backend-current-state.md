@@ -3,12 +3,13 @@
 This document is the source of truth for the implemented and validated backend state.
 
 ## Global Context
-- Phase: Backend V1.2 Alpha Baseline Closed.
+- Phase: Backend V1.3 Alpha Blocker Fixes Closed.
 - Database: Supabase PostgreSQL.
 - Architecture: Event-Sourced Ledger with Materialized Views for balance derivations.
 - Tech Stack: FastAPI, SQLAlchemy, Pydantic, PostgreSQL.
 
 ## Completed Features
+- **Backend V1.3**: Alpha Blocker Fixes. Implemented `covered` period status, enforced multi-currency global totals zeroing to prevent unsafe sums, fixed ledger currency assignments, and restored `include_archived` querying for accounts and obligations.
 - **Sprint 7 (V1.2)**: Regression & Alpha Recheck. All V1.2 features validated.
 - **Sprint 6 (V1.2)**: Chat context audit & prompt safety. LLM operates strictly as NLU, backend calculates truth.
 - **Sprint 5 (V1.2)**: Credit Card cycle semantics, billed vs unbilled debt, next payment estimates.
