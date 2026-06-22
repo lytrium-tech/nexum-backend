@@ -1,5 +1,11 @@
 # Changelog del Backend
 
+## [v1.4.0-alpha] - Backend V1.4 Multi-Currency Trust & Estimated FX
+- Enforced `currency` code requirement across all creation schemas and AI parsing logic. Legacy `COP` fallback removed.
+- Implemented `FxRateProvider` protocol.
+- Integrated Dólar API Colombia for USD->COP exchange rate visualization layer.
+- Added `estimated_totals` unified Net Worth estimation to Snapshot API.
+
 ## [v1.3.0-alpha] - Backend V1.3 Alpha Blocker Fixes
 - Introduced `covered` period status for obligations paid outside Nexum.
 - Secured Snapshot multi-currency by zeroing global values when multiple currencies are present (`cross_currency_global_totals_disabled`).
