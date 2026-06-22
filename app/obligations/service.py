@@ -45,10 +45,14 @@ class ObligationService:
         now = datetime.now(tz)
         return f"{now.year}-{now.month:02d}"
 
-    async def list_obligations(self, auth_user_id: UUID, include_archived: bool = False) -> list[ObligationRead]:
+    async def list_obligations(
+        self, auth_user_id: UUID, include_archived: bool = False
+    ) -> list[ObligationRead]:
         from decimal import Decimal
 
-        obligations = await self.repository.list_by_user(auth_user_id, include_archived=include_archived)
+        obligations = await self.repository.list_by_user(
+            auth_user_id, include_archived=include_archived
+        )
         period = self._current_period()
         payments = await self.repository.get_period_payments(auth_user_id, period)
 
@@ -100,6 +104,7 @@ class ObligationService:
             user_id=auth_user_id,
             name=clean_presentation_name(payload.name),
             amount=payload.amount,
+            currency=payload.currency,
             payment_mode=payload.payment_mode,
             due_day=payload.due_day,
             frequency=payload.frequency,

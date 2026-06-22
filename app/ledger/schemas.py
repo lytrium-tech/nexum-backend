@@ -32,7 +32,7 @@ class LedgerEventCreate(BaseModel):
         gt=Decimal("0"),
         description="Monto del evento. Debe ser estrictamente mayor a 0.",
     )
-    currency: str = Field(default="COP")
+    currency: str = Field(min_length=3, max_length=3)
 
     description: str | None = None
 

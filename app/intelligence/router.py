@@ -18,7 +18,19 @@ router = APIRouter(prefix="/intelligence", tags=["intelligence"])
 
 
 def get_intelligence_service(session=Depends(get_db_session)) -> IntelligenceService:
-    return IntelligenceService(session)
+    from app.core.config import settings
+    from app.fx.provider import DolarApiColombiaFxRateProvider, FxRateProvider, StaticFxRateProvider
+
+    fx_provider: FxRateProvider
+    if settings.FX_PROVIDER == "dolarapi_colombia":
+        fx_provider = DolarApiColombiaFxRateProvider(
+            base_url=settings.DOLAR_API_BASE_URL,
+            timeout_seconds=settings.FX_TIMEOUT_SECONDS,
+        )
+    else:
+        fx_provider = StaticFxRateProvider()
+
+    return IntelligenceService(session, fx_provider=fx_provider)
 
 
 @router.get("/snapshot", response_model=IntelligenceSnapshotRead)

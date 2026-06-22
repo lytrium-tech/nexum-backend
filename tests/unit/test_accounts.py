@@ -33,7 +33,7 @@ def service(mock_repo):
 @pytest.mark.asyncio
 async def test_create_account_success(service, mock_repo):
     user_id = uuid.uuid4()
-    payload = AccountCreate(name="  Mi Cuenta  ", type=AccountType.BANK)
+    payload = AccountCreate(currency="COP", name="  Mi Cuenta  ", type=AccountType.BANK)
     mock_repo.check_name_exists.return_value = False
 
     async def fake_create(acc):
@@ -54,7 +54,7 @@ async def test_create_account_success(service, mock_repo):
 @pytest.mark.asyncio
 async def test_create_account_duplicate(service, mock_repo):
     user_id = uuid.uuid4()
-    payload = AccountCreate(name="Mi Cuenta", type=AccountType.BANK)
+    payload = AccountCreate(currency="COP", name="Mi Cuenta", type=AccountType.BANK)
     mock_repo.check_name_exists.return_value = True
 
     with pytest.raises(AccountDuplicateError):

@@ -165,11 +165,17 @@ class AccountService:
         return account
 
     async def get_summary(self, auth_user_id: UUID) -> AccountSummary:
+        from collections import defaultdict
+        from decimal import Decimal
+
         accounts = await self.repository.list_by_user_all(auth_user_id)
-        total = sum(a.balance for a in accounts if a.is_active)
+        totals = defaultdict(Decimal)
+        for a in accounts:
+            if a.is_active:
+                totals[a.currency] += a.balance
+
         return AccountSummary(
-            total_balance=total,
+            totals_by_currency=dict(totals),
             accounts_count=len(accounts),
             active_accounts_count=sum(1 for a in accounts if a.is_active),
-            currency="COP",
         )

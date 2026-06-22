@@ -36,7 +36,11 @@ def obligation_service(mock_obligation_repo, mock_account_repo, mock_ledger_repo
 async def test_create_obligation_success(obligation_service, mock_obligation_repo):
     user_id = uuid.uuid4()
     payload = ObligationCreate(
-        name="  Préstamo Coche  ", amount=Decimal("1000"), due_day=15, frequency="monthly"
+        currency="COP",
+        name="  Préstamo Coche  ",
+        amount=Decimal("1000"),
+        due_day=15,
+        frequency="monthly",
     )
 
     mock_obligation_repo.check_name_exists.return_value = False
@@ -69,7 +73,7 @@ async def test_create_obligation_success(obligation_service, mock_obligation_rep
 @pytest.mark.asyncio
 async def test_create_obligation_duplicate_name(obligation_service, mock_obligation_repo):
     user_id = uuid.uuid4()
-    payload = ObligationCreate(name="Coche", amount=Decimal("1000"))
+    payload = ObligationCreate(currency="COP", name="Coche", amount=Decimal("1000"))
 
     mock_obligation_repo.check_name_exists.return_value = True
 
@@ -112,7 +116,7 @@ async def test_payment_success(
     mock_obligation_repo.get_by_id_for_update.return_value = mock_obligation
     mock_obligation_repo.get_period_payments.return_value = {}
 
-    mock_account = Account(id=account_id, user_id=user_id, currency='COP', balance=Decimal("1000"))
+    mock_account = Account(id=account_id, user_id=user_id, currency="COP", balance=Decimal("1000"))
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
     mock_event = AsyncMock()
@@ -152,7 +156,7 @@ async def test_payment_success_once_deactivates(
     mock_obligation_repo.get_period_payments.return_value = {}
     mock_obligation_repo.get_period_payments.return_value = {}
 
-    mock_account = Account(id=account_id, user_id=user_id, currency='COP', balance=Decimal("1000"))
+    mock_account = Account(id=account_id, user_id=user_id, currency="COP", balance=Decimal("1000"))
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
     mock_event = AsyncMock()
@@ -256,7 +260,7 @@ async def test_partial_allowed_permits_multiple_payments(
     mock_obligation_repo.get_by_id_for_update.return_value = mock_obligation
     mock_obligation_repo.get_period_payments.return_value = {obligation_id: Decimal("100")}
 
-    mock_account = Account(id=account_id, user_id=user_id, currency='COP', balance=Decimal("1000"))
+    mock_account = Account(id=account_id, user_id=user_id, currency="COP", balance=Decimal("1000"))
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
     mock_event = AsyncMock()
@@ -317,7 +321,7 @@ async def test_variable_amount_allows_free_payment(
     mock_obligation_repo.get_by_id_for_update.return_value = mock_obligation
     mock_obligation_repo.get_period_payments.return_value = {obligation_id: Decimal("500")}
 
-    mock_account = Account(id=account_id, user_id=user_id, currency='COP', balance=Decimal("5000"))
+    mock_account = Account(id=account_id, user_id=user_id, currency="COP", balance=Decimal("5000"))
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
     mock_event = AsyncMock()

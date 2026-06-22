@@ -15,7 +15,7 @@ class CreditCardBase(BaseModel):
     annual_interest_rate: Decimal = Field(default=Decimal("0.00"), ge=0)
     network: str | None = None
     franchise: str | None = None
-    currency: str = "COP"
+    currency: str = Field(min_length=3, max_length=3)
 
 
 class CreditCardCreate(CreditCardBase):

@@ -93,6 +93,17 @@ class CurrencyMetrics(BaseModel):
     net_cashflow_current_period: Decimal = Decimal("0.00")
 
 
+class EstimatedTotals(BaseModel):
+    base_currency: str
+    estimated_total_base_currency: Decimal
+    is_estimated: bool = True
+    rate_source: str
+    rate_timestamp: str
+    fx_rates_used: dict[str, float] = Field(default_factory=dict)
+    unsupported_currencies: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class IntelligenceSnapshotRead(BaseModel):
     period: SnapshotPeriod
     cash: SnapshotCash
@@ -105,6 +116,7 @@ class IntelligenceSnapshotRead(BaseModel):
     recent_activity: list[dict[str, Any]]
     truth: SnapshotTruth
     totals_by_currency: dict[str, CurrencyMetrics] = Field(default_factory=dict)
+    estimated_totals: EstimatedTotals | None = None
 
 
 class AccountBalanceRead(IntelligenceBase):

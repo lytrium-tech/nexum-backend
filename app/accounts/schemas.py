@@ -11,7 +11,7 @@ from app.ledger.enums import EventType
 class AccountCreate(BaseModel):
     name: str = Field(min_length=1)
     type: AccountType
-    currency: str = Field(default="COP")
+    currency: str = Field(min_length=3, max_length=3)
     initial_balance: Decimal = Field(
         default=Decimal("0.00"), description="Saldo inicial para abrir la cuenta"
     )
@@ -36,10 +36,9 @@ class AccountRead(BaseModel):
 
 
 class AccountSummary(BaseModel):
-    total_balance: Decimal
+    totals_by_currency: dict[str, Decimal]
     accounts_count: int
     active_accounts_count: int
-    currency: str
 
 
 class BalanceAdjustmentCreate(BaseModel):

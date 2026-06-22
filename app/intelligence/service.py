@@ -20,9 +20,10 @@ from app.intelligence.schemas import (
 
 
 class IntelligenceService:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, fx_provider=None):
         self.session = session
         self.repo = IntelligenceRepository(session)
+        self.fx_provider = fx_provider
 
     def _safe_decimal(self, val) -> Decimal:
         if val is None:
@@ -198,7 +199,9 @@ class IntelligenceService:
         data_quality["safe_money"] = "computed_as_free_money"
 
         # Prevent global truth mixing of currencies
-        has_multiple_currencies = cash.get("currency_count", 0) > 1 or cf.get("currency_count", 0) > 1
+        has_multiple_currencies = (
+            cash.get("currency_count", 0) > 1 or cf.get("currency_count", 0) > 1
+        )
 
         calculation_warnings = []
         if has_multiple_currencies:
@@ -215,7 +218,9 @@ class IntelligenceService:
             data_quality["global_totals"] = "zeroed_due_to_multi_currency"
         else:
             if cash.get("currency_count", 0) > 1:
-                calculation_warnings.append("total_balance mixes multiple currencies without conversion")
+                calculation_warnings.append(
+                    "total_balance mixes multiple currencies without conversion"
+                )
             if cf.get("currency_count", 0) > 1:
                 calculation_warnings.append("cashflow mixes multiple currencies without conversion")
 
@@ -245,6 +250,46 @@ class IntelligenceService:
             calculation_warnings=calculation_warnings,
             data_quality=data_quality,
         )
+
+        # Calculate Estimated FX Totals
+        estimated_totals = None
+        if self.fx_provider and totals_by_currency:
+            from app.core.config import settings
+            from app.intelligence.schemas import EstimatedTotals
+
+            base_currency = settings.FX_BASE_CURRENCY
+            estimated_total = Decimal("0.00")
+            fx_rates_used = {}
+            unsupported = []
+            warnings = []
+            rate_source = settings.FX_PROVIDER
+            rate_timestamp = datetime.now(UTC).isoformat()
+            has_error = False
+
+            for curr, cm in totals_by_currency.items():
+                if curr == base_currency:
+                    estimated_total += cm.available_real
+                else:
+                    rate = await self.fx_provider.get_rate(curr, base_currency)
+                    if rate is not None:
+                        estimated_total += cm.available_real * Decimal(str(rate))
+                        fx_rates_used[f"{curr}_{base_currency}"] = rate
+                    else:
+                        unsupported.append(curr)
+                        warnings.append("unsupported_currency_excluded_from_estimated_total")
+                        has_error = True
+
+            if not has_error or (has_error and estimated_total > 0):
+                estimated_totals = EstimatedTotals(
+                    base_currency=base_currency,
+                    estimated_total_base_currency=estimated_total,
+                    is_estimated=True,
+                    rate_source=rate_source,
+                    rate_timestamp=rate_timestamp,
+                    fx_rates_used=fx_rates_used,
+                    unsupported_currencies=unsupported,
+                    warnings=warnings,
+                )
 
         from app.intelligence.schemas import (
             HistoricalCashflow,
@@ -312,6 +357,7 @@ class IntelligenceService:
             recent_activity=recent,
             truth=truth,
             totals_by_currency=totals_by_currency,
+            estimated_totals=estimated_totals,
         )
 
     async def get_balance(self, user_id: uuid.UUID) -> IntelligenceBalanceRead:

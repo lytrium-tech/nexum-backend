@@ -40,7 +40,10 @@ def goal_service(mock_goal_repo, mock_account_repo, mock_ledger_repo):
 async def test_create_goal_success(goal_service, mock_goal_repo):
     user_id = uuid.uuid4()
     payload = GoalCreate(
-        name="  Viaje a japón  ", target_amount=Decimal("5000000"), target_date=date(2027, 1, 1)
+        currency="COP",
+        name="  Viaje a japón  ",
+        target_amount=Decimal("5000000"),
+        target_date=date(2027, 1, 1),
     )
 
     mock_goal_repo.check_name_exists.return_value = False
@@ -71,7 +74,7 @@ async def test_create_goal_success(goal_service, mock_goal_repo):
 @pytest.mark.asyncio
 async def test_create_goal_duplicate_name(goal_service, mock_goal_repo):
     user_id = uuid.uuid4()
-    payload = GoalCreate(name="Coche", target_amount=Decimal("1000"))
+    payload = GoalCreate(currency="COP", name="Coche", target_amount=Decimal("1000"))
 
     mock_goal_repo.check_name_exists.return_value = True
 
@@ -133,7 +136,7 @@ async def test_contribution_success(
     )
     mock_goal_repo.get_by_id_for_update.return_value = mock_goal
 
-    mock_account = Account(id=account_id, user_id=user_id, currency='COP', balance=Decimal("1000"))
+    mock_account = Account(id=account_id, user_id=user_id, currency="COP", balance=Decimal("1000"))
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
     mock_event = AsyncMock()
@@ -169,7 +172,7 @@ async def test_contribution_amount_exceeded(goal_service, mock_goal_repo, mock_a
     )
     mock_goal_repo.get_by_id_for_update.return_value = mock_goal
 
-    mock_account = Account(id=account_id, user_id=user_id, currency='COP', balance=Decimal("1000"))
+    mock_account = Account(id=account_id, user_id=user_id, currency="COP", balance=Decimal("1000"))
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
     with pytest.raises(GoalAmountExceededError):
@@ -195,7 +198,7 @@ async def test_contribution_idempotent_retry(
     )
     mock_goal_repo.get_by_id_for_update.return_value = mock_goal
 
-    mock_account = Account(id=account_id, user_id=user_id, currency='COP', balance=Decimal("1000"))
+    mock_account = Account(id=account_id, user_id=user_id, currency="COP", balance=Decimal("1000"))
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
     mock_result = AsyncMock()

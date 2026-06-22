@@ -56,7 +56,12 @@ def credit_service(mock_credit_repo, mock_ledger_service, mock_account_repo):
 async def test_create_card_success(credit_service, mock_credit_repo):
     user_id = uuid.uuid4()
     payload = CreditCardCreate(
-        name="Test Card", bank="Bank", credit_limit=Decimal("5000"), cutoff_day=15, due_day=30
+        currency="COP",
+        name="Test Card",
+        bank="Bank",
+        credit_limit=Decimal("5000"),
+        cutoff_day=15,
+        due_day=30,
     )
 
     mock_credit_repo.get_card_debt.return_value = (0.0, 0.0)
@@ -133,7 +138,9 @@ async def test_create_payment_success(
     account_id = uuid.uuid4()
     payload = CreditCardPaymentCreate(account_id=account_id, amount=Decimal("200"))
 
-    mock_account = Account(id=account_id, user_id=user_id, is_active=True, currency='COP', balance=Decimal("1000"))
+    mock_account = Account(
+        id=account_id, user_id=user_id, is_active=True, currency="COP", balance=Decimal("1000")
+    )
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
     mock_card = CreditCard(
@@ -169,7 +176,9 @@ async def test_create_payment_overpayment(credit_service, mock_credit_repo, mock
     account_id = uuid.uuid4()
     payload = CreditCardPaymentCreate(account_id=account_id, amount=Decimal("600"))
 
-    mock_account = Account(id=account_id, user_id=user_id, is_active=True, currency='COP', balance=Decimal("1000"))
+    mock_account = Account(
+        id=account_id, user_id=user_id, is_active=True, currency="COP", balance=Decimal("1000")
+    )
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
     mock_card = CreditCard(
@@ -247,6 +256,7 @@ async def test_installment_schedule_splits_principal_exactly(credit_service):
 async def test_metadata_fields_do_not_generate_charges(credit_service, mock_credit_repo):
     user_id = uuid.uuid4()
     payload = CreditCardCreate(
+        currency="COP",
         name="Metadata Card",
         bank="Bank",
         credit_limit=Decimal("5000"),

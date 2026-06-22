@@ -911,6 +911,7 @@ class ConversationsService:
             dto = GoalCreate(
                 name=data["name"],
                 target_amount=Decimal(str(data["target_amount"])),
+                currency="COP",
                 target_date=data.get("target_date"),
             )
             await self.goals_service.create_goal(user_id, dto)
@@ -928,6 +929,7 @@ class ConversationsService:
             dto = ObligationCreate(
                 name=data["name"],
                 amount=Decimal(str(data["amount"])),
+                currency="COP",
                 due_day=data.get("due_day"),
                 frequency=data.get("frequency"),
                 category_id=uuid.UUID(data["category_id"]) if "category_id" in data else None,

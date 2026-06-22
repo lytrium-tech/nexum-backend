@@ -11,6 +11,7 @@ from app.core.currency import get_minimum_unit, round_up_to_minimum_unit
 class GoalCreate(BaseModel):
     name: str = Field(min_length=1)
     target_amount: Decimal = Field(gt=0)
+    currency: str = Field(min_length=3, max_length=3)
     target_date: date | None = None
     source_message_id: UUID | None = None
     raw_message: str | None = None
@@ -28,7 +29,7 @@ class GoalRead(BaseModel):
     target_amount: Decimal
     current_amount: Decimal
     target_date: date | None
-    currency: str = "COP"
+    currency: str = Field(min_length=3, max_length=3)
     status: str
     is_active: bool
     created_at: datetime

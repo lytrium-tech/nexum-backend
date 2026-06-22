@@ -18,7 +18,7 @@ class TransferCreate(BaseModel):
     source_account_id: UUID
     destination_account_id: UUID
     amount: Decimal = Field(..., gt=0, decimal_places=2)
-    currency: str = Field(default="COP", min_length=3, max_length=3)
+    currency: str = Field(min_length=3, max_length=3)
     description: str | None = Field(None, max_length=255)
     occurred_at: datetime | None = None
     command_id: UUID | None = None

@@ -31,6 +31,7 @@ from app.ledger.service import generate_period_for_bogota
 def test_ledger_schema_valid_amount() -> None:
     """amount positivo es aceptado."""
     event = LedgerEventCreate(
+        currency="COP",
         user_id=uuid.uuid4(),
         event_type=EventType.INCOME,
         direction=Direction.INFLOW,
@@ -42,6 +43,7 @@ def test_ledger_schema_valid_amount() -> None:
 def test_ledger_schema_preserves_precision() -> None:
     """Valida la precisión de decimales."""
     event = LedgerEventCreate(
+        currency="COP",
         user_id=uuid.uuid4(),
         event_type=EventType.INCOME,
         direction=Direction.INFLOW,
@@ -54,6 +56,7 @@ def test_ledger_schema_rejects_zero_amount() -> None:
     """amount cero es rechazado antes de BD."""
     with pytest.raises(ValidationError) as exc_info:
         LedgerEventCreate(
+            currency="COP",
             user_id=uuid.uuid4(),
             event_type=EventType.EXPENSE,
             direction=Direction.OUTFLOW,
@@ -66,6 +69,7 @@ def test_ledger_schema_rejects_negative_amount() -> None:
     """amount negativo es rechazado antes de BD."""
     with pytest.raises(ValidationError) as exc_info:
         LedgerEventCreate(
+            currency="COP",
             user_id=uuid.uuid4(),
             event_type=EventType.EXPENSE,
             direction=Direction.OUTFLOW,
@@ -78,6 +82,7 @@ def test_ledger_schema_valid_enums() -> None:
     """event_type y direction aceptan solo valores permitidos."""
     with pytest.raises(ValidationError):
         LedgerEventCreate(
+            currency="COP",
             user_id=uuid.uuid4(),
             event_type="invalid_type",  # type: ignore[arg-type]
             direction=Direction.INFLOW,
@@ -86,6 +91,7 @@ def test_ledger_schema_valid_enums() -> None:
 
     with pytest.raises(ValidationError):
         LedgerEventCreate(
+            currency="COP",
             user_id=uuid.uuid4(),
             event_type=EventType.INCOME,
             direction="upward",  # type: ignore[arg-type]
@@ -96,6 +102,7 @@ def test_ledger_schema_valid_enums() -> None:
 def test_ledger_schema_raw_message_not_exposed_in_read() -> None:
     """raw_message existe en Create pero no en Read."""
     create = LedgerEventCreate(
+        currency="COP",
         user_id=uuid.uuid4(),
         event_type=EventType.MANUAL_ADJUSTMENT,
         direction=Direction.NEUTRAL,
@@ -130,6 +137,7 @@ def test_ledger_schema_raw_message_not_exposed_in_read() -> None:
 def test_ledger_schema_default_metadata_is_empty_dict() -> None:
     """metadata inicia como diccionario vacío."""
     create = LedgerEventCreate(
+        currency="COP",
         user_id=uuid.uuid4(),
         event_type=EventType.INCOME,
         direction=Direction.INFLOW,
@@ -141,6 +149,7 @@ def test_ledger_schema_default_metadata_is_empty_dict() -> None:
 def test_ledger_schema_omits_period() -> None:
     """period no existe en el payload de creación para evitar ambigüedad."""
     create = LedgerEventCreate(
+        currency="COP",
         user_id=uuid.uuid4(),
         event_type=EventType.INCOME,
         direction=Direction.INFLOW,
@@ -315,6 +324,7 @@ async def test_repository_handles_command_id_integrity_error() -> None:
     repo.check_category_ownership = AsyncMock()  # type: ignore[method-assign]
 
     create = LedgerEventCreate(
+        currency="COP",
         user_id=user_id,
         event_type=EventType.INCOME,
         direction=Direction.INFLOW,
@@ -352,6 +362,7 @@ async def test_repository_propagates_other_integrity_errors() -> None:
     repo = LedgerRepository(mock_session)
 
     create = LedgerEventCreate(
+        currency="COP",
         user_id=uuid.uuid4(),
         event_type=EventType.INCOME,
         direction=Direction.INFLOW,

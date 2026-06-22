@@ -12,7 +12,7 @@
           "Sistema"
         ],
         "summary": "Health check",
-        "description": "Verifica que el backend esté operativo.",
+        "description": "Verifica que el backend est\u00e9 operativo.",
         "operationId": "health_check_health_get",
         "responses": {
           "200": {
@@ -34,7 +34,7 @@
           "Sistema"
         ],
         "summary": "Readiness check",
-        "description": "Verifica que el backend y la base de datos estén operativos.",
+        "description": "Verifica que el backend y la base de datos est\u00e9n operativos.",
         "operationId": "readiness_check_health_readiness_get",
         "responses": {
           "200": {
@@ -674,10 +674,10 @@
             "schema": {
               "type": "string",
               "format": "uuid",
-              "description": "UUID único para identificar la transacción de negocio",
+              "description": "UUID \u00fanico para identificar la transacci\u00f3n de negocio",
               "title": "Idempotency-Key"
             },
-            "description": "UUID único para identificar la transacción de negocio"
+            "description": "UUID \u00fanico para identificar la transacci\u00f3n de negocio"
           }
         ],
         "requestBody": {
@@ -734,10 +734,10 @@
             "schema": {
               "type": "string",
               "format": "uuid",
-              "description": "UUID único para identificar la transacción de negocio",
+              "description": "UUID \u00fanico para identificar la transacci\u00f3n de negocio",
               "title": "Idempotency-Key"
             },
-            "description": "UUID único para identificar la transacción de negocio"
+            "description": "UUID \u00fanico para identificar la transacci\u00f3n de negocio"
           }
         ],
         "requestBody": {
@@ -2193,7 +2193,7 @@
           "ledger"
         ],
         "summary": "Get Timeline",
-        "description": "Timeline de eventos financieros agrupados por día.",
+        "description": "Timeline de eventos financieros agrupados por d\u00eda.",
         "operationId": "get_timeline_api_v1_ledger_timeline_get",
         "security": [
           {
@@ -2752,8 +2752,9 @@
           },
           "currency": {
             "type": "string",
-            "title": "Currency",
-            "default": "COP"
+            "maxLength": 3,
+            "minLength": 3,
+            "title": "Currency"
           },
           "initial_balance": {
             "anyOf": [
@@ -2773,7 +2774,8 @@
         "type": "object",
         "required": [
           "name",
-          "type"
+          "type",
+          "currency"
         ],
         "title": "AccountCreate"
       },
@@ -2843,10 +2845,13 @@
       },
       "AccountSummary": {
         "properties": {
-          "total_balance": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Total Balance"
+          "totals_by_currency": {
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+            },
+            "type": "object",
+            "title": "Totals By Currency"
           },
           "accounts_count": {
             "type": "integer",
@@ -2855,18 +2860,13 @@
           "active_accounts_count": {
             "type": "integer",
             "title": "Active Accounts Count"
-          },
-          "currency": {
-            "type": "string",
-            "title": "Currency"
           }
         },
         "type": "object",
         "required": [
-          "total_balance",
+          "totals_by_currency",
           "accounts_count",
-          "active_accounts_count",
-          "currency"
+          "active_accounts_count"
         ],
         "title": "AccountSummary"
       },
@@ -3501,8 +3501,9 @@
           },
           "currency": {
             "type": "string",
-            "title": "Currency",
-            "default": "COP"
+            "maxLength": 3,
+            "minLength": 3,
+            "title": "Currency"
           }
         },
         "type": "object",
@@ -3511,7 +3512,8 @@
           "bank",
           "credit_limit",
           "cutoff_day",
-          "due_day"
+          "due_day",
+          "currency"
         ],
         "title": "CreditCardCreate"
       },
@@ -3903,8 +3905,9 @@
           },
           "currency": {
             "type": "string",
-            "title": "Currency",
-            "default": "COP"
+            "maxLength": 3,
+            "minLength": 3,
+            "title": "Currency"
           },
           "id": {
             "type": "string",
@@ -4002,6 +4005,7 @@
           "credit_limit",
           "cutoff_day",
           "due_day",
+          "currency",
           "id",
           "is_active",
           "estimated_available_credit"
@@ -4447,6 +4451,61 @@
         "type": "object",
         "title": "CurrencyMetrics"
       },
+      "EstimatedTotals": {
+        "properties": {
+          "base_currency": {
+            "type": "string",
+            "title": "Base Currency"
+          },
+          "estimated_total_base_currency": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Estimated Total Base Currency"
+          },
+          "is_estimated": {
+            "type": "boolean",
+            "title": "Is Estimated",
+            "default": true
+          },
+          "rate_source": {
+            "type": "string",
+            "title": "Rate Source"
+          },
+          "rate_timestamp": {
+            "type": "string",
+            "title": "Rate Timestamp"
+          },
+          "fx_rates_used": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Fx Rates Used"
+          },
+          "unsupported_currencies": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unsupported Currencies"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "base_currency",
+          "estimated_total_base_currency",
+          "rate_source",
+          "rate_timestamp"
+        ],
+        "title": "EstimatedTotals"
+      },
       "EventSource": {
         "type": "string",
         "enum": [
@@ -4473,7 +4532,7 @@
           "balance_adjustment"
         ],
         "title": "EventType",
-        "description": "Catálogo central de eventos financieros de Nexum.\nNo define impactos financieros directamente, solo categoriza el evento."
+        "description": "Cat\u00e1logo central de eventos financieros de Nexum.\nNo define impactos financieros directamente, solo categoriza el evento."
       },
       "FreeMoneyRead": {
         "properties": {
@@ -4660,6 +4719,12 @@
             ],
             "title": "Target Amount"
           },
+          "currency": {
+            "type": "string",
+            "maxLength": 3,
+            "minLength": 3,
+            "title": "Currency"
+          },
           "target_date": {
             "anyOf": [
               {
@@ -4699,7 +4764,8 @@
         "type": "object",
         "required": [
           "name",
-          "target_amount"
+          "target_amount",
+          "currency"
         ],
         "title": "GoalCreate"
       },
@@ -4738,8 +4804,9 @@
           },
           "currency": {
             "type": "string",
-            "title": "Currency",
-            "default": "COP"
+            "maxLength": 3,
+            "minLength": 3,
+            "title": "Currency"
           },
           "status": {
             "type": "string",
@@ -4830,6 +4897,7 @@
           "target_amount",
           "current_amount",
           "target_date",
+          "currency",
           "status",
           "is_active",
           "created_at",
@@ -5440,6 +5508,16 @@
             },
             "type": "object",
             "title": "Totals By Currency"
+          },
+          "estimated_totals": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EstimatedTotals"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -5806,6 +5884,12 @@
             ],
             "title": "Frequency"
           },
+          "currency": {
+            "type": "string",
+            "maxLength": 3,
+            "minLength": 3,
+            "title": "Currency"
+          },
           "category_id": {
             "anyOf": [
               {
@@ -5841,7 +5925,8 @@
         },
         "type": "object",
         "required": [
-          "name"
+          "name",
+          "currency"
         ],
         "title": "ObligationCreate"
       },
@@ -6515,8 +6600,7 @@
             "type": "string",
             "maxLength": 3,
             "minLength": 3,
-            "title": "Currency",
-            "default": "COP"
+            "title": "Currency"
           },
           "description": {
             "anyOf": [
@@ -6582,7 +6666,8 @@
         "required": [
           "source_account_id",
           "destination_account_id",
-          "amount"
+          "amount",
+          "currency"
         ],
         "title": "TransferCreate",
         "description": "Payload para crear transferencia."
@@ -6673,11 +6758,15 @@
           },
           "currency": {
             "type": "string",
-            "title": "Currency",
-            "default": "COP"
+            "maxLength": 3,
+            "minLength": 3,
+            "title": "Currency"
           }
         },
         "type": "object",
+        "required": [
+          "currency"
+        ],
         "title": "UserOnboardingRequest"
       },
       "UserOnboardingResponse": {

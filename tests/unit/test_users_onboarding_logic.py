@@ -28,7 +28,7 @@ async def test_onboard_user_creates_new(service, mock_repo):
     auth_user = AuthenticatedIdentity(
         user_id=str(uuid.uuid4()), email="test@test.com", is_dev=False
     )
-    payload = UserOnboardingRequest(name="New User")
+    payload = UserOnboardingRequest(currency="COP", name="New User")
 
     mock_repo.get_by_auth_id.return_value = None
     mock_user = User(
@@ -52,7 +52,7 @@ async def test_onboard_user_idempotent(service, mock_repo):
     auth_user = AuthenticatedIdentity(
         user_id=str(uuid.uuid4()), email="test@test.com", is_dev=False
     )
-    payload = UserOnboardingRequest(name="New User")
+    payload = UserOnboardingRequest(currency="COP", name="New User")
 
     mock_user = User(
         id=uuid.uuid4(),
@@ -75,7 +75,7 @@ async def test_onboard_user_concurrent(service, mock_repo):
     auth_user = AuthenticatedIdentity(
         user_id=str(uuid.uuid4()), email="test@test.com", is_dev=False
     )
-    payload = UserOnboardingRequest(name="New User")
+    payload = UserOnboardingRequest(currency="COP", name="New User")
 
     mock_user = User(
         id=uuid.uuid4(),

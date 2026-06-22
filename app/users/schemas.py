@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class UserRead(BaseModel):
@@ -17,7 +17,7 @@ class UserRead(BaseModel):
 class UserOnboardingRequest(BaseModel):
     name: str | None = None
     timezone: str = "America/Bogota"
-    currency: str = "COP"
+    currency: str = Field(min_length=3, max_length=3)
 
 
 class UserOnboardingResponse(BaseModel):

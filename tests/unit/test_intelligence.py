@@ -447,3 +447,57 @@ async def test_committed_outflows_excludes_paid_obligations(
     assert result.truth.committed_outflows == Decimal("550")
     # free_money = 5000 - 550 = 4450
     assert result.truth.free_money == Decimal("4450")
+
+
+@pytest.mark.asyncio
+async def test_get_snapshot_with_fx_provider(mock_intelligence_repo):
+    from app.fx.provider import StaticFxRateProvider
+
+    fx_provider = StaticFxRateProvider()
+    service = IntelligenceService(session=AsyncMock(), fx_provider=fx_provider)
+    service.repo = mock_intelligence_repo.return_value
+
+    user_id = uuid.uuid4()
+    mock_intelligence_repo.return_value.get_cash_metrics.return_value = {
+        "total_balance": Decimal("0.00"),
+        "currency_count": 2,
+    }
+    mock_intelligence_repo.return_value.get_cashflow_metrics.return_value = {}
+    mock_intelligence_repo.return_value.get_cash_metrics_by_currency.return_value = [
+        {"currency": "COP", "total_balance": Decimal("1000.00")},
+        {"currency": "USD", "total_balance": Decimal("10.00")},
+    ]
+    mock_intelligence_repo.return_value.get_cashflow_metrics_by_currency.return_value = []
+    mock_intelligence_repo.return_value.get_historical_cashflow_metrics.return_value = {}
+    mock_intelligence_repo.return_value.get_goals_metrics.return_value = {}
+    mock_intelligence_repo.return_value.get_obligations_metrics.return_value = {}
+    mock_intelligence_repo.return_value.get_transfers_metrics.return_value = {}
+    mock_intelligence_repo.return_value.get_recent_activity.return_value = []
+
+    with (
+        patch("app.intelligence.service.CreditCardService") as mock_cc_service_class,
+        patch("app.obligations.repository.ObligationRepository") as mock_obl_repo_class,
+        patch("app.goals.repository.GoalRepository") as mock_goal_repo_class,
+        patch("app.core.config.settings") as mock_settings,
+    ):
+        mock_settings.FX_BASE_CURRENCY = "COP"
+        mock_settings.FX_PROVIDER = "static"
+
+        mock_cc_service_class.return_value.get_credit_summary = AsyncMock(
+            return_value=build_credit_summary()
+        )
+        mock_obl_repo_class.return_value.list_active = AsyncMock(return_value=[])
+        mock_obl_repo_class.return_value.get_period_payments = AsyncMock(return_value={})
+        mock_goal_repo_class.return_value.list_active = AsyncMock(return_value=[])
+        mock_goal_repo_class.return_value.get_period_contributions = AsyncMock(return_value={})
+
+        result = await service.get_snapshot(user_id)
+
+    assert result.estimated_totals is not None
+    assert result.estimated_totals.base_currency == "COP"
+    assert result.estimated_totals.is_estimated is True
+    # COP = 1000.00, USD = 10.00 * 4000.0 (from StaticFxRateProvider)
+    # Total = 1000 + 40000 = 41000.00
+    assert result.estimated_totals.estimated_total_base_currency == Decimal("41000.00")
+    assert result.estimated_totals.fx_rates_used["USD_COP"] == 4000.0
+    assert "cross_currency_global_totals_disabled" in result.truth.calculation_warnings

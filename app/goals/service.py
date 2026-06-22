@@ -84,6 +84,7 @@ class GoalService:
             user_id=auth_user_id,
             name=clean_presentation_name(payload.name),
             target_amount=payload.target_amount,
+            currency=payload.currency,
             target_date=payload.target_date,
             is_active=True,
             status="active",

@@ -45,7 +45,7 @@ async def create_obligation(
 async def list_obligations(
     current_profile: CurrentUserProfile,
     include_archived: bool = Query(False),
-    session: AsyncSession = Depends(get_db_session)
+    session: AsyncSession = Depends(get_db_session),
 ) -> list[ObligationRead]:
     service = get_obligation_service(session)
     user_id = current_profile.id

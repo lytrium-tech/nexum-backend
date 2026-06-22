@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     DEV_USER_ID: str = "00000000-0000-0000-0000-000000000001"
     DEV_USER_EMAIL: str = "dev@nexum.local"
 
+    # ── FX Estimated Layer ────────────────────────────────────────────────
+    DOLAR_API_BASE_URL: str = "https://co.dolarapi.com"
+    FX_PROVIDER: str = "dolarapi_colombia"  # dolarapi_colombia | static
+    FX_BASE_CURRENCY: str = "COP"
+    FX_TIMEOUT_SECONDS: float = 3.0
+
     # ── Propiedades derivadas ─────────────────────────────────────────────
 
     @property

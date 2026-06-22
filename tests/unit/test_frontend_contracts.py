@@ -38,6 +38,7 @@ def test_credit_card_read_contract():
         credit_limit=Decimal("1000.00"),
         cutoff_day=15,
         due_day=30,
+        currency="COP",
         is_active=True,
         current_debt=Decimal("500.00"),
         total_debt=Decimal("500.00"),

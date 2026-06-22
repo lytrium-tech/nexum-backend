@@ -12,6 +12,7 @@ class ObligationCreate(BaseModel):
     payment_mode: str = "fixed_full_payment"
     due_day: int | None = Field(None, ge=1, le=31)
     frequency: str | None = None
+    currency: str = Field(min_length=3, max_length=3)
     category_id: UUID | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     already_paid_this_period: bool = False

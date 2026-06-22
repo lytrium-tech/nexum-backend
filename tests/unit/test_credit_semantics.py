@@ -112,6 +112,7 @@ def test_legacy_aliases_remain_available():
         credit_limit=Decimal("5000.00"),
         cutoff_day=15,
         due_day=5,
+        currency="COP",
         is_active=True,
         created_at=datetime.now(),
         updated_at=datetime.now(),
