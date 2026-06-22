@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, status
+from fastapi import APIRouter, Depends, Header, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.repository import AccountRepository
@@ -43,11 +43,13 @@ async def create_obligation(
 
 @router.get("", response_model=list[ObligationRead])
 async def list_obligations(
-    current_profile: CurrentUserProfile, session: AsyncSession = Depends(get_db_session)
+    current_profile: CurrentUserProfile,
+    include_archived: bool = Query(False),
+    session: AsyncSession = Depends(get_db_session)
 ) -> list[ObligationRead]:
     service = get_obligation_service(session)
     user_id = current_profile.id
-    return await service.list_obligations(user_id)
+    return await service.list_obligations(user_id, include_archived=include_archived)
 
 
 @router.get("/{obligation_id}", response_model=ObligationRead)

@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.repository import AccountRepository
@@ -29,7 +29,7 @@ def get_account_service(session: AsyncSession = Depends(get_db_session)) -> Acco
 @router.get("", response_model=list[AccountRead])
 async def list_accounts(
     current_profile: CurrentUserProfile,
-    include_archived: bool = False,
+    include_archived: bool = Query(False),
     service: AccountService = Depends(get_account_service),
 ) -> list[AccountRead]:
     user_id = current_profile.id

@@ -12,7 +12,7 @@
           "Sistema"
         ],
         "summary": "Health check",
-        "description": "Verifica que el backend est\u00e9 operativo.",
+        "description": "Verifica que el backend esté operativo.",
         "operationId": "health_check_health_get",
         "responses": {
           "200": {
@@ -34,7 +34,7 @@
           "Sistema"
         ],
         "summary": "Readiness check",
-        "description": "Verifica que el backend y la base de datos est\u00e9n operativos.",
+        "description": "Verifica que el backend y la base de datos estén operativos.",
         "operationId": "readiness_check_health_readiness_get",
         "responses": {
           "200": {
@@ -674,10 +674,10 @@
             "schema": {
               "type": "string",
               "format": "uuid",
-              "description": "UUID \u00fanico para identificar la transacci\u00f3n de negocio",
+              "description": "UUID único para identificar la transacción de negocio",
               "title": "Idempotency-Key"
             },
-            "description": "UUID \u00fanico para identificar la transacci\u00f3n de negocio"
+            "description": "UUID único para identificar la transacción de negocio"
           }
         ],
         "requestBody": {
@@ -734,10 +734,10 @@
             "schema": {
               "type": "string",
               "format": "uuid",
-              "description": "UUID \u00fanico para identificar la transacci\u00f3n de negocio",
+              "description": "UUID único para identificar la transacción de negocio",
               "title": "Idempotency-Key"
             },
-            "description": "UUID \u00fanico para identificar la transacci\u00f3n de negocio"
+            "description": "UUID único para identificar la transacción de negocio"
           }
         ],
         "requestBody": {
@@ -1066,49 +1066,26 @@
       }
     },
     "/api/v1/obligations": {
-      "get": {
-        "tags": [
-          "obligations"
-        ],
-        "summary": "List Obligations",
-        "operationId": "list_obligations_api_v1_obligations_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/ObligationRead"
-                  },
-                  "type": "array",
-                  "title": "Response List Obligations Api V1 Obligations Get"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
-      },
       "post": {
         "tags": [
           "obligations"
         ],
         "summary": "Create Obligation",
         "operationId": "create_obligation_api_v1_obligations_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ObligationCreate"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "201": {
@@ -1131,12 +1108,57 @@
               }
             }
           }
-        },
+        }
+      },
+      "get": {
+        "tags": [
+          "obligations"
+        ],
+        "summary": "List Obligations",
+        "operationId": "list_obligations_api_v1_obligations_get",
         "security": [
           {
             "HTTPBearer": []
           }
-        ]
+        ],
+        "parameters": [
+          {
+            "name": "include_archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Archived"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ObligationRead"
+                  },
+                  "title": "Response List Obligations Api V1 Obligations Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/obligations/{obligation_id}": {
@@ -2171,7 +2193,7 @@
           "ledger"
         ],
         "summary": "Get Timeline",
-        "description": "Timeline de eventos financieros agrupados por d\u00eda.",
+        "description": "Timeline de eventos financieros agrupados por día.",
         "operationId": "get_timeline_api_v1_ledger_timeline_get",
         "security": [
           {
@@ -4451,7 +4473,7 @@
           "balance_adjustment"
         ],
         "title": "EventType",
-        "description": "Cat\u00e1logo central de eventos financieros de Nexum.\nNo define impactos financieros directamente, solo categoriza el evento."
+        "description": "Catálogo central de eventos financieros de Nexum.\nNo define impactos financieros directamente, solo categoriza el evento."
       },
       "FreeMoneyRead": {
         "properties": {
@@ -6166,6 +6188,17 @@
               }
             ],
             "title": "Category Id"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
           },
           "metadata": {
             "anyOf": [

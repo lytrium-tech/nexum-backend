@@ -133,7 +133,7 @@ async def test_create_payment_success(
     account_id = uuid.uuid4()
     payload = CreditCardPaymentCreate(account_id=account_id, amount=Decimal("200"))
 
-    mock_account = Account(id=account_id, user_id=user_id, is_active=True, balance=Decimal("1000"))
+    mock_account = Account(id=account_id, user_id=user_id, is_active=True, currency='COP', balance=Decimal("1000"))
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
     mock_card = CreditCard(
@@ -169,7 +169,7 @@ async def test_create_payment_overpayment(credit_service, mock_credit_repo, mock
     account_id = uuid.uuid4()
     payload = CreditCardPaymentCreate(account_id=account_id, amount=Decimal("600"))
 
-    mock_account = Account(id=account_id, user_id=user_id, is_active=True, balance=Decimal("1000"))
+    mock_account = Account(id=account_id, user_id=user_id, is_active=True, currency='COP', balance=Decimal("1000"))
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
     mock_card = CreditCard(

@@ -100,5 +100,5 @@ def test_creation_with_already_paid_this_period():
         updated_at=datetime.now(),
         paid_this_period=Decimal("0.00"),
     )
-    assert o.period_status == "paid"
+    assert o.period_status == "covered"
     assert o.remaining_amount == Decimal("0.00")

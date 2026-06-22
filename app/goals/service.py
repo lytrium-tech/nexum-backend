@@ -179,6 +179,7 @@ class GoalService:
             event_type=EventType.GOAL_CONTRIBUTION,
             direction=Direction.OUTFLOW,
             amount=payload.amount,
+            currency=account.currency,
             source_message_id=payload.source_message_id,
             raw_message=payload.raw_message,
             metadata={"goal_id": str(goal.id)},

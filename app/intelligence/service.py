@@ -197,13 +197,27 @@ class IntelligenceService:
         safe_money = free_money
         data_quality["safe_money"] = "computed_as_free_money"
 
+        # Prevent global truth mixing of currencies
+        has_multiple_currencies = cash.get("currency_count", 0) > 1 or cf.get("currency_count", 0) > 1
+
         calculation_warnings = []
-        if cash.get("currency_count", 0) > 1:
-            calculation_warnings.append(
-                "total_balance mixes multiple currencies without conversion"
-            )
-        if cf.get("currency_count", 0) > 1:
-            calculation_warnings.append("cashflow mixes multiple currencies without conversion")
+        if has_multiple_currencies:
+            calculation_warnings.append("cross_currency_global_totals_disabled")
+            # If multiple currencies, global fields must not sum incompatibles
+            # We will use the totals_by_currency of the primary/base currency or just zeros if unsure.
+            # To be safe and compliant, we set global truth totals to 0 and force totals_by_currency usage.
+            available_real = Decimal("0.00")
+            committed_outflows = Decimal("0.00")
+            payment_required = Decimal("0.00")
+            goals_required = Decimal("0.00")
+            free_money = Decimal("0.00")
+            safe_money = Decimal("0.00")
+            data_quality["global_totals"] = "zeroed_due_to_multi_currency"
+        else:
+            if cash.get("currency_count", 0) > 1:
+                calculation_warnings.append("total_balance mixes multiple currencies without conversion")
+            if cf.get("currency_count", 0) > 1:
+                calculation_warnings.append("cashflow mixes multiple currencies without conversion")
 
         # finalize currency metrics
         for curr, cm in totals_by_currency.items():

@@ -93,6 +93,7 @@ class TransfersService:
                 event_type=EventType.TRANSFER_OUT,
                 direction=Direction.OUTFLOW,
                 amount=payload.amount,
+                currency=source_acc.currency,
                 description=payload.description,
                 source="backend",
                 command_id=None,  # command_id está en transfer, si lo ponemos aquí chocaría. Podríamos usar UUID5 pero lo evitamos
@@ -110,6 +111,7 @@ class TransfersService:
                 event_type=EventType.TRANSFER_IN,
                 direction=Direction.INFLOW,
                 amount=payload.amount,
+                currency=dest_acc.currency,
                 description=payload.description,
                 source="backend",
                 command_id=None,

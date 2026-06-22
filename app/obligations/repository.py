@@ -24,13 +24,13 @@ class ObligationRepository:
         )
         return result.scalar_one_or_none()
 
-    async def list_active(self, user_id: UUID) -> list[Obligation]:
-        result = await self.session.execute(
-            select(Obligation)
-            .where(Obligation.user_id == user_id)
-            .where(Obligation.is_active)
-            .order_by(Obligation.created_at.desc())
-        )
+    async def list_by_user(self, user_id: UUID, include_archived: bool = False) -> list[Obligation]:
+        stmt = select(Obligation).where(Obligation.user_id == user_id)
+        if not include_archived:
+            stmt = stmt.where(Obligation.is_active)
+        stmt = stmt.order_by(Obligation.created_at.desc())
+
+        result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
     async def check_name_exists(self, user_id: UUID, norm_name: str) -> bool:

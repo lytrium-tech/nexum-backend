@@ -45,10 +45,10 @@ class ObligationService:
         now = datetime.now(tz)
         return f"{now.year}-{now.month:02d}"
 
-    async def list_obligations(self, auth_user_id: UUID) -> list[ObligationRead]:
+    async def list_obligations(self, auth_user_id: UUID, include_archived: bool = False) -> list[ObligationRead]:
         from decimal import Decimal
 
-        obligations = await self.repository.list_active(auth_user_id)
+        obligations = await self.repository.list_by_user(auth_user_id, include_archived=include_archived)
         period = self._current_period()
         payments = await self.repository.get_period_payments(auth_user_id, period)
 
@@ -93,6 +93,8 @@ class ObligationService:
             if period not in skip_periods:
                 skip_periods.append(period)
             metadata["skip_periods"] = skip_periods
+            if payload.already_paid_this_period:
+                metadata["coverage_reason"] = "already_paid_outside_nexum"
 
         db_obligation = Obligation(
             user_id=auth_user_id,
@@ -141,6 +143,8 @@ class ObligationService:
             obligation.frequency = payload.frequency
         if payload.category_id is not None:
             obligation.category_id = payload.category_id
+        if payload.is_active is not None:
+            obligation.is_active = payload.is_active
         if payload.metadata is not None:
             obligation.metadata_ = payload.metadata
 
@@ -215,6 +219,7 @@ class ObligationService:
             event_type=EventType.OBLIGATION_PAYMENT,
             direction=Direction.OUTFLOW,
             amount=payload.amount,
+            currency=account.currency,
             source_message_id=payload.source_message_id,
             raw_message=payload.raw_message,
             metadata={"obligation_id": str(obligation.id)},

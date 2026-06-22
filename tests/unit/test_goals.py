@@ -133,7 +133,7 @@ async def test_contribution_success(
     )
     mock_goal_repo.get_by_id_for_update.return_value = mock_goal
 
-    mock_account = Account(id=account_id, user_id=user_id, balance=Decimal("1000"))
+    mock_account = Account(id=account_id, user_id=user_id, currency='COP', balance=Decimal("1000"))
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
     mock_event = AsyncMock()
@@ -169,7 +169,7 @@ async def test_contribution_amount_exceeded(goal_service, mock_goal_repo, mock_a
     )
     mock_goal_repo.get_by_id_for_update.return_value = mock_goal
 
-    mock_account = Account(id=account_id, user_id=user_id, balance=Decimal("1000"))
+    mock_account = Account(id=account_id, user_id=user_id, currency='COP', balance=Decimal("1000"))
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
     with pytest.raises(GoalAmountExceededError):
@@ -195,7 +195,7 @@ async def test_contribution_idempotent_retry(
     )
     mock_goal_repo.get_by_id_for_update.return_value = mock_goal
 
-    mock_account = Account(id=account_id, user_id=user_id, balance=Decimal("1000"))
+    mock_account = Account(id=account_id, user_id=user_id, currency='COP', balance=Decimal("1000"))
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
     mock_result = AsyncMock()

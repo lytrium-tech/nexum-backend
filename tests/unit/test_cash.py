@@ -59,6 +59,7 @@ async def test_create_income_success(cash_service, mock_account_repo, mock_ledge
 
     mock_account = MagicMock()
     mock_account.user_id = user_id
+    mock_account.currency = 'COP'
     mock_account.balance = Decimal("100")
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
@@ -87,6 +88,7 @@ async def test_create_expense_success(cash_service, mock_account_repo, mock_ledg
 
     mock_account = MagicMock()
     mock_account.user_id = user_id
+    mock_account.currency = 'COP'
     mock_account.balance = Decimal("100")
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
@@ -113,6 +115,7 @@ async def test_create_expense_insufficient_funds(cash_service, mock_account_repo
 
     mock_account = MagicMock()
     mock_account.user_id = user_id
+    mock_account.currency = 'COP'
     mock_account.balance = Decimal("10")
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
@@ -140,6 +143,7 @@ async def test_create_income_idempotent(cash_service, mock_account_repo, mock_le
 
     mock_account = MagicMock()
     mock_account.user_id = user_id
+    mock_account.currency = 'COP'
     mock_account.balance = Decimal("100")
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
@@ -220,6 +224,7 @@ async def test_validate_category_global_accepted(
 
     mock_account = MagicMock()
     mock_account.user_id = user_id
+    mock_account.currency = 'COP'
     mock_account.balance = Decimal("100")
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
@@ -250,6 +255,7 @@ async def test_validate_category_private_own_accepted(
 
     mock_account = MagicMock()
     mock_account.user_id = user_id
+    mock_account.currency = 'COP'
     mock_account.balance = Decimal("100")
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
@@ -324,6 +330,7 @@ async def test_validate_category_none_accepted(
 
     mock_account = MagicMock()
     mock_account.user_id = user_id
+    mock_account.currency = 'COP'
     mock_account.balance = Decimal("100")
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 

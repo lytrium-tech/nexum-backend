@@ -26,6 +26,7 @@ class ObligationUpdate(BaseModel):
     due_day: int | None = Field(None, ge=1, le=31)
     frequency: str | None = None
     category_id: UUID | None = None
+    is_active: bool | None = None
     metadata: dict[str, Any] | None = None
 
 
@@ -85,7 +86,7 @@ class ObligationRead(BaseModel):
         current_period = f"{now.year}-{now.month:02d}"
 
         if current_period in self.metadata.get("skip_periods", []):
-            return "paid"
+            return "covered"
 
         status = "pending"
         if self.payment_mode == "fixed_full_payment":
