@@ -164,7 +164,7 @@ class IntelligenceService:
         payment_required = billed_debt
         for card in credit_summary.cards:
             curr = getattr(card, "currency", "COP").upper()
-            get_cm(curr).committed_outflows += card.billed_debt
+            get_cm(curr).committed_outflows += (card.billed_debt or Decimal("0.00"))
 
         data_quality = {
             "payment_required": "billed_debt",
