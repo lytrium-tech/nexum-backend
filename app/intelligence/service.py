@@ -128,7 +128,7 @@ class IntelligenceService:
 
         # Credit Core is the source of truth for billed/unbilled debt separation.
         credit_summary = await CreditCardService(self.session).get_credit_summary(user_id)
-        billed_debt = sum((card.billed_debt for card in credit_summary.cards), Decimal("0.00"))
+        billed_debt = sum((card.billed_debt or Decimal("0.00") for card in credit_summary.cards), Decimal("0.00"))
         unbilled_debt = sum((card.unbilled_debt for card in credit_summary.cards), Decimal("0.00"))
         next_payment_estimate = sum(
             (card.next_payment_estimate for card in credit_summary.cards), Decimal("0.00")

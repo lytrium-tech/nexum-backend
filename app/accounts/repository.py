@@ -21,8 +21,10 @@ class AccountRepository:
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
-    async def get_by_id(self, account_id: UUID) -> Account | None:
-        stmt = select(Account).where(Account.id == account_id, Account.is_active.is_(True))
+    async def get_by_id(self, account_id: UUID, include_inactive: bool = False) -> Account | None:
+        stmt = select(Account).where(Account.id == account_id)
+        if not include_inactive:
+            stmt = stmt.where(Account.is_active.is_(True))
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 

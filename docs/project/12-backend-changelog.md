@@ -1,5 +1,10 @@
 # Changelog del Backend
 
+## [v1.4.1-alpha] - Backend V1.4.1 Production Stabilization
+- Fixed hardcoded "COP" suffix in conversational multi-action responses.
+- Fixed 500 Internal Server Error in Snapshot generation when `billed_debt` is None.
+- Fixed 404 Not Found error during archived account reactivation by propagating `include_inactive`.
+
 ## [v1.4.0-alpha] - Backend V1.4 Multi-Currency Trust & Estimated FX
 - Enforced `currency` code requirement across all creation schemas and AI parsing logic. Legacy `COP` fallback removed.
 - Implemented `FxRateProvider` protocol.

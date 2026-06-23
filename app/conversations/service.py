@@ -911,7 +911,7 @@ class ConversationsService:
             dto = GoalCreate(
                 name=data["name"],
                 target_amount=Decimal(str(data["target_amount"])),
-                currency="COP",
+                currency=data.get("currency", "COP"),
                 target_date=data.get("target_date"),
             )
             await self.goals_service.create_goal(user_id, dto)
@@ -929,7 +929,7 @@ class ConversationsService:
             dto = ObligationCreate(
                 name=data["name"],
                 amount=Decimal(str(data["amount"])),
-                currency="COP",
+                currency=data.get("currency", "COP"),
                 due_day=data.get("due_day"),
                 frequency=data.get("frequency"),
                 category_id=uuid.UUID(data["category_id"]) if "category_id" in data else None,
@@ -1019,17 +1019,17 @@ class ConversationsService:
             amount = act.data.get("amount", "?")
             desc = ""
             if intent_name == "create_expense":
-                desc = f"Gasto de {amount} COP"
+                desc = f"Gasto de {amount}"
             elif intent_name == "create_income":
-                desc = f"Ingreso de {amount} COP"
+                desc = f"Ingreso de {amount}"
             elif intent_name == "create_goal_contribution":
-                desc = f"Aporte de {amount} COP a {act.data.get('_goal_name', 'Meta')}"
+                desc = f"Aporte de {amount} a {act.data.get('_goal_name', 'Meta')}"
             elif intent_name == "create_obligation_payment":
                 desc = f"Pago de obligación {act.data.get('_obligation_name', 'Obligación')}"
             elif intent_name == "create_credit_card_purchase":
-                desc = f"Compra con tarjeta por {amount} COP"
+                desc = f"Compra con tarjeta por {amount}"
             elif intent_name == "create_credit_card_payment":
-                desc = f"Pago de tarjeta por {amount} COP"
+                desc = f"Pago de tarjeta por {amount}"
             elif intent_name == "create_goal":
                 desc = f"Creación de meta {act.data.get('name', 'N/A')}"
             elif intent_name == "create_obligation":

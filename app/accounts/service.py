@@ -80,7 +80,7 @@ class AccountService:
     async def update_account(
         self, auth_user_id: UUID, account_id: UUID, payload: AccountUpdate
     ) -> AccountRead:
-        account = await self._get_account_or_404(account_id)
+        account = await self._get_account_or_404(account_id, include_inactive=True)
         if account.user_id != auth_user_id:
             raise AccountForbiddenError()
 
@@ -158,8 +158,8 @@ class AccountService:
         await self.repository.session.flush()
         return AccountRead.model_validate(account)
 
-    async def _get_account_or_404(self, account_id: UUID) -> Account:
-        account = await self.repository.get_by_id(account_id)
+    async def _get_account_or_404(self, account_id: UUID, include_inactive: bool = False) -> Account:
+        account = await self.repository.get_by_id(account_id, include_inactive=include_inactive)
         if not account:
             raise NotFoundError()
         return account
