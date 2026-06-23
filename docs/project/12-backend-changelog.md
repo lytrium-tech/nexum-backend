@@ -2,6 +2,7 @@
 
 ## [v1.4.2-alpha] - Backend V1.4.2 Snapshot Hotfix
 - Fixed 500 Internal Server Error in Snapshot generation caused by missing null-safety check for `billed_debt` during currency aggregation.
+- Fixed 500 Internal Server Error (AttributeError) in Dashboard/Snapshot and Conversational flows by updating `list_active` calls to `list_by_user` for ObligationRepository.
 
 ## [v1.4.1-alpha] - Backend V1.4.1 Production Stabilization
 - Fixed hardcoded "COP" suffix in conversational multi-action responses.

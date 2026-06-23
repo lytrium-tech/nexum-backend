@@ -120,7 +120,7 @@ async def test_get_snapshot_success(intelligence_service, mock_intelligence_repo
                 unbilled_debt=Decimal("200.00"),
             )
         )
-        mock_obl_repo_class.return_value.list_active = AsyncMock(return_value=[])
+        mock_obl_repo_class.return_value.list_by_user = AsyncMock(return_value=[])
         mock_obl_repo_class.return_value.get_period_payments = AsyncMock(return_value={})
         mock_goal_repo_class.return_value.list_active = AsyncMock(return_value=[])
         mock_goal_repo_class.return_value.get_period_contributions = AsyncMock(return_value={})
@@ -166,7 +166,7 @@ async def test_get_snapshot_empty_user(intelligence_service, mock_intelligence_r
         mock_cc_service_class.return_value.get_credit_summary = AsyncMock(
             return_value=build_credit_summary()
         )
-        mock_obl_repo_class.return_value.list_active = AsyncMock(return_value=[])
+        mock_obl_repo_class.return_value.list_by_user = AsyncMock(return_value=[])
         mock_obl_repo_class.return_value.get_period_payments = AsyncMock(return_value={})
         mock_goal_repo_class.return_value.list_active = AsyncMock(return_value=[])
         mock_goal_repo_class.return_value.get_period_contributions = AsyncMock(return_value={})
@@ -219,7 +219,7 @@ async def test_get_snapshot_transfers_do_not_change_cashflow(
         mock_cc_service_class.return_value.get_credit_summary = AsyncMock(
             return_value=build_credit_summary()
         )
-        mock_obl_repo_class.return_value.list_active = AsyncMock(return_value=[])
+        mock_obl_repo_class.return_value.list_by_user = AsyncMock(return_value=[])
         mock_obl_repo_class.return_value.get_period_payments = AsyncMock(return_value={})
         mock_goal_repo_class.return_value.list_active = AsyncMock(return_value=[])
         mock_goal_repo_class.return_value.get_period_contributions = AsyncMock(return_value={})
@@ -423,7 +423,7 @@ async def test_committed_outflows_excludes_paid_obligations(
         mock_cc_service_class.return_value.get_credit_summary = AsyncMock(
             return_value=build_credit_summary()
         )
-        mock_obl_repo_class.return_value.list_active = AsyncMock(
+        mock_obl_repo_class.return_value.list_by_user = AsyncMock(
             return_value=[paid_obl, pending_obl, partial_obl]
         )
         mock_obl_repo_class.return_value.get_period_payments = AsyncMock(
@@ -486,7 +486,7 @@ async def test_get_snapshot_with_fx_provider(mock_intelligence_repo):
         mock_cc_service_class.return_value.get_credit_summary = AsyncMock(
             return_value=build_credit_summary()
         )
-        mock_obl_repo_class.return_value.list_active = AsyncMock(return_value=[])
+        mock_obl_repo_class.return_value.list_by_user = AsyncMock(return_value=[])
         mock_obl_repo_class.return_value.get_period_payments = AsyncMock(return_value={})
         mock_goal_repo_class.return_value.list_active = AsyncMock(return_value=[])
         mock_goal_repo_class.return_value.get_period_contributions = AsyncMock(return_value={})

@@ -147,7 +147,7 @@ class IntelligenceService:
         from app.obligations.schemas import ObligationRead
 
         obligation_repo = ObligationRepository(self.session)
-        user_obligations = await obligation_repo.list_active(user_id)
+        user_obligations = await obligation_repo.list_by_user(user_id)
         obligation_payments = await obligation_repo.get_period_payments(user_id, period_str)
 
         pending_obligations = Decimal("0.00")

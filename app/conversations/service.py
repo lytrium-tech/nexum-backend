@@ -226,7 +226,7 @@ class ConversationsService:
         categories = await self.cash_service.category_repo.list_available(user_id)
         credit_cards = await self.credit_service.repo.get_all_for_user(user_id)
         goals = await self.goals_service.repository.list_active(user_id)
-        obligations = await self.obl_service.repository.list_active(user_id)
+        obligations = await self.obl_service.repository.list_by_user(user_id)
 
         prompt = build_system_prompt(
             accounts=[a.name for a in accounts],
@@ -701,7 +701,7 @@ class ConversationsService:
             categories = await self.cash_service.category_repo.list_available(user_id)
             credit_cards = await self.credit_service.repo.get_all_for_user(user_id)
             goals = await self.goals_service.repository.list_active(user_id)
-            obligations = await self.obl_service.repository.list_active(user_id)
+            obligations = await self.obl_service.repository.list_by_user(user_id)
 
             prompt = build_system_prompt(
                 accounts=[a.name for a in accounts],
