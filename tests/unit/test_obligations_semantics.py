@@ -3,6 +3,8 @@ from datetime import datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
+from freezegun import freeze_time
+
 from app.obligations.schemas import ObligationRead
 
 
@@ -102,3 +104,134 @@ def test_creation_with_already_paid_this_period():
     )
     assert o.period_status == "covered"
     assert o.remaining_amount == Decimal("0.00")
+
+
+@freeze_time("2026-06-15 12:00:00")
+def test_active_obligation_pending_before_due_date():
+    o = ObligationRead(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        name="Arriendo",
+        amount=Decimal("1000.00"),
+        payment_mode="fixed_full_payment",
+        due_day=20,
+        frequency="monthly",
+        is_active=True,
+        category_id=None,
+        currency="COP",
+        metadata_={},
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        paid_this_period=Decimal("0.00"),
+    )
+    assert o.period_status == "pending"
+    assert o.is_pending is True
+
+
+@freeze_time("2026-06-25 12:00:00")
+def test_active_obligation_overdue_after_due_date():
+    o = ObligationRead(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        name="Arriendo",
+        amount=Decimal("1000.00"),
+        payment_mode="fixed_full_payment",
+        due_day=20,
+        frequency="monthly",
+        is_active=True,
+        category_id=None,
+        currency="COP",
+        metadata_={},
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        paid_this_period=Decimal("0.00"),
+    )
+    assert o.period_status == "overdue"
+    assert o.is_pending is True
+
+
+@freeze_time("2026-06-15 12:00:00")
+def test_partial_payment_returns_partial():
+    o = ObligationRead(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        name="Arriendo",
+        amount=Decimal("1000.00"),
+        payment_mode="partial_allowed",
+        due_day=20,
+        frequency="monthly",
+        is_active=True,
+        category_id=None,
+        currency="COP",
+        metadata_={},
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        paid_this_period=Decimal("500.00"),
+    )
+    assert o.period_status == "partial"
+    assert o.is_pending is True
+
+
+@freeze_time("2026-06-15 12:00:00")
+def test_inactive_obligation_returns_inactive():
+    o = ObligationRead(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        name="Arriendo",
+        amount=Decimal("1000.00"),
+        payment_mode="fixed_full_payment",
+        due_day=20,
+        frequency="monthly",
+        is_active=False,
+        category_id=None,
+        currency="COP",
+        metadata_={},
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        paid_this_period=Decimal("0.00"),
+    )
+    assert o.period_status == "inactive"
+    assert o.is_pending is False
+
+
+@freeze_time("2026-06-15 12:00:00")
+def test_due_date_and_days_calculated_correctly():
+    o = ObligationRead(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        name="Arriendo",
+        amount=Decimal("1000.00"),
+        payment_mode="fixed_full_payment",
+        due_day=20,
+        frequency="monthly",
+        is_active=True,
+        category_id=None,
+        currency="COP",
+        metadata_={},
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        paid_this_period=Decimal("0.00"),
+    )
+    assert o.next_due_date == "2026-06-20"
+    assert o.days_until_due == 5
+
+
+@freeze_time("2026-06-15 12:00:00")
+def test_monthly_recurrence_reappears_next_period():
+    o = ObligationRead(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        name="Arriendo",
+        amount=Decimal("1000.00"),
+        payment_mode="fixed_full_payment",
+        due_day=20,
+        frequency="monthly",
+        is_active=True,
+        category_id=None,
+        currency="COP",
+        metadata_={"skip_periods": ["2026-05"]},
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        paid_this_period=Decimal("0.00"),
+    )
+    assert o.period_status == "pending"

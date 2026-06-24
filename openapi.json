@@ -6260,6 +6260,18 @@
             ],
             "title": "Next Due Date",
             "readOnly": true
+          },
+          "days_until_due": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Until Due",
+            "readOnly": true
           }
         },
         "type": "object",
@@ -6280,7 +6292,8 @@
           "remaining_amount",
           "is_pending",
           "period_status",
-          "next_due_date"
+          "next_due_date",
+          "days_until_due"
         ],
         "title": "ObligationRead"
       },

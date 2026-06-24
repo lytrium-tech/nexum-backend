@@ -96,6 +96,11 @@ class GoalRead(BaseModel):
             return "completed"
         if self.is_flexible:
             return "flexible"
+
+        today = datetime.now(UTC).date()
+        if self.target_date and today > self.target_date:
+            return "overdue"
+
         if self.remaining_required_this_period > 0:
             if self.contributed_this_period == 0:
                 return "pending"

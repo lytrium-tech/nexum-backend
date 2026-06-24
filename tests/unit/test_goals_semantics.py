@@ -2,6 +2,8 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
+from freezegun import freeze_time
+
 from app.goals.schemas import GoalRead
 
 
@@ -116,3 +118,24 @@ def test_daily_required_this_period_is_rounded_upward():
     ) * Decimal("50")
 
     assert goal.daily_required_this_period == expected_daily
+
+
+@freeze_time("2026-06-01 12:00:00")
+def test_monthly_goal_pending_at_start_of_new_period():
+    target_date = date(2026, 12, 31)
+    goal = _make_goal("USD", "1000.00", "400.00", target_date, contributed_this_period="0.00")
+    assert goal.period_status == "pending"
+
+
+@freeze_time("2026-06-01 12:00:00")
+def test_monthly_goal_completed_for_period_after_contribution():
+    target_date = date(2026, 12, 31)
+    goal = _make_goal("USD", "1000.00", "400.00", target_date, contributed_this_period="100.00")
+    assert goal.period_status in ["covered", "overfunded"]
+
+
+@freeze_time("2026-06-01 12:00:00")
+def test_overdue_goal_returns_overdue_if_target_date_passed():
+    target_date = date(2026, 5, 31)
+    goal = _make_goal("USD", "1000.00", "400.00", target_date, contributed_this_period="0.00")
+    assert goal.period_status == "overdue"

@@ -72,7 +72,7 @@ class ObligationRead(BaseModel):
 
     @computed_field
     def is_pending(self) -> bool:
-        return self.period_status == "pending"
+        return self.period_status in ("pending", "partial", "overdue")
 
     @computed_field
     def period_status(self) -> str:
@@ -110,7 +110,11 @@ class ObligationRead(BaseModel):
 
         if status != "paid" and self.due_day:
             try:
-                due_date = datetime(now.year, now.month, self.due_day).date()
+                import calendar
+
+                last_day = calendar.monthrange(now.year, now.month)[1]
+                actual_due_day = min(self.due_day, last_day)
+                due_date = datetime(now.year, now.month, actual_due_day).date()
                 if now.date() > due_date:
                     return "overdue"
             except ValueError:
@@ -120,7 +124,6 @@ class ObligationRead(BaseModel):
 
     @computed_field
     def next_due_date(self) -> str | None:
-        # Implement a naive due date based on due_day for current month
         if not self.due_day:
             return None
         from datetime import datetime
@@ -129,13 +132,28 @@ class ObligationRead(BaseModel):
         tz = ZoneInfo("America/Bogota")
         now = datetime.now(tz)
         try:
-            due_date = datetime(now.year, now.month, self.due_day).date()
-            if due_date < now.date() and self.period_status != "paid":
-                # Actually, overdue is if today > due_date and not paid.
-                pass
+            # Handle edge case where due_day is 31 and current month has 30 days
+            # For simplicity in this logic, we clip to the last day of the month
+            import calendar
+
+            last_day = calendar.monthrange(now.year, now.month)[1]
+            actual_due_day = min(self.due_day, last_day)
+            due_date = datetime(now.year, now.month, actual_due_day).date()
             return due_date.isoformat()
         except ValueError:
             return None
+
+    @computed_field
+    def days_until_due(self) -> int | None:
+        if not self.next_due_date:
+            return None
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/Bogota")
+        now = datetime.now(tz).date()
+        due_date = datetime.fromisoformat(self.next_due_date).date()
+        return (due_date - now).days
 
 
 class ObligationPaymentCreate(BaseModel):
