@@ -18,7 +18,8 @@ class TransferCreate(BaseModel):
     source_account_id: UUID
     destination_account_id: UUID
     amount: Decimal = Field(..., gt=0, decimal_places=2)
-    currency: str = Field(min_length=3, max_length=3)
+    currency: str | None = Field(None, min_length=3, max_length=3)
+    target_currency: str | None = Field(None, min_length=3, max_length=3)
     description: str | None = Field(None, max_length=255)
     occurred_at: datetime | None = None
     command_id: UUID | None = None
@@ -37,6 +38,12 @@ class TransferResult(BaseModel):
     destination_account: AccountRead
     amount: Decimal
     currency: str
+    target_amount: Decimal | None = None
+    target_currency: str | None = None
+    fx_rate: Decimal | None = None
+    rate_source: str | None = None
+    rate_timestamp: datetime | None = None
+    is_estimated: bool = False
     description: str | None
     status: str
     ledger_events: LedgerEventsRef | None = None

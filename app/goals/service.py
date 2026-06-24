@@ -4,7 +4,13 @@ from uuid import UUID
 from app.accounts.exceptions import AccountForbiddenError
 from app.accounts.repository import AccountRepository
 from app.cash.exceptions import InsufficientFundsError
-from app.core.errors import NotFoundError
+from app.core.currency import (
+    FXProviderError,
+    UnsupportedCurrencyError,
+    get_fx_rate,
+    round_to_minimum_unit,
+)
+from app.core.errors import ForbiddenError, NotFoundError
 from app.core.utils import clean_presentation_name, normalize_name
 from app.goals.exceptions import (
     GoalAmountExceededError,
@@ -168,10 +174,36 @@ class GoalService:
         if account.user_id is not None and account.user_id != auth_user_id:
             raise AccountForbiddenError()
 
-        if payload.amount > (goal.target_amount - goal.current_amount):
+        source_currency = payload.currency or account.currency
+        goal_currency = goal.currency or "COP"
+
+        if account.currency != source_currency:
+            raise ForbiddenError(
+                message="El currency no coincide con la moneda de la cuenta origen."
+            )
+
+        try:
+            fx_info = await get_fx_rate(source_currency, goal_currency)
+        except UnsupportedCurrencyError as e:
+            raise ForbiddenError(message=str(e))
+        except FXProviderError as e:
+            raise ForbiddenError(message=f"No se pudo obtener la tasa de cambio: {e}")
+
+        fx_rate = fx_info["fx_rate"]
+        rate_source = fx_info["rate_source"]
+        rate_timestamp = fx_info["rate_timestamp"]
+        is_estimated = source_currency != goal_currency
+
+        source_amount = payload.amount
+        if source_currency == goal_currency:
+            applied_amount = source_amount
+        else:
+            applied_amount = round_to_minimum_unit(source_amount * fx_rate, goal_currency)
+
+        if applied_amount > (goal.target_amount - goal.current_amount):
             raise GoalAmountExceededError()
 
-        if account.balance < payload.amount:
+        if account.balance < source_amount:
             raise InsufficientFundsError()
 
         event_create = LedgerEventCreate(
@@ -179,8 +211,8 @@ class GoalService:
             account_id=account.id,
             event_type=EventType.GOAL_CONTRIBUTION,
             direction=Direction.OUTFLOW,
-            amount=payload.amount,
-            currency=account.currency,
+            amount=source_amount,
+            currency=source_currency,
             source_message_id=payload.source_message_id,
             raw_message=payload.raw_message,
             metadata={"goal_id": str(goal.id)},
@@ -208,7 +240,14 @@ class GoalService:
             return GoalContributionResult(
                 contribution_id=None,
                 event_id=event.id if event else None,
-                amount=payload.amount,
+                amount=source_amount,
+                currency=source_currency,
+                applied_amount=applied_amount,
+                goal_currency=goal_currency,
+                fx_rate=fx_rate,
+                rate_source=rate_source,
+                rate_timestamp=rate_timestamp,
+                is_estimated=is_estimated,
                 balance_after=account.balance,
                 goal_current_amount=goal.current_amount,
                 progress_percentage=progress,
@@ -216,19 +255,26 @@ class GoalService:
             )
 
         # New contribution
-        await self.account_repo.update_balance(account, -payload.amount)
+        await self.account_repo.update_balance(account, -source_amount)
 
         contribution = GoalContribution(
             user_id=auth_user_id,
             goal_id=goal.id,
             event_id=event.id,
             account_id=account.id,
-            amount=payload.amount,
+            amount=source_amount,
+            currency=source_currency,
+            applied_amount=applied_amount,
+            goal_currency=goal_currency,
+            fx_rate=fx_rate,
+            rate_source=rate_source,
+            rate_timestamp=rate_timestamp,
+            is_estimated=is_estimated,
             period=event.period,
         )
         await self.repository.create_contribution(contribution)
 
-        goal.current_amount += payload.amount
+        goal.current_amount += applied_amount
 
         if goal.current_amount >= goal.target_amount:
             goal.status = "completed"

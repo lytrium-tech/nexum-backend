@@ -9,6 +9,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -53,6 +54,14 @@ class Transfer(Base):
 
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     currency: Mapped[str] = mapped_column(Text, nullable=False, server_default="COP")
+
+    target_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    target_currency: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fx_rate: Mapped[Decimal | None] = mapped_column(Numeric(14, 6), nullable=True)
+    rate_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rate_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_estimated: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     command_id: Mapped[UUID | None] = mapped_column(

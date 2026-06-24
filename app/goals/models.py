@@ -38,6 +38,15 @@ class GoalContribution(Base):
     event_id: Mapped[UUID | None] = mapped_column(ForeignKey("financial_events.id"), nullable=True)
     account_id: Mapped[UUID | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
     amount: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
+    currency: Mapped[str] = mapped_column(Text, nullable=False, server_default="COP")
+
+    applied_amount: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    goal_currency: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fx_rate: Mapped[Decimal | None] = mapped_column(Numeric(14, 6), nullable=True)
+    rate_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rate_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_estimated: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+
     period: Mapped[str | None] = mapped_column(Text, nullable=True)
     contributed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

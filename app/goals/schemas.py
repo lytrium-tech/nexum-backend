@@ -124,6 +124,7 @@ class GoalRead(BaseModel):
 class GoalContributionCreate(BaseModel):
     account_id: UUID
     amount: Decimal = Field(gt=0)
+    currency: str | None = Field(None, min_length=3, max_length=3)
     source_message_id: UUID | None = None
     raw_message: str | None = None
 
@@ -132,6 +133,13 @@ class GoalContributionResult(BaseModel):
     contribution_id: UUID | None
     event_id: UUID | None
     amount: Decimal
+    currency: str | None = None
+    applied_amount: Decimal | None = None
+    goal_currency: str | None = None
+    fx_rate: Decimal | None = None
+    rate_source: str | None = None
+    rate_timestamp: datetime | None = None
+    is_estimated: bool = False
     balance_after: Decimal
     goal_current_amount: Decimal
     progress_percentage: Decimal | None

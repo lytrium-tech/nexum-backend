@@ -7,6 +7,12 @@ from uuid import UUID
 
 from app.accounts.repository import AccountRepository
 from app.cash.exceptions import InsufficientFundsError
+from app.core.currency import (
+    FXProviderError,
+    UnsupportedCurrencyError,
+    get_fx_rate,
+    round_to_minimum_unit,
+)
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.uow import UnitOfWork
 from app.ledger.enums import Direction, EventType
@@ -58,7 +64,37 @@ class TransfersService:
             source_acc = first_acc if first_acc.id == payload.source_account_id else second_acc
             dest_acc = first_acc if first_acc.id == payload.destination_account_id else second_acc
 
-            if source_acc.balance < payload.amount:
+            source_currency = payload.currency or source_acc.currency
+            target_currency = payload.target_currency or dest_acc.currency
+
+            if source_acc.currency != source_currency:
+                raise ForbiddenError(
+                    message="El source_currency no coincide con la moneda de la cuenta origen."
+                )
+            if dest_acc.currency != target_currency:
+                raise ForbiddenError(
+                    message="El target_currency no coincide con la moneda de la cuenta destino."
+                )
+
+            try:
+                fx_info = await get_fx_rate(source_currency, target_currency)
+            except UnsupportedCurrencyError as e:
+                raise ForbiddenError(message=str(e))
+            except FXProviderError as e:
+                raise ForbiddenError(message=f"No se pudo obtener la tasa de cambio: {e}")
+
+            fx_rate = fx_info["fx_rate"]
+            rate_source = fx_info["rate_source"]
+            rate_timestamp = fx_info["rate_timestamp"]
+            is_estimated = source_currency != target_currency
+
+            source_amount = payload.amount
+            if source_currency == target_currency:
+                target_amount = source_amount
+            else:
+                target_amount = round_to_minimum_unit(source_amount * fx_rate, target_currency)
+
+            if source_acc.balance < source_amount:
                 raise InsufficientFundsError(message="Fondos insuficientes en la cuenta de origen.")
 
             # Preparar transferencia
@@ -66,8 +102,14 @@ class TransfersService:
                 user_id=user_id,
                 source_account_id=payload.source_account_id,
                 destination_account_id=payload.destination_account_id,
-                amount=payload.amount,
-                currency=payload.currency,
+                amount=source_amount,
+                currency=source_currency,
+                target_amount=target_amount,
+                target_currency=target_currency,
+                fx_rate=fx_rate,
+                rate_source=rate_source,
+                rate_timestamp=rate_timestamp,
+                is_estimated=is_estimated,
                 description=payload.description,
                 command_id=payload.command_id,
                 source_message_id=payload.source_message_id,
@@ -92,8 +134,8 @@ class TransfersService:
                 category_id=None,
                 event_type=EventType.TRANSFER_OUT,
                 direction=Direction.OUTFLOW,
-                amount=payload.amount,
-                currency=source_acc.currency,
+                amount=source_amount,
+                currency=source_currency,
                 description=payload.description,
                 source="backend",
                 command_id=None,  # command_id está en transfer, si lo ponemos aquí chocaría. Podríamos usar UUID5 pero lo evitamos
@@ -110,8 +152,8 @@ class TransfersService:
                 category_id=None,
                 event_type=EventType.TRANSFER_IN,
                 direction=Direction.INFLOW,
-                amount=payload.amount,
-                currency=dest_acc.currency,
+                amount=target_amount,
+                currency=target_currency,
                 description=payload.description,
                 source="backend",
                 command_id=None,
@@ -122,8 +164,8 @@ class TransfersService:
             in_result = await self.ledger_repo.insert_event(in_event_create)
 
             # Actualizar balances
-            await self.account_repo.update_balance(source_acc, -payload.amount)
-            await self.account_repo.update_balance(dest_acc, payload.amount)
+            await self.account_repo.update_balance(source_acc, -source_amount)
+            await self.account_repo.update_balance(dest_acc, target_amount)
 
             transfer.source_account = source_acc
             transfer.destination_account = dest_acc
