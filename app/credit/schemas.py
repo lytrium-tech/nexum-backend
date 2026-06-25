@@ -1,4 +1,5 @@
 import uuid
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
@@ -145,5 +146,30 @@ class CreditCardInstallmentRead(BaseModel):
     scheduled_period: str
     status: str
     paid_amount: Decimal
+    interest_amount: Decimal = Decimal("0.00")
+    total_amount: Decimal = Decimal("0.00")
+    scheduled_due_date: date | None = None
+    revision_id: int = 1
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CreditCardStatementRead(BaseModel):
+    id: uuid.UUID
+    credit_card_id: uuid.UUID
+    billing_period: str
+    billing_period_start: date | None = None
+    cutoff_date: date | None = None
+    due_date: date | None = None
+    previous_balance: Decimal
+    new_purchases: Decimal
+    billed_installments: Decimal
+    fees_total: Decimal
+    interest_total: Decimal
+    payments_received: Decimal
+    statement_balance: Decimal
+    minimum_payment: Decimal
+    status: str
+    frozen_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)

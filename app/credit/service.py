@@ -12,7 +12,11 @@ from app.credit.exceptions import (
     CreditLimitExceededError,
     InvalidPaymentAmountError,
 )
-from app.credit.models import CreditCard, CreditCardInstallment, CreditCardTransaction
+from app.credit.models import (
+    CreditCard,
+    CreditCardInstallment,
+    CreditCardTransaction,
+)
 from app.credit.repository import CreditCardRepository
 from app.credit.schemas import (
     CreditCardCreate,
@@ -26,6 +30,7 @@ from app.credit.schemas import (
     CreditCardUpdate,
     CreditSummaryRead,
 )
+from app.credit.utils import calculate_credit_card_dates
 from app.ledger.repository import LedgerRepository
 from app.ledger.schemas import LedgerEventCreate
 from app.ledger.service import LedgerService
@@ -66,7 +71,7 @@ class CreditCardService:
     async def _build_installments(
         self,
         user_id: uuid.UUID,
-        card_id: uuid.UUID,
+        card: CreditCard,
         transaction_id: uuid.UUID,
         amount: Decimal,
         installments_total: int,
@@ -76,14 +81,21 @@ class CreditCardService:
         installments = []
         for index, principal in enumerate(amounts, start=1):
             scheduled_date = self._add_months(today, index - 1)
+            # Find cycle due date for the scheduled_date
+            _, _, next_due = calculate_credit_card_dates(
+                scheduled_date, card.cutoff_day, card.due_day
+            )
             installments.append(
                 CreditCardInstallment(
                     user_id=user_id,
-                    credit_card_id=card_id,
+                    credit_card_id=card.id,
                     purchase_transaction_id=transaction_id,
                     installment_number=index,
                     installments_total=installments_total,
                     principal_amount=principal,
+                    interest_amount=Decimal("0.00"),
+                    total_amount=principal,
+                    scheduled_due_date=next_due,
                     scheduled_period=scheduled_date.strftime("%Y-%m"),
                     status="pending",
                     paid_amount=Decimal("0.00"),
@@ -251,7 +263,7 @@ class CreditCardService:
 
         installments = await self._build_installments(
             user_id=user_id,
-            card_id=card.id,
+            card=card,
             transaction_id=transaction.id,
             amount=payload.amount,
             installments_total=payload.installments_total,

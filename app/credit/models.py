@@ -2,7 +2,18 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, func, text
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -62,6 +73,10 @@ class CreditCardTransaction(Base):
     )
     period: Mapped[str | None] = mapped_column(String, nullable=True)
     source: Mapped[str] = mapped_column(String, default="backend")
+    assigned_statement_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("credit_card_statements.id"), nullable=True
+    )
+    statement_assignment_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -88,6 +103,43 @@ class CreditCardInstallment(Base):
     scheduled_period: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, server_default="pending")
     paid_amount: Mapped[Decimal] = mapped_column(Numeric, nullable=False, default=Decimal("0.00"))
+    interest_amount: Mapped[Decimal] = mapped_column(Numeric, nullable=False, default=Decimal("0.00"))
+    total_amount: Mapped[Decimal] = mapped_column(Numeric, nullable=False, default=Decimal("0.00"))
+    scheduled_due_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
+    revision_id: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class CreditCardStatement(Base):
+    __tablename__ = "credit_card_statements"
+    __table_args__ = (
+        UniqueConstraint("credit_card_id", "billing_period", name="uq_cc_statement_period"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    credit_card_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("credit_cards.id"), nullable=False
+    )
+    billing_period: Mapped[str] = mapped_column(String, nullable=False)
+    billing_period_start: Mapped[datetime | None] = mapped_column(Date, nullable=True)
+    cutoff_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
+    due_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
+    previous_balance: Mapped[Decimal] = mapped_column(Numeric, default=Decimal("0.00"))
+    new_purchases: Mapped[Decimal] = mapped_column(Numeric, default=Decimal("0.00"))
+    billed_installments: Mapped[Decimal] = mapped_column(Numeric, default=Decimal("0.00"))
+    fees_total: Mapped[Decimal] = mapped_column(Numeric, default=Decimal("0.00"))
+    interest_total: Mapped[Decimal] = mapped_column(Numeric, default=Decimal("0.00"))
+    payments_received: Mapped[Decimal] = mapped_column(Numeric, default=Decimal("0.00"))
+    statement_balance: Mapped[Decimal] = mapped_column(Numeric, default=Decimal("0.00"))
+    minimum_payment: Mapped[Decimal] = mapped_column(Numeric, default=Decimal("0.00"))
+    status: Mapped[str] = mapped_column(String, nullable=False, default="open")
+    frozen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

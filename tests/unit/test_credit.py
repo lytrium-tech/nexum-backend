@@ -86,7 +86,7 @@ async def test_create_purchase_success(credit_service, mock_credit_repo, mock_le
     payload = CreditCardPurchaseCreate(amount=Decimal("1000"))
 
     mock_card = CreditCard(
-        id=card_id, user_id=user_id, credit_limit=Decimal("5000"), is_active=True, currency="COP"
+        id=card_id, user_id=user_id, credit_limit=Decimal("5000"), is_active=True, currency="COP", cutoff_day=15, due_day=30
     )
     mock_credit_repo.get_by_id_for_update.return_value = mock_card
     mock_credit_repo.get_card_debt.return_value = (500.0, 100.0)
@@ -234,10 +234,11 @@ async def test_installment_schedule_splits_principal_exactly(credit_service):
     user_id = uuid.uuid4()
     card_id = uuid.uuid4()
     transaction_id = uuid.uuid4()
+    mock_card = CreditCard(id=card_id, user_id=user_id, cutoff_day=15, due_day=30)
 
     installments = await credit_service._build_installments(
         user_id=user_id,
-        card_id=card_id,
+        card=mock_card,
         transaction_id=transaction_id,
         amount=Decimal("100.00"),
         installments_total=3,
