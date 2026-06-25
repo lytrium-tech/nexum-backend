@@ -46,6 +46,7 @@ class CreditCardRead(CreditCardBase):
     billed_debt: Decimal = Decimal("0.00")
     unbilled_debt: Decimal = Decimal("0.00")
     payment_required: Decimal = Decimal("0.00")
+    minimum_payment: Decimal = Decimal("0.00")
     next_payment_estimate: Decimal = Decimal("0.00")
     statement_balance: Decimal | None = None
     data_quality: dict[str, str] = Field(default_factory=dict)
@@ -99,6 +100,24 @@ class CreditCardPaymentResult(BaseModel):
     account_balance: Decimal
 
 
+class CreditCardEarlyPaymentCreate(BaseModel):
+    account_id: uuid.UUID
+    amount: Decimal = Field(..., gt=0)
+    allocation_mode: str = "reduce_installment_amount"
+    source_message_id: uuid.UUID | None = None
+    raw_message: str | None = None
+
+
+class CreditCardEarlyPaymentResult(BaseModel):
+    status: str
+    event_id: uuid.UUID | None = None
+    early_payment_id: uuid.UUID | None = None
+    amount: Decimal
+    current_debt: Decimal
+    available_credit: Decimal
+    account_balance: Decimal
+
+
 class CreditCardStatusRead(BaseModel):
     card_id: uuid.UUID
     name: str
@@ -115,6 +134,7 @@ class CreditCardStatusRead(BaseModel):
     unbilled_debt: Decimal
     available_credit: Decimal
     payment_required: Decimal = Decimal("0.00")
+    minimum_payment: Decimal = Decimal("0.00")
     next_payment_estimate: Decimal = Decimal("0.00")
     statement_balance: Decimal | None = None
     monthly_cc_payment: Decimal

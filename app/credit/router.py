@@ -13,6 +13,8 @@ from app.credit.exceptions import (
 )
 from app.credit.schemas import (
     CreditCardCreate,
+    CreditCardEarlyPaymentCreate,
+    CreditCardEarlyPaymentResult,
     CreditCardInstallmentRead,
     CreditCardPaymentCreate,
     CreditCardPaymentResult,
@@ -160,6 +162,47 @@ async def create_payment(
             raise HTTPException(status_code=400, detail=str(e))
         except InvalidPaymentAmountError:
             raise HTTPException(status_code=409, detail="Payment amount exceeds current debt")
+
+
+@router.post("/cards/{card_id}/purchases/{purchase_id}/pay_early", response_model=CreditCardEarlyPaymentResult)
+async def create_early_payment(
+    card_id: uuid.UUID,
+    purchase_id: uuid.UUID,
+    payload: CreditCardEarlyPaymentCreate,
+    current_profile: CurrentUserProfile,
+    idempotency_key: str = Header(..., alias="Idempotency-Key"),
+    session: AsyncSession = Depends(get_db_session),
+):
+    try:
+        command_id = uuid.UUID(idempotency_key)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid Idempotency-Key format")
+
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        user_id = current_profile.id
+        service = get_credit_service(session)
+        try:
+            return await service.create_early_payment(user_id, card_id, purchase_id, payload, command_id)
+        except CreditCardNotFoundError:
+            raise HTTPException(status_code=404, detail="Credit card not found")
+        except CreditCardInactiveError:
+            raise HTTPException(status_code=400, detail="Credit card is inactive")
+        except ValueError as e:
+            if str(e) == "Account not found or inactive":
+                raise HTTPException(status_code=404, detail=str(e))
+            if str(e) == "Insufficient balance":
+                raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e))
+        except InvalidPaymentAmountError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except Exception as e:
+            from app.credit.exceptions import CreditDomainError
+            if isinstance(e, CreditDomainError) and "Purchase not found" in str(e):
+                raise HTTPException(status_code=404, detail=str(e))
+            if isinstance(e, CreditDomainError):
+                raise HTTPException(status_code=400, detail=str(e))
+            raise
 
 
 @router.get("/summary", response_model=CreditSummaryRead)

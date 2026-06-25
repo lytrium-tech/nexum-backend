@@ -93,6 +93,32 @@ class CreditCardRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_transaction_by_id(self, transaction_id: uuid.UUID) -> CreditCardTransaction | None:
+        result = await self.session.execute(
+            select(CreditCardTransaction).where(CreditCardTransaction.id == transaction_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_installments_for_transaction_for_update(
+        self, transaction_id: uuid.UUID
+    ) -> list[CreditCardInstallment]:
+        result = await self.session.execute(
+            select(CreditCardInstallment)
+            .where(CreditCardInstallment.purchase_transaction_id == transaction_id)
+            .order_by(CreditCardInstallment.installment_number.asc())
+            .with_for_update()
+        )
+        return list(result.scalars().all())
+
+    async def get_early_payment_by_event(
+        self, event_id: uuid.UUID
+    ):
+        from app.credit.models import CreditCardEarlyPayment
+        result = await self.session.execute(
+            select(CreditCardEarlyPayment).where(CreditCardEarlyPayment.event_id == event_id)
+        )
+        return result.scalar_one_or_none()
+
     async def get_card_status_data(self, card_id: uuid.UUID, cycle_end_date: date) -> dict:
         query = text("""
             SELECT
@@ -134,3 +160,19 @@ class CreditCardRepository:
         """)
         result = await self.session.execute(query, {"card_id": card_id})
         return Decimal(str(result.scalar_one_or_none() or 0))
+
+    async def list_unpaid_statement_charges_for_update(
+        self, card_id: uuid.UUID
+    ) -> list:
+        from app.credit.models import CreditCardStatementCharge, CreditCardStatement
+        result = await self.session.execute(
+            select(CreditCardStatementCharge)
+            .join(CreditCardStatement)
+            .where(
+                CreditCardStatement.credit_card_id == card_id,
+                CreditCardStatementCharge.status != "paid",
+            )
+            .order_by(CreditCardStatementCharge.created_at.asc())
+            .with_for_update()
+        )
+        return list(result.scalars().all())

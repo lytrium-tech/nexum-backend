@@ -85,6 +85,10 @@ class CreditCardService:
             _, _, next_due = calculate_credit_card_dates(
                 scheduled_date, card.cutoff_day, card.due_day
             )
+            # Interest foundation (Placeholder for amortized installment interest)
+            interest = (principal * (card.monthly_interest_rate / Decimal("100"))) if card.monthly_interest_rate else Decimal("0.00")
+            interest = interest.quantize(Decimal("0.01"))
+            
             installments.append(
                 CreditCardInstallment(
                     user_id=user_id,
@@ -93,8 +97,8 @@ class CreditCardService:
                     installment_number=index,
                     installments_total=installments_total,
                     principal_amount=principal,
-                    interest_amount=Decimal("0.00"),
-                    total_amount=principal,
+                    interest_amount=interest,
+                    total_amount=principal + interest,
                     scheduled_due_date=next_due,
                     scheduled_period=scheduled_date.strftime("%Y-%m"),
                     status="pending",
@@ -103,22 +107,67 @@ class CreditCardService:
             )
         return installments
 
-    async def _apply_payment_to_installments(
-        self, user_id: uuid.UUID, card_id: uuid.UUID, amount: Decimal
+    async def _apply_payment_to_waterfall(
+        self, user_id: uuid.UUID, card: CreditCard, amount: Decimal
     ) -> None:
         remaining = amount
-        installments = await self.repo.list_pending_installments_for_update(card_id, user_id)
-        for installment in installments:
-            if remaining <= 0:
-                break
-            installment_remaining = installment.principal_amount - installment.paid_amount
-            applied = min(remaining, installment_remaining)
-            installment.paid_amount += applied
+        installments = await self.repo.list_pending_installments_for_update(card.id, user_id)
+        
+        current_date = date.today()
+        from app.credit.utils import calculate_credit_card_dates
+        _, cycle_end, _ = calculate_credit_card_dates(current_date, card.cutoff_day, card.due_day)
+        current_period = current_date.strftime("%Y-%m")
+        
+        def pay_installment_part(inst, part_amount: Decimal):
+            nonlocal remaining
+            if remaining <= 0 or part_amount <= 0: return
+            applied = min(remaining, part_amount)
+            inst.paid_amount += applied
             remaining -= applied
-            if installment.paid_amount >= installment.principal_amount:
-                installment.status = "paid"
-            elif installment.paid_amount > 0:
-                installment.status = "partial"
+            if inst.paid_amount >= inst.total_amount:
+                inst.status = "paid"
+            elif inst.paid_amount > 0:
+                inst.status = "partial"
+
+        # 1. Past due (scheduled_period < current_period)
+        for inst in installments:
+            if inst.scheduled_period < current_period:
+                pay_installment_part(inst, inst.total_amount - inst.paid_amount)
+                
+        # 2. Accrued interest & 4. Billed installments (both combined in current period installments)
+        # In a real model, we might separate them, but here we process the current period installments' interest first.
+        for inst in installments:
+            if inst.scheduled_period == current_period:
+                # Pay up to the interest amount first
+                interest_unpaid = max(Decimal("0.00"), inst.interest_amount - inst.paid_amount)
+                pay_installment_part(inst, interest_unpaid)
+                
+        # 3. Fees / insurance / taxes billed
+        charges = await self.repo.list_unpaid_statement_charges_for_update(card.id)
+        for charge in charges:
+            if remaining <= 0: break
+            charge_unpaid = charge.amount - charge.paid_amount
+            applied = min(remaining, charge_unpaid)
+            charge.paid_amount += applied
+            remaining -= applied
+            if charge.paid_amount >= charge.amount:
+                charge.status = "paid"
+            elif charge.paid_amount > 0:
+                charge.status = "partial"
+        
+        # 4 & 5. Billed installments & billed revolving principal (scheduled_period == current_period)
+        for inst in installments:
+            if inst.scheduled_period == current_period:
+                principal_unpaid = inst.total_amount - inst.paid_amount
+                pay_installment_part(inst, principal_unpaid)
+
+        # 6. Unbilled revolving (scheduled_period > current_period and installments_total == 1)
+        for inst in installments:
+            if inst.scheduled_period > current_period and inst.installments_total == 1:
+                pay_installment_part(inst, inst.total_amount - inst.paid_amount)
+                
+        if remaining > 0:
+            raise InvalidPaymentAmountError(message="Overpayment is not allowed when there is no unbilled revolving debt")
 
     async def _enrich_card(self, card: CreditCard) -> CreditCardRead:
         status = await self._calculate_card_status(card)
@@ -360,7 +409,7 @@ class CreditCardService:
             event_id=event.id,
         )
         await self.repo.add_transaction(transaction)
-        await self._apply_payment_to_installments(user_id, card.id, payload.amount)
+        await self._apply_payment_to_waterfall(user_id, card, payload.amount)
 
         new_debt = estimated_debt - payload.amount
         new_available = max(Decimal("0.00"), card.credit_limit - new_debt)
@@ -373,6 +422,111 @@ class CreditCardService:
             current_debt=new_debt,
             available_credit=new_available,
             estimated_current_debt=new_debt,
+            account_balance=account.balance,
+        )
+
+    async def create_early_payment(
+        self,
+        user_id: uuid.UUID,
+        card_id: uuid.UUID,
+        purchase_id: uuid.UUID,
+        payload: CreditCardEarlyPaymentCreate,
+        command_id: uuid.UUID | str,
+    ) -> CreditCardEarlyPaymentResult:
+        from app.credit.exceptions import CreditDomainError
+        from app.credit.models import CreditCardEarlyPayment
+        
+        account = await self.account_repo.get_by_id_for_update(payload.account_id)
+        if not account or account.user_id != user_id or not account.is_active:
+            raise ValueError("Account not found or inactive")
+        if account.balance < payload.amount:
+            raise ValueError("Insufficient balance")
+
+        card = await self.repo.get_by_id_for_update(card_id)
+        if not card or card.user_id != user_id or not card.is_active:
+            raise CreditCardNotFoundError()
+
+        # Fetch transaction
+        transaction = await self.repo.get_transaction_by_id(purchase_id)
+        if not transaction or transaction.credit_card_id != card.id:
+            raise CreditDomainError(message="Purchase not found or does not belong to this card")
+            
+        # Get pending installments
+        all_installments = await self.repo.list_installments_for_transaction_for_update(purchase_id)
+        installments = [i for i in all_installments if i.status != "paid"]
+        
+        total_remaining_principal = sum(i.principal_amount - i.paid_amount for i in installments)
+        if payload.amount > total_remaining_principal:
+            raise InvalidPaymentAmountError(message="Early payment amount exceeds remaining principal")
+            
+        # Create financial event
+        event_payload = LedgerEventCreate(
+            user_id=user_id,
+            event_type="credit_card_early_payment",
+            direction="outflow",
+            amount=payload.amount,
+            currency=card.currency,
+            account_id=payload.account_id,
+            source_message_id=payload.source_message_id,
+            raw_message=payload.raw_message,
+            metadata={"credit_card_id": str(card.id), "purchase_transaction_id": str(purchase_id)},
+        )
+        event_payload.command_id = self._normalize_command_id(command_id)
+        result = await self.ledger_service.record_event(event_payload)
+        event, is_retry = result.event, result.idempotent
+        
+        debt, _ = await self.repo.get_card_debt(card.id)
+        
+        if is_retry:
+            early_payment = await self.repo.get_early_payment_by_event(event.id)
+            return CreditCardEarlyPaymentResult(
+                status="idempotent_retry",
+                event_id=event.id,
+                early_payment_id=early_payment.id if early_payment else None,
+                amount=event.amount,
+                current_debt=Decimal(str(debt)),
+                available_credit=max(Decimal("0.00"), card.credit_limit - Decimal(str(debt))),
+                account_balance=account.balance,
+            )
+
+        account.balance -= payload.amount
+        
+        early_payment = CreditCardEarlyPayment(
+            user_id=user_id,
+            credit_card_id=card.id,
+            purchase_transaction_id=purchase_id,
+            amount=payload.amount,
+            allocation_mode=payload.allocation_mode,
+            event_id=event.id
+        )
+        self.session.add(early_payment)
+        
+        # Recalculate unbilled installments
+        remaining_to_allocate = total_remaining_principal - payload.amount
+        num_installments = len(installments)
+        new_amounts = self._installment_amounts(remaining_to_allocate, num_installments)
+        
+        for inst, new_amt in zip(installments, new_amounts):
+            inst.principal_amount = inst.paid_amount + new_amt
+            inst.total_amount = inst.principal_amount + inst.interest_amount
+            if inst.principal_amount <= inst.paid_amount and inst.principal_amount > 0:
+                inst.status = "paid"
+            elif inst.principal_amount == Decimal("0.00"):
+                inst.status = "paid"
+            else:
+                inst.status = "pending"
+
+        await self.session.flush()
+        
+        new_debt = Decimal(str(debt)) - payload.amount
+        
+        return CreditCardEarlyPaymentResult(
+            status="success",
+            event_id=event.id,
+            early_payment_id=early_payment.id,
+            amount=payload.amount,
+            current_debt=new_debt,
+            available_credit=max(Decimal("0.00"), card.credit_limit - new_debt),
             account_balance=account.balance,
         )
 
@@ -406,7 +560,16 @@ class CreditCardService:
 
         total_debt = billed_debt + unbilled_debt
         available_credit = max(Decimal("0.00"), card.credit_limit - total_debt)
-        payment_required = billed_debt
+        
+        statement_balance = billed_debt
+        payment_required = statement_balance
+        
+        min_pay_percentage = Decimal("0.05")
+        min_pay_absolute = Decimal("50000.00") if card.currency == "COP" else Decimal("15.00")
+        
+        revolving_balance = statement_balance
+        min_revolving = max(revolving_balance * min_pay_percentage, min_pay_absolute)
+        minimum_payment = min(min_revolving, statement_balance) if statement_balance > 0 else Decimal("0.00")
 
         return CreditCardStatusRead(
             card_id=card.id,
@@ -424,8 +587,9 @@ class CreditCardService:
             unbilled_debt=unbilled_debt,
             available_credit=available_credit,
             payment_required=payment_required,
+            minimum_payment=minimum_payment,
             next_payment_estimate=next_payment_estimate,
-            statement_balance=None,
+            statement_balance=statement_balance,
             monthly_cc_payment=next_payment_estimate,
             cutoff_day=card.cutoff_day,
             payment_due_day=card.due_day,
