@@ -21,6 +21,7 @@ from app.credit.schemas import (
     CreditCardPurchaseCreate,
     CreditCardPurchaseResult,
     CreditCardRead,
+    CreditCardStatementRead,
     CreditCardStatusRead,
     CreditCardUpdate,
     CreditSummaryRead,
@@ -238,5 +239,37 @@ async def list_card_installments(
     service = get_credit_service(session)
     try:
         return await service.list_installments(user_id, card_id)
+    except CreditCardNotFoundError:
+        raise HTTPException(status_code=404, detail="Credit card not found")
+
+
+@router.get("/cards/{card_id}/statements", response_model=list[CreditCardStatementRead])
+async def list_statements(
+    card_id: uuid.UUID,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+):
+    user_id = current_profile.id
+    service = get_credit_service(session)
+    try:
+        return await service.list_statements(user_id, card_id)
+    except CreditCardNotFoundError:
+        raise HTTPException(status_code=404, detail="Credit card not found")
+
+
+@router.get("/cards/{card_id}/statements/{period}", response_model=CreditCardStatementRead)
+async def get_statement(
+    card_id: uuid.UUID,
+    period: str,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+):
+    user_id = current_profile.id
+    service = get_credit_service(session)
+    try:
+        statement = await service.get_statement(user_id, card_id, period)
+        if not statement:
+            raise HTTPException(status_code=404, detail="Statement not found")
+        return statement
     except CreditCardNotFoundError:
         raise HTTPException(status_code=404, detail="Credit card not found")

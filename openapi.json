@@ -1932,6 +1932,115 @@
         }
       }
     },
+    "/api/v1/credit/cards/{card_id}/statements": {
+      "get": {
+        "tags": [
+          "Credit"
+        ],
+        "summary": "List Statements",
+        "operationId": "list_statements_api_v1_credit_cards__card_id__statements_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Card Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CreditCardStatementRead"
+                  },
+                  "title": "Response List Statements Api V1 Credit Cards  Card Id  Statements Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/credit/cards/{card_id}/statements/{period}": {
+      "get": {
+        "tags": [
+          "Credit"
+        ],
+        "summary": "Get Statement",
+        "operationId": "get_statement_api_v1_credit_cards__card_id__statements__period__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Card Id"
+            }
+          },
+          {
+            "name": "period",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Period"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditCardStatementRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/ledger/events": {
       "get": {
         "tags": [
@@ -3610,6 +3719,9 @@
               {
                 "type": "string",
                 "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
               }
             ],
             "title": "Amount"
@@ -3645,8 +3757,7 @@
         },
         "type": "object",
         "required": [
-          "account_id",
-          "amount"
+          "account_id"
         ],
         "title": "CreditCardEarlyPaymentCreate"
       },
@@ -3782,6 +3893,12 @@
             "type": "integer",
             "title": "Revision Id",
             "default": 1
+          },
+          "remaining_principal": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Remaining Principal",
+            "readOnly": true
           }
         },
         "type": "object",
@@ -3794,7 +3911,8 @@
           "principal_amount",
           "scheduled_period",
           "status",
-          "paid_amount"
+          "paid_amount",
+          "remaining_principal"
         ],
         "title": "CreditCardInstallmentRead"
       },
@@ -4240,6 +4358,132 @@
           "estimated_available_credit"
         ],
         "title": "CreditCardRead"
+      },
+      "CreditCardStatementRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "credit_card_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Credit Card Id"
+          },
+          "billing_period": {
+            "type": "string",
+            "title": "Billing Period"
+          },
+          "billing_period_start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Billing Period Start"
+          },
+          "cutoff_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cutoff Date"
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Date"
+          },
+          "previous_balance": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Previous Balance"
+          },
+          "new_purchases": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "New Purchases"
+          },
+          "billed_installments": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Billed Installments"
+          },
+          "fees_total": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Fees Total"
+          },
+          "interest_total": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Interest Total"
+          },
+          "payments_received": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Payments Received"
+          },
+          "statement_balance": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Statement Balance"
+          },
+          "minimum_payment": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Minimum Payment"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "frozen_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frozen At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "credit_card_id",
+          "billing_period",
+          "previous_balance",
+          "new_purchases",
+          "billed_installments",
+          "fees_total",
+          "interest_total",
+          "payments_received",
+          "statement_balance",
+          "minimum_payment",
+          "status"
+        ],
+        "title": "CreditCardStatementRead"
       },
       "CreditCardStatusRead": {
         "properties": {

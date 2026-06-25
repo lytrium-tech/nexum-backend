@@ -1,11 +1,12 @@
 import uuid
 from decimal import Decimal
-import pytest
 from unittest.mock import AsyncMock
 
-from app.credit.service import CreditCardService
-from app.credit.models import CreditCard, CreditCardTransaction
+import pytest
+
 from app.credit.exceptions import InvalidPaymentAmountError
+from app.credit.models import CreditCard
+from app.credit.service import CreditCardService
 
 pytestmark = pytest.mark.asyncio
 
@@ -39,6 +40,7 @@ async def test_waterfall_allocation():
     service.repo.list_unpaid_statement_charges_for_update.return_value = [fee_charge]
     
     from datetime import date
+
     import app.credit.utils
     original_calc = app.credit.utils.calculate_credit_card_dates
     

@@ -28,6 +28,7 @@ from app.credit.schemas import (
     CreditCardPurchaseCreate,
     CreditCardPurchaseResult,
     CreditCardRead,
+    CreditCardStatementRead,
     CreditCardStatusRead,
     CreditCardUpdate,
     CreditSummaryRead,
@@ -654,3 +655,23 @@ class CreditCardService:
             raise CreditCardNotFoundError()
         installments = await self.repo.list_installments(card_id, user_id)
         return [CreditCardInstallmentRead.model_validate(i) for i in installments]
+
+    async def list_statements(
+        self, user_id: uuid.UUID, card_id: uuid.UUID
+    ) -> list[CreditCardStatementRead]:
+        card = await self.repo.get_by_id(card_id)
+        if not card or card.user_id != user_id:
+            raise CreditCardNotFoundError()
+        statements = await self.repo.list_statements(card_id)
+        return [CreditCardStatementRead.model_validate(s) for s in statements]
+
+    async def get_statement(
+        self, user_id: uuid.UUID, card_id: uuid.UUID, period: str
+    ) -> CreditCardStatementRead | None:
+        card = await self.repo.get_by_id(card_id)
+        if not card or card.user_id != user_id:
+            raise CreditCardNotFoundError()
+        statement = await self.repo.get_statement(card_id, period)
+        if not statement:
+            return None
+        return CreditCardStatementRead.model_validate(statement)

@@ -160,11 +160,30 @@ class CreditCardRepository:
         """)
         result = await self.session.execute(query, {"card_id": card_id})
         return Decimal(str(result.scalar_one_or_none() or 0))
+    async def list_statements(self, card_id: uuid.UUID) -> list:
+        from app.credit.models import CreditCardStatement
+        result = await self.session.execute(
+            select(CreditCardStatement)
+            .where(CreditCardStatement.credit_card_id == card_id)
+            .order_by(CreditCardStatement.billing_period.desc())
+        )
+        return list(result.scalars().all())
+
+    async def get_statement(self, card_id: uuid.UUID, period: str):
+        from app.credit.models import CreditCardStatement
+        result = await self.session.execute(
+            select(CreditCardStatement)
+            .where(
+                CreditCardStatement.credit_card_id == card_id,
+                CreditCardStatement.billing_period == period
+            )
+        )
+        return result.scalars().first()
 
     async def list_unpaid_statement_charges_for_update(
         self, card_id: uuid.UUID
     ) -> list:
-        from app.credit.models import CreditCardStatementCharge, CreditCardStatement
+        from app.credit.models import CreditCardStatement, CreditCardStatementCharge
         result = await self.session.execute(
             select(CreditCardStatementCharge)
             .join(CreditCardStatement)

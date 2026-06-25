@@ -102,7 +102,7 @@ class CreditCardPaymentResult(BaseModel):
 
 class CreditCardEarlyPaymentCreate(BaseModel):
     account_id: uuid.UUID
-    amount: Decimal = Field(..., gt=0)
+    amount: Decimal | None = Field(None, gt=0)
     allocation_mode: str = "reduce_installment_amount"
     source_message_id: uuid.UUID | None = None
     raw_message: str | None = None
@@ -170,6 +170,11 @@ class CreditCardInstallmentRead(BaseModel):
     total_amount: Decimal = Decimal("0.00")
     scheduled_due_date: date | None = None
     revision_id: int = 1
+
+    @computed_field
+    @property
+    def remaining_principal(self) -> Decimal:
+        return max(Decimal("0.00"), self.principal_amount - self.paid_amount)
 
     model_config = ConfigDict(from_attributes=True)
 
