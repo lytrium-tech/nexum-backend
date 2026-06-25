@@ -1,5 +1,13 @@
 # Changelog del Backend
 
+## [v1.5.0-alpha] - Backend V1.5 Credit Card Advanced Model
+- Implemented Persisted Statements with immutable frozen state.
+- Developed multi-tier Payment Allocation Waterfall (Past Due -> Interest -> Fees -> Billed Quotas -> Billed Revolving -> Unbilled Revolving).
+- Implemented Early Future Installment Payments avoiding frozen statement disruption.
+- Established rigorous constraints protecting future unbilled installments and preventing excess overpayments.
+- Validated FX cross-currency flows across Goals and Transfers.
+- Stabilized and aligned OpenAPI contracts for full frontend consumption.
+
 ## [v1.4.2-alpha] - Backend V1.4.2 Snapshot Hotfix
 - Fixed 500 Internal Server Error in Snapshot generation caused by missing null-safety check for `billed_debt` during currency aggregation.
 - Fixed 500 Internal Server Error (AttributeError) in Dashboard/Snapshot and Conversational flows by updating `list_active` calls to `list_by_user` for ObligationRepository.
