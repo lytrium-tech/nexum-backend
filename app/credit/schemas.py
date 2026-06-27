@@ -176,6 +176,18 @@ class CreditCardInstallmentRead(BaseModel):
     def remaining_principal(self) -> Decimal:
         return max(Decimal("0.00"), self.principal_amount - self.paid_amount)
 
+    @computed_field
+    @property
+    def is_pay_early_eligible(self) -> bool:
+        from datetime import date
+
+        current_period = date.today().strftime("%Y-%m")
+        return (
+            self.installments_total > 1
+            and self.status != "paid"
+            and self.scheduled_period > current_period
+        )
+
     model_config = ConfigDict(from_attributes=True)
 
 

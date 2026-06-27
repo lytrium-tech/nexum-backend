@@ -3899,6 +3899,11 @@
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Remaining Principal",
             "readOnly": true
+          },
+          "is_pay_early_eligible": {
+            "type": "boolean",
+            "title": "Is Pay Early Eligible",
+            "readOnly": true
           }
         },
         "type": "object",
@@ -3912,7 +3917,8 @@
           "scheduled_period",
           "status",
           "paid_amount",
-          "remaining_principal"
+          "remaining_principal",
+          "is_pay_early_eligible"
         ],
         "title": "CreditCardInstallmentRead"
       },

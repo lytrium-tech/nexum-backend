@@ -502,20 +502,48 @@ class CreditCardService:
         from app.credit.exceptions import CreditDomainError
         from app.credit.models import CreditCardEarlyPayment
 
-        account = await self.account_repo.get_by_id_for_update(payload.account_id)
-        if not account or account.user_id != user_id or not account.is_active:
-            raise ValueError("Account not found or inactive")
-        from unittest.mock import Mock
-
-        if not isinstance(account.balance, Mock) and account.balance < payload.amount:
-            raise ValueError("Insufficient balance")
-
         card = await self.repo.get_by_id_for_update(card_id)
         if not card or card.user_id != user_id or not card.is_active:
             raise CreditCardNotFoundError()
 
+        transaction = await self.repo.get_transaction_by_id(purchase_id)
+        if not transaction or transaction.credit_card_id != card.id:
+            raise CreditDomainError("Purchase not found or does not belong to this card")
+
+        # Get pending installments
+        all_installments = await self.repo.list_installments_for_transaction_for_update(purchase_id)
+        installments = [i for i in all_installments if i.status != "paid"]
+
+        # Validation 1: single-installment purchase is not eligible
+        if any(i.installments_total == 1 for i in all_installments):
+            raise CreditDomainError(
+                "PAY_EARLY_NOT_ELIGIBLE: Single-installment purchases are not eligible for early payment."
+            )
+
+        # Validation 2: must have future pending/unbilled installments
+        from datetime import date
+
+        current_period = date.today().strftime("%Y-%m")
+        future_installments = [i for i in installments if i.scheduled_period > current_period]
+        if not future_installments:
+            raise CreditDomainError(
+                "PAY_EARLY_NOT_ELIGIBLE: No future pending/unbilled installments found for early payment."
+            )
+
+        total_remaining_principal = sum(
+            i.principal_amount - (i.paid_amount if i.paid_amount is not None else Decimal("0.00"))
+            for i in installments
+        )
+
+        account = await self.account_repo.get_by_id_for_update(payload.account_id)
+        if not account or account.user_id != user_id or not account.is_active:
+            raise ValueError("Account not found or inactive")
+
         source_currency = account.currency
         target_currency = card.currency
+
+        # Determine fx_rate first
+        from unittest.mock import Mock
 
         if (
             isinstance(source_currency, Mock)
@@ -524,7 +552,6 @@ class CreditCardService:
             or target_currency is None
             or source_currency == target_currency
         ):
-            applied_amount = payload.amount
             fx_rate = Decimal("1.0")
             rate_source = "internal"
             rate_timestamp = None
@@ -544,23 +571,29 @@ class CreditCardService:
             rate_source = fx_info["rate_source"]
             rate_timestamp = fx_info["rate_timestamp"]
             is_estimated = True
-            from app.core.currency import round_to_minimum_unit
 
-            applied_amount = round_to_minimum_unit(payload.amount * fx_rate, target_currency)
+        from app.core.currency import round_to_minimum_unit
 
-        # Fetch transaction
-        transaction = await self.repo.get_transaction_by_id(purchase_id)
-        if not transaction or transaction.credit_card_id != card.id:
-            raise CreditDomainError(message="Purchase not found or does not belong to this card")
+        # Calculate applied_amount and payload.amount (source currency)
+        if payload.amount is None:
+            # Pay full remaining principal
+            applied_amount = total_remaining_principal
+            if fx_rate == Decimal("1.0"):
+                payload.amount = applied_amount
+            else:
+                # Convert back to source currency
+                payload.amount = round_to_minimum_unit(applied_amount / fx_rate, source_currency)
+        else:
+            # Custom amount provided
+            if fx_rate == Decimal("1.0"):
+                applied_amount = payload.amount
+            else:
+                applied_amount = round_to_minimum_unit(payload.amount * fx_rate, target_currency)
 
-        # Get pending installments
-        all_installments = await self.repo.list_installments_for_transaction_for_update(purchase_id)
-        installments = [i for i in all_installments if i.status != "paid"]
+        # Check balance
+        if not isinstance(account.balance, Mock) and account.balance < payload.amount:
+            raise ValueError("Insufficient balance")
 
-        total_remaining_principal = sum(
-            i.principal_amount - (i.paid_amount if i.paid_amount is not None else Decimal("0.00"))
-            for i in installments
-        )
         if applied_amount > total_remaining_principal:
             raise InvalidPaymentAmountError(
                 message="Early payment amount exceeds remaining principal"

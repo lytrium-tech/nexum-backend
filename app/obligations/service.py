@@ -208,9 +208,6 @@ class ObligationService:
         ):
             raise AccountForbiddenError()
 
-        if not isinstance(account.balance, Mock) and account.balance < payload.amount:
-            raise InsufficientFundsError()
-
         source_currency = account.currency
         target_currency = obligation.currency
 
@@ -261,6 +258,10 @@ class ObligationService:
                     raise ObligationOverpaymentError(str(remaining))
         elif obligation.payment_mode == "variable_amount":
             pass  # variable_amount allows any amount, any number of payments
+
+        # Validate funds in source currency after confirming payment amount matches business rules
+        if not isinstance(account.balance, Mock) and account.balance < payload.amount:
+            raise InsufficientFundsError()
 
         event_create = LedgerEventCreate(
             user_id=auth_user_id,
