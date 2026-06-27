@@ -1,5 +1,7 @@
 from fastapi import HTTPException, status
 
+from app.core.errors import ConflictError, ValidationError
+
 
 class ObligationNotFoundError(HTTPException):
     def __init__(self) -> None:
@@ -47,3 +49,15 @@ class ObligationOverpaymentError(HTTPException):
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Payment exceeds remaining amount for this period: {remaining}",
         )
+
+
+class ObligationValidationError(ValidationError, ValueError):
+    """Error de validación para Obligación."""
+
+    error_code = "obligation_validation_error"
+
+
+class ObligationDuplicateError(ConflictError, ValueError):
+    """Ya existe una obligación activa con este nombre."""
+
+    error_code = "obligation_duplicate"
