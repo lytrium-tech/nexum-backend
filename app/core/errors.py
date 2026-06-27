@@ -113,6 +113,15 @@ class InfrastructureError(NexumError):
     message = "El servicio no está disponible temporalmente. Intenta de nuevo en unos momentos."
 
 
+class FXProviderUnavailableError(InfrastructureError):
+    """Fallo al consultar el proveedor de tasas de cambio externo."""
+
+    error_code = "FX_PROVIDER_UNAVAILABLE"
+    message = (
+        "No pudimos consultar la tasa de cambio en este momento. Intenta de nuevo en unos momentos."
+    )
+
+
 # ── Respuesta HTTP compartida ─────────────────────────────────────────────────
 
 

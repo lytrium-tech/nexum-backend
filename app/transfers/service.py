@@ -13,7 +13,7 @@ from app.core.currency import (
     get_fx_rate,
     round_to_minimum_unit,
 )
-from app.core.errors import ForbiddenError, NotFoundError
+from app.core.errors import ForbiddenError, FXProviderUnavailableError, NotFoundError
 from app.core.uow import UnitOfWork
 from app.ledger.enums import Direction, EventType
 from app.ledger.repository import LedgerRepository
@@ -80,8 +80,8 @@ class TransfersService:
                 fx_info = await get_fx_rate(source_currency, target_currency)
             except UnsupportedCurrencyError as e:
                 raise ForbiddenError(message=str(e))
-            except FXProviderError as e:
-                raise ForbiddenError(message=f"No se pudo obtener la tasa de cambio: {e}")
+            except FXProviderError:
+                raise FXProviderUnavailableError()
 
             fx_rate = fx_info["fx_rate"]
             rate_source = fx_info["rate_source"]

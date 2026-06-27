@@ -1,7 +1,11 @@
+import logging
 from datetime import UTC, datetime
 from decimal import Decimal
 
 import httpx
+
+logger = logging.getLogger(__name__)
+
 
 CURRENCY_MINIMUM_UNITS = {
     "COP": Decimal("50.00"),
@@ -69,8 +73,11 @@ async def get_fx_rate(source_currency: str, target_currency: str) -> dict:
         )
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get("https://api.dolarapi.com/v1/dolares/oficial")
+        from app.core.config import settings
+
+        url = f"{settings.DOLAR_API_BASE_URL.rstrip('/')}/v1/cotizaciones/usd"
+        async with httpx.AsyncClient(timeout=settings.FX_TIMEOUT_SECONDS) as client:
+            resp = await client.get(url)
             resp.raise_for_status()
             data = resp.json()
             # Dólar API returns venta/compra. We'll use venta for generic fx rate, or average.
@@ -78,6 +85,7 @@ async def get_fx_rate(source_currency: str, target_currency: str) -> dict:
             usd_to_cop = Decimal(str(data["venta"]))
             rate_ts = datetime.fromisoformat(data["fechaActualizacion"].replace("Z", "+00:00"))
     except Exception as e:
+        logger.error(f"Error fetching FX rate from DolarAPI: {e}", exc_info=True)
         raise FXProviderError(f"Error consultando Dólar API: {str(e)}")
 
     if source_currency == "USD" and target_currency == "COP":

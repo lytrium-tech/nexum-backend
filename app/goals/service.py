@@ -10,7 +10,7 @@ from app.core.currency import (
     get_fx_rate,
     round_to_minimum_unit,
 )
-from app.core.errors import ForbiddenError, NotFoundError
+from app.core.errors import ForbiddenError, FXProviderUnavailableError, NotFoundError
 from app.core.utils import clean_presentation_name, normalize_name
 from app.goals.exceptions import (
     GoalAmountExceededError,
@@ -186,8 +186,8 @@ class GoalService:
             fx_info = await get_fx_rate(source_currency, goal_currency)
         except UnsupportedCurrencyError as e:
             raise ForbiddenError(message=str(e))
-        except FXProviderError as e:
-            raise ForbiddenError(message=f"No se pudo obtener la tasa de cambio: {e}")
+        except FXProviderError:
+            raise FXProviderUnavailableError()
 
         fx_rate = fx_info["fx_rate"]
         rate_source = fx_info["rate_source"]
