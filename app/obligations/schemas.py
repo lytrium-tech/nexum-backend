@@ -158,7 +158,7 @@ class ObligationRead(BaseModel):
 
 class ObligationPaymentCreate(BaseModel):
     account_id: UUID
-    amount: Decimal = Field(gt=0)
+    amount: Decimal | None = Field(None, gt=0)
     source_message_id: UUID | None = None
     raw_message: str | None = None
 

@@ -6518,6 +6518,9 @@
               {
                 "type": "string",
                 "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
               }
             ],
             "title": "Amount"
@@ -6548,8 +6551,7 @@
         },
         "type": "object",
         "required": [
-          "account_id",
-          "amount"
+          "account_id"
         ],
         "title": "ObligationPaymentCreate"
       },

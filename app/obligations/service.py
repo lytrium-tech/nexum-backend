@@ -218,7 +218,6 @@ class ObligationService:
             or target_currency is None
             or source_currency == target_currency
         ):
-            applied_amount = payload.amount
             fx_rate = Decimal("1.0")
             rate_source = "internal"
             rate_timestamp = None
@@ -238,26 +237,75 @@ class ObligationService:
             rate_source = fx_info["rate_source"]
             rate_timestamp = fx_info["rate_timestamp"]
             is_estimated = True
-            applied_amount = round_to_minimum_unit(payload.amount * fx_rate, target_currency)
 
         period = self._current_period()
         payments = await self.repository.get_period_payments(auth_user_id, period)
         paid_this_period = payments.get(obligation.id, Decimal("0.00"))
 
+        from app.core.currency import round_to_minimum_unit
+
         if obligation.payment_mode == "fixed_full_payment":
             if paid_this_period > 0:
                 raise ObligationAlreadyPaidError()
-            if obligation.amount is None or applied_amount != obligation.amount:
+            if obligation.amount is None:
+                raise ObligationAmountMismatchError("0.00")
+
+            if payload.amount is None:
+                applied_amount = obligation.amount
+                if fx_rate == Decimal("1.0"):
+                    payload.amount = applied_amount
+                else:
+                    payload.amount = round_to_minimum_unit(applied_amount / fx_rate, source_currency)
+            else:
+                if fx_rate == Decimal("1.0"):
+                    applied_amount = payload.amount
+                else:
+                    applied_amount = round_to_minimum_unit(payload.amount * fx_rate, target_currency)
+
+            if applied_amount != obligation.amount:
                 raise ObligationAmountMismatchError(str(obligation.amount))
+
         elif obligation.payment_mode == "partial_allowed":
             if obligation.amount is not None:
                 remaining = max(Decimal("0.00"), obligation.amount - paid_this_period)
                 if remaining <= 0:
                     raise ObligationAlreadyPaidError()
+
+                if payload.amount is None:
+                    applied_amount = remaining
+                    if fx_rate == Decimal("1.0"):
+                        payload.amount = applied_amount
+                    else:
+                        payload.amount = round_to_minimum_unit(applied_amount / fx_rate, source_currency)
+                else:
+                    if fx_rate == Decimal("1.0"):
+                        applied_amount = payload.amount
+                    else:
+                        applied_amount = round_to_minimum_unit(payload.amount * fx_rate, target_currency)
+
                 if applied_amount > remaining:
                     raise ObligationOverpaymentError(str(remaining))
+            else:
+                # If obligation has no amount, partial_allowed requires user-entered amount
+                if payload.amount is None:
+                    raise ObligationValidationError("Monto de pago requerido para obligaciones sin límite.")
+                applied_amount = payload.amount
+
         elif obligation.payment_mode == "variable_amount":
-            pass  # variable_amount allows any amount, any number of payments
+            if payload.amount is None:
+                if obligation.amount is None:
+                    raise ObligationValidationError("Monto de pago requerido para obligaciones sin límite.")
+                remaining = max(Decimal("0.00"), obligation.amount - paid_this_period)
+                applied_amount = remaining
+                if fx_rate == Decimal("1.0"):
+                    payload.amount = applied_amount
+                else:
+                    payload.amount = round_to_minimum_unit(applied_amount / fx_rate, source_currency)
+            else:
+                if fx_rate == Decimal("1.0"):
+                    applied_amount = payload.amount
+                else:
+                    applied_amount = round_to_minimum_unit(payload.amount * fx_rate, target_currency)
 
         # Validate funds in source currency after confirming payment amount matches business rules
         if not isinstance(account.balance, Mock) and account.balance < payload.amount:

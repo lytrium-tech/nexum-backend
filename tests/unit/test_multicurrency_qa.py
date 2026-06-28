@@ -1064,3 +1064,156 @@ async def test_early_payment_no_future_installments_rejected(
             await credit_service.create_early_payment(
                 user_id, card_id, purchase_id, payload, command_id=uuid.uuid4()
             )
+
+
+# ── Tests para fixed_full_payment con amount=None (Bug 1 - Full Payment Intent) ────
+
+
+@pytest.mark.asyncio
+async def test_fixed_obligation_cop_paid_from_cop_full_payment_succeeds(
+    obligation_service, mock_obligation_repo, mock_account_repo, mock_ledger_repo
+):
+    user_id = uuid.uuid4()
+    ob_id = uuid.uuid4()
+    acc_id = uuid.uuid4()
+
+    mock_obligation_repo.get_by_id_for_update.return_value = Obligation(
+        id=ob_id,
+        user_id=user_id,
+        amount=Decimal("10000"),
+        currency="COP",
+        payment_mode="fixed_full_payment",
+        is_active=True,
+        created_at=datetime.now(),
+    )
+    mock_obligation_repo.get_period_payments.return_value = {}
+    mock_account_repo.get_by_id_for_update.return_value = Account(
+        id=acc_id, user_id=user_id, balance=Decimal("15000"), currency="COP"
+    )
+
+    event_mock = MagicMock()
+    event_mock.id = uuid.uuid4()
+    event_mock.period = "2026-06"
+    mock_ledger_repo.insert_event.return_value = MagicMock(event=event_mock, idempotent=False)
+
+    payload = ObligationPaymentCreate(account_id=acc_id, amount=None)
+    res = await obligation_service.create_payment(user_id, ob_id, payload, idempotency_key=None)
+
+    assert res.status == "success"
+    assert res.amount == Decimal("10000")
+
+
+@pytest.mark.asyncio
+async def test_fixed_obligation_cop_paid_from_usd_full_payment_succeeds(
+    obligation_service, mock_obligation_repo, mock_account_repo, mock_ledger_repo
+):
+    user_id = uuid.uuid4()
+    ob_id = uuid.uuid4()
+    acc_id = uuid.uuid4()
+
+    mock_obligation_repo.get_by_id_for_update.return_value = Obligation(
+        id=ob_id,
+        user_id=user_id,
+        amount=Decimal("10000"),
+        currency="COP",
+        payment_mode="fixed_full_payment",
+        is_active=True,
+        created_at=datetime.now(),
+    )
+    mock_obligation_repo.get_period_payments.return_value = {}
+    mock_account_repo.get_by_id_for_update.return_value = Account(
+        id=acc_id, user_id=user_id, balance=Decimal("5.00"), currency="USD"
+    )
+
+    event_mock = MagicMock()
+    event_mock.id = uuid.uuid4()
+    event_mock.period = "2026-06"
+    mock_ledger_repo.insert_event.return_value = MagicMock(event=event_mock, idempotent=False)
+
+    payload = ObligationPaymentCreate(account_id=acc_id, amount=None)
+
+    with patch("app.core.currency.get_fx_rate") as mock_fx:
+        mock_fx.return_value = {
+            "fx_rate": Decimal("4000"),
+            "rate_source": "dolarapi_colombia",
+            "rate_timestamp": datetime.now(),
+        }
+        res = await obligation_service.create_payment(user_id, ob_id, payload, idempotency_key=None)
+
+    assert res.status == "success"
+    assert res.amount == Decimal("2.50")
+
+
+@pytest.mark.asyncio
+async def test_fixed_obligation_usd_paid_from_cop_full_payment_succeeds(
+    obligation_service, mock_obligation_repo, mock_account_repo, mock_ledger_repo
+):
+    user_id = uuid.uuid4()
+    ob_id = uuid.uuid4()
+    acc_id = uuid.uuid4()
+
+    mock_obligation_repo.get_by_id_for_update.return_value = Obligation(
+        id=ob_id,
+        user_id=user_id,
+        amount=Decimal("50"),
+        currency="USD",
+        payment_mode="fixed_full_payment",
+        is_active=True,
+        created_at=datetime.now(),
+    )
+    mock_obligation_repo.get_period_payments.return_value = {}
+    mock_account_repo.get_by_id_for_update.return_value = Account(
+        id=acc_id, user_id=user_id, balance=Decimal("250000"), currency="COP"
+    )
+
+    event_mock = MagicMock()
+    event_mock.id = uuid.uuid4()
+    event_mock.period = "2026-06"
+    mock_ledger_repo.insert_event.return_value = MagicMock(event=event_mock, idempotent=False)
+
+    payload = ObligationPaymentCreate(account_id=acc_id, amount=None)
+
+    with patch("app.core.currency.get_fx_rate") as mock_fx:
+        mock_fx.return_value = {
+            "fx_rate": Decimal("0.00025"),
+            "rate_source": "dolarapi_colombia",
+            "rate_timestamp": datetime.now(),
+        }
+        res = await obligation_service.create_payment(user_id, ob_id, payload, idempotency_key=None)
+
+    assert res.status == "success"
+    assert res.amount == Decimal("200000")
+
+
+@pytest.mark.asyncio
+async def test_fixed_obligation_full_payment_validates_insufficient_funds(
+    obligation_service, mock_obligation_repo, mock_account_repo
+):
+    user_id = uuid.uuid4()
+    ob_id = uuid.uuid4()
+    acc_id = uuid.uuid4()
+
+    mock_obligation_repo.get_by_id_for_update.return_value = Obligation(
+        id=ob_id,
+        user_id=user_id,
+        amount=Decimal("10000"),
+        currency="COP",
+        payment_mode="fixed_full_payment",
+        is_active=True,
+        created_at=datetime.now(),
+    )
+    mock_obligation_repo.get_period_payments.return_value = {}
+    mock_account_repo.get_by_id_for_update.return_value = Account(
+        id=acc_id, user_id=user_id, balance=Decimal("1.00"), currency="USD"
+    )
+
+    payload = ObligationPaymentCreate(account_id=acc_id, amount=None)
+
+    with patch("app.core.currency.get_fx_rate") as mock_fx:
+        mock_fx.return_value = {
+            "fx_rate": Decimal("4000"),
+            "rate_source": "dolarapi_colombia",
+            "rate_timestamp": datetime.now(),
+        }
+        with pytest.raises(InsufficientFundsError):
+            await obligation_service.create_payment(user_id, ob_id, payload, idempotency_key=None)
