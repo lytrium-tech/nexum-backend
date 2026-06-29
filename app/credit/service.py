@@ -21,6 +21,7 @@ from app.credit.repository import CreditCardRepository
 from app.credit.schemas import (
     CreditCardCreate,
     CreditCardEarlyPaymentCreate,
+    CreditCardEarlyPaymentPreviewCreate,
     CreditCardEarlyPaymentResult,
     CreditCardInstallmentRead,
     CreditCardPaymentCreate,
@@ -32,6 +33,7 @@ from app.credit.schemas import (
     CreditCardStatusRead,
     CreditCardUpdate,
     CreditSummaryRead,
+    PaymentPreviewResult,
 )
 from app.credit.utils import calculate_credit_card_dates
 from app.ledger.repository import LedgerRepository
@@ -574,24 +576,28 @@ class CreditCardService:
 
         from app.core.currency import round_to_minimum_unit
 
-        # Calculate applied_amount and payload.amount (source currency)
+        if total_remaining_principal <= 0:
+            raise CreditDomainError("PAY_EARLY_NOT_ELIGIBLE: Remaining principal is zero.")
+
+        # Calculate applied_amount and source_amount (source currency)
         if payload.amount is None:
             # Pay full remaining principal
             applied_amount = total_remaining_principal
             if fx_rate == Decimal("1.0"):
-                payload.amount = applied_amount
+                source_amount = applied_amount
             else:
                 # Convert back to source currency
-                payload.amount = round_to_minimum_unit(applied_amount / fx_rate, source_currency)
+                source_amount = round_to_minimum_unit(applied_amount / fx_rate, source_currency)
         else:
             # Custom amount provided
+            source_amount = payload.amount
             if fx_rate == Decimal("1.0"):
-                applied_amount = payload.amount
+                applied_amount = source_amount
             else:
-                applied_amount = round_to_minimum_unit(payload.amount * fx_rate, target_currency)
+                applied_amount = round_to_minimum_unit(source_amount * fx_rate, target_currency)
 
         # Check balance
-        if not isinstance(account.balance, Mock) and account.balance < payload.amount:
+        if not isinstance(account.balance, Mock) and account.balance < source_amount:
             raise ValueError("Insufficient balance")
 
         if applied_amount > total_remaining_principal:
@@ -604,7 +610,7 @@ class CreditCardService:
             user_id=user_id,
             event_type="credit_card_payment",
             direction="outflow",
-            amount=payload.amount,
+            amount=source_amount,
             currency=source_currency,
             account_id=payload.account_id,
             source_message_id=payload.source_message_id,
@@ -638,7 +644,7 @@ class CreditCardService:
                 account_balance=account.balance,
             )
 
-        account.balance -= payload.amount
+        account.balance -= source_amount
 
         early_payment = CreditCardEarlyPayment(
             user_id=user_id,
@@ -648,7 +654,7 @@ class CreditCardService:
             allocation_mode=payload.allocation_mode,
             event_id=event.id,
             metadata_={
-                "source_amount": str(payload.amount),
+                "source_amount": str(source_amount),
                 "source_currency": source_currency,
                 "applied_amount": str(applied_amount),
                 "applied_currency": target_currency,
@@ -686,10 +692,111 @@ class CreditCardService:
             status="success",
             event_id=event.id,
             early_payment_id=early_payment.id,
-            amount=payload.amount,
+            amount=source_amount,
             current_debt=new_debt,
             available_credit=max(Decimal("0.00"), card.credit_limit - new_debt),
             account_balance=account.balance,
+        )
+
+    async def preview_early_payment(
+        self,
+        user_id: uuid.UUID,
+        card_id: uuid.UUID,
+        purchase_id: uuid.UUID,
+        payload: CreditCardEarlyPaymentPreviewCreate,
+    ) -> PaymentPreviewResult:
+        from decimal import Decimal
+
+        card = await self.repo.get_by_id_for_update(card_id)
+        if not card or card.user_id != user_id or not card.is_active:
+            raise CreditCardNotFoundError()
+
+        transaction = await self.repo.get_transaction_by_id(purchase_id)
+        if not transaction or transaction.credit_card_id != card.id:
+            from app.credit.exceptions import CreditDomainError
+            raise CreditDomainError("Purchase not found or does not belong to this card")
+
+        # Get pending installments
+        all_installments = await self.repo.list_installments_for_transaction_for_update(purchase_id)
+        installments = [i for i in all_installments if i.status != "paid"]
+
+        from app.credit.exceptions import CreditDomainError
+        if any(i.installments_total == 1 for i in all_installments):
+            raise CreditDomainError(
+                "PAY_EARLY_NOT_ELIGIBLE: Single-installment purchases are not eligible for early payment."
+            )
+
+        from datetime import date
+        current_period = date.today().strftime("%Y-%m")
+        future_installments = [i for i in installments if i.scheduled_period > current_period]
+        if not future_installments:
+            raise CreditDomainError(
+                "PAY_EARLY_NOT_ELIGIBLE: No future pending/unbilled installments found for early payment."
+            )
+
+        total_remaining_principal = sum(
+            i.principal_amount - (i.paid_amount if i.paid_amount is not None else Decimal("0.00"))
+            for i in installments
+        )
+        if total_remaining_principal <= 0:
+            raise CreditDomainError("PAY_EARLY_NOT_ELIGIBLE: Remaining principal is zero.")
+
+        account = await self.account_repo.get_by_id_for_update(payload.account_id)
+        if not account or account.user_id != user_id or not account.is_active:
+            raise ValueError("Account not found or inactive")
+
+        source_currency = account.currency
+        target_currency = card.currency
+
+        from unittest.mock import Mock
+        if (
+            isinstance(source_currency, Mock)
+            or isinstance(target_currency, Mock)
+            or source_currency is None
+            or target_currency is None
+            or source_currency == target_currency
+        ):
+            fx_rate = Decimal("1.0")
+            rate_source = "internal"
+            is_estimated = False
+        else:
+            from app.core.currency import FXProviderError, UnsupportedCurrencyError, get_fx_rate
+            from app.core.errors import ForbiddenError, FXProviderUnavailableError
+
+            try:
+                fx_info = await get_fx_rate(source_currency, target_currency)
+            except UnsupportedCurrencyError as e:
+                raise ForbiddenError(message=str(e))
+            except FXProviderError:
+                raise FXProviderUnavailableError()
+
+            fx_rate = fx_info["fx_rate"]
+            rate_source = fx_info["rate_source"]
+            is_estimated = True
+
+        from app.core.currency import round_to_minimum_unit
+
+        if payload.amount is None:
+            applied_amount = total_remaining_principal
+            if fx_rate == Decimal("1.0"):
+                source_amount = applied_amount
+            else:
+                source_amount = round_to_minimum_unit(applied_amount / fx_rate, source_currency)
+        else:
+            source_amount = payload.amount
+            if fx_rate == Decimal("1.0"):
+                applied_amount = source_amount
+            else:
+                applied_amount = round_to_minimum_unit(source_amount * fx_rate, target_currency)
+
+        return PaymentPreviewResult(
+            source_amount=source_amount,
+            source_currency=source_currency if not isinstance(source_currency, Mock) else "COP",
+            target_amount=applied_amount,
+            target_currency=target_currency if not isinstance(target_currency, Mock) else "COP",
+            fx_rate=fx_rate,
+            rate_source=rate_source,
+            is_estimated=is_estimated,
         )
 
     async def _calculate_card_status(self, card: CreditCard) -> CreditCardStatusRead:

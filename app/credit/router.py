@@ -14,6 +14,7 @@ from app.credit.exceptions import (
 from app.credit.schemas import (
     CreditCardCreate,
     CreditCardEarlyPaymentCreate,
+    CreditCardEarlyPaymentPreviewCreate,
     CreditCardEarlyPaymentResult,
     CreditCardInstallmentRead,
     CreditCardPaymentCreate,
@@ -25,6 +26,7 @@ from app.credit.schemas import (
     CreditCardStatusRead,
     CreditCardUpdate,
     CreditSummaryRead,
+    PaymentPreviewResult,
 )
 from app.credit.service import CreditCardService
 from app.users.dependencies import CurrentUserProfile
@@ -197,6 +199,34 @@ async def create_early_payment(
             raise HTTPException(status_code=400, detail=str(e))
         except InvalidPaymentAmountError as e:
             raise HTTPException(status_code=409, detail=str(e))
+        except Exception as e:
+            from app.credit.exceptions import CreditDomainError
+            if isinstance(e, CreditDomainError) and "Purchase not found" in str(e):
+                raise HTTPException(status_code=404, detail=str(e))
+            if isinstance(e, CreditDomainError):
+                raise HTTPException(status_code=400, detail=str(e))
+            raise
+
+@router.post("/cards/{card_id}/purchases/{purchase_id}/pay_early/preview", response_model=PaymentPreviewResult)
+async def preview_early_payment(
+    card_id: uuid.UUID,
+    purchase_id: uuid.UUID,
+    payload: CreditCardEarlyPaymentPreviewCreate,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+):
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        user_id = current_profile.id
+        service = get_credit_service(session)
+        try:
+            return await service.preview_early_payment(user_id, card_id, purchase_id, payload)
+        except CreditCardNotFoundError:
+            raise HTTPException(status_code=404, detail="Credit card not found")
+        except ValueError as e:
+            if str(e) == "Account not found or inactive":
+                raise HTTPException(status_code=404, detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             from app.credit.exceptions import CreditDomainError
             if isinstance(e, CreditDomainError) and "Purchase not found" in str(e):

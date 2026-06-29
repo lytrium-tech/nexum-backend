@@ -1304,6 +1304,64 @@
         }
       }
     },
+    "/api/v1/obligations/{obligation_id}/payments/preview": {
+      "post": {
+        "tags": [
+          "obligations"
+        ],
+        "summary": "Preview Obligation Payment",
+        "operationId": "preview_obligation_payment_api_v1_obligations__obligation_id__payments_preview_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "obligation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Obligation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObligationPaymentPreviewCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentPreviewResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/obligations/{obligation_id}/payments": {
       "post": {
         "tags": [
@@ -1789,6 +1847,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CreditCardEarlyPaymentResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/credit/cards/{card_id}/purchases/{purchase_id}/pay_early/preview": {
+      "post": {
+        "tags": [
+          "Credit"
+        ],
+        "summary": "Preview Early Payment",
+        "operationId": "preview_early_payment_api_v1_credit_cards__card_id__purchases__purchase_id__pay_early_preview_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Card Id"
+            }
+          },
+          {
+            "name": "purchase_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Purchase Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreditCardEarlyPaymentPreviewCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentPreviewResult"
                 }
               }
             }
@@ -3760,6 +3886,36 @@
           "account_id"
         ],
         "title": "CreditCardEarlyPaymentCreate"
+      },
+      "CreditCardEarlyPaymentPreviewCreate": {
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Account Id"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          }
+        },
+        "type": "object",
+        "required": [
+          "account_id"
+        ],
+        "title": "CreditCardEarlyPaymentPreviewCreate"
       },
       "CreditCardEarlyPaymentResult": {
         "properties": {
@@ -6555,6 +6711,36 @@
         ],
         "title": "ObligationPaymentCreate"
       },
+      "ObligationPaymentPreviewCreate": {
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Account Id"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          }
+        },
+        "type": "object",
+        "required": [
+          "account_id"
+        ],
+        "title": "ObligationPaymentPreviewCreate"
+      },
       "ObligationPaymentResult": {
         "properties": {
           "payment_id": {
@@ -6887,6 +7073,52 @@
         },
         "type": "object",
         "title": "ObligationUpdate"
+      },
+      "PaymentPreviewResult": {
+        "properties": {
+          "source_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Source Amount"
+          },
+          "source_currency": {
+            "type": "string",
+            "title": "Source Currency"
+          },
+          "target_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Target Amount"
+          },
+          "target_currency": {
+            "type": "string",
+            "title": "Target Currency"
+          },
+          "fx_rate": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Fx Rate"
+          },
+          "rate_source": {
+            "type": "string",
+            "title": "Rate Source"
+          },
+          "is_estimated": {
+            "type": "boolean",
+            "title": "Is Estimated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_amount",
+          "source_currency",
+          "target_amount",
+          "target_currency",
+          "fx_rate",
+          "rate_source",
+          "is_estimated"
+        ],
+        "title": "PaymentPreviewResult"
       },
       "SnapshotCash": {
         "properties": {

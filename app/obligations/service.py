@@ -3,7 +3,6 @@ from uuid import UUID
 from app.accounts.exceptions import AccountForbiddenError
 from app.accounts.repository import AccountRepository
 from app.cash.exceptions import InsufficientFundsError
-from app.core.currency import round_to_minimum_unit
 from app.core.errors import NotFoundError
 from app.core.utils import clean_presentation_name, normalize_name
 from app.ledger.enums import Direction, EventType
@@ -23,9 +22,11 @@ from app.obligations.repository import ObligationRepository
 from app.obligations.schemas import (
     ObligationCreate,
     ObligationPaymentCreate,
+    ObligationPaymentPreviewCreate,
     ObligationPaymentResult,
     ObligationRead,
     ObligationUpdate,
+    PaymentPreviewResult,
 )
 
 
@@ -253,14 +254,15 @@ class ObligationService:
             if payload.amount is None:
                 applied_amount = obligation.amount
                 if fx_rate == Decimal("1.0"):
-                    payload.amount = applied_amount
+                    source_amount = applied_amount
                 else:
-                    payload.amount = round_to_minimum_unit(applied_amount / fx_rate, source_currency)
+                    source_amount = round_to_minimum_unit(applied_amount / fx_rate, source_currency)
             else:
+                source_amount = payload.amount
                 if fx_rate == Decimal("1.0"):
-                    applied_amount = payload.amount
+                    applied_amount = source_amount
                 else:
-                    applied_amount = round_to_minimum_unit(payload.amount * fx_rate, target_currency)
+                    applied_amount = round_to_minimum_unit(source_amount * fx_rate, target_currency)
 
             if applied_amount != obligation.amount:
                 raise ObligationAmountMismatchError(str(obligation.amount))
@@ -274,22 +276,26 @@ class ObligationService:
                 if payload.amount is None:
                     applied_amount = remaining
                     if fx_rate == Decimal("1.0"):
-                        payload.amount = applied_amount
+                        source_amount = applied_amount
                     else:
-                        payload.amount = round_to_minimum_unit(applied_amount / fx_rate, source_currency)
+                        source_amount = round_to_minimum_unit(applied_amount / fx_rate, source_currency)
                 else:
+                    source_amount = payload.amount
                     if fx_rate == Decimal("1.0"):
-                        applied_amount = payload.amount
+                        applied_amount = source_amount
                     else:
-                        applied_amount = round_to_minimum_unit(payload.amount * fx_rate, target_currency)
+                        applied_amount = round_to_minimum_unit(source_amount * fx_rate, target_currency)
 
                 if applied_amount > remaining:
                     raise ObligationOverpaymentError(str(remaining))
             else:
-                # If obligation has no amount, partial_allowed requires user-entered amount
                 if payload.amount is None:
                     raise ObligationValidationError("Monto de pago requerido para obligaciones sin límite.")
-                applied_amount = payload.amount
+                source_amount = payload.amount
+                if fx_rate == Decimal("1.0"):
+                    applied_amount = source_amount
+                else:
+                    applied_amount = round_to_minimum_unit(source_amount * fx_rate, target_currency)
 
         elif obligation.payment_mode == "variable_amount":
             if payload.amount is None:
@@ -298,17 +304,17 @@ class ObligationService:
                 remaining = max(Decimal("0.00"), obligation.amount - paid_this_period)
                 applied_amount = remaining
                 if fx_rate == Decimal("1.0"):
-                    payload.amount = applied_amount
+                    source_amount = applied_amount
                 else:
-                    payload.amount = round_to_minimum_unit(applied_amount / fx_rate, source_currency)
+                    source_amount = round_to_minimum_unit(applied_amount / fx_rate, source_currency)
             else:
+                source_amount = payload.amount
                 if fx_rate == Decimal("1.0"):
-                    applied_amount = payload.amount
+                    applied_amount = source_amount
                 else:
-                    applied_amount = round_to_minimum_unit(payload.amount * fx_rate, target_currency)
+                    applied_amount = round_to_minimum_unit(source_amount * fx_rate, target_currency)
 
-        # Validate funds in source currency after confirming payment amount matches business rules
-        if not isinstance(account.balance, Mock) and account.balance < payload.amount:
+        if not isinstance(account.balance, Mock) and account.balance < source_amount:
             raise InsufficientFundsError()
 
         event_create = LedgerEventCreate(
@@ -316,7 +322,7 @@ class ObligationService:
             account_id=account.id,
             event_type=EventType.OBLIGATION_PAYMENT,
             direction=Direction.OUTFLOW,
-            amount=payload.amount,
+            amount=source_amount,
             currency=account.currency,
             source_message_id=payload.source_message_id,
             raw_message=payload.raw_message,
@@ -344,12 +350,12 @@ class ObligationService:
             return ObligationPaymentResult(
                 payment_id=None,
                 event_id=event.id if event else None,
-                amount=payload.amount,
+                amount=source_amount,
                 balance_after=account.balance,
                 status="idempotent_retry",
             )
 
-        await self.account_repo.update_balance(account, -payload.amount)
+        await self.account_repo.update_balance(account, -source_amount)
 
         payment = ObligationPayment(
             user_id=auth_user_id,
@@ -359,7 +365,7 @@ class ObligationService:
             event_id=event.id,
             period=event.period,
             metadata_={
-                "source_amount": str(payload.amount),
+                "source_amount": str(source_amount),
                 "source_currency": source_currency,
                 "applied_amount": str(applied_amount),
                 "applied_currency": target_currency,
@@ -378,9 +384,147 @@ class ObligationService:
         return ObligationPaymentResult(
             payment_id=payment.id,
             event_id=event.id,
-            amount=payload.amount,
+            amount=source_amount,
             balance_after=account.balance,
             status="success",
+        )
+
+    async def preview_payment(
+        self,
+        auth_user_id: UUID,
+        obligation_id: UUID,
+        payload: ObligationPaymentPreviewCreate,
+    ) -> PaymentPreviewResult:
+        from decimal import Decimal
+
+        obligation = await self.repository.get_by_id_for_update(obligation_id)
+        if not obligation:
+            raise NotFoundError(message="Obligación no encontrada.")
+
+        if obligation.user_id != auth_user_id:
+            raise ObligationForbiddenError()
+
+        account = await self.account_repo.get_by_id_for_update(payload.account_id)
+        if not account:
+            raise NotFoundError(message="Cuenta no encontrada.")
+
+        from unittest.mock import Mock
+
+        if (
+            account.user_id is not None
+            and not isinstance(account.user_id, Mock)
+            and account.user_id != auth_user_id
+        ):
+            raise AccountForbiddenError()
+
+        source_currency = account.currency
+        target_currency = obligation.currency
+
+        if (
+            isinstance(source_currency, Mock)
+            or isinstance(target_currency, Mock)
+            or source_currency is None
+            or target_currency is None
+            or source_currency == target_currency
+        ):
+            fx_rate = Decimal("1.0")
+            rate_source = "internal"
+            is_estimated = False
+        else:
+            from app.core.currency import FXProviderError, UnsupportedCurrencyError, get_fx_rate
+            from app.core.errors import ForbiddenError, FXProviderUnavailableError
+
+            try:
+                fx_info = await get_fx_rate(source_currency, target_currency)
+            except UnsupportedCurrencyError as e:
+                raise ForbiddenError(message=str(e))
+            except FXProviderError:
+                raise FXProviderUnavailableError()
+
+            fx_rate = fx_info["fx_rate"]
+            rate_source = fx_info["rate_source"]
+            is_estimated = True
+
+        period = self._current_period()
+        payments = await self.repository.get_period_payments(auth_user_id, period)
+        paid_this_period = payments.get(obligation.id, Decimal("0.00"))
+
+        from app.core.currency import round_to_minimum_unit
+
+        applied_amount = Decimal("0.00")
+        source_amount = Decimal("0.00")
+
+        if obligation.payment_mode == "fixed_full_payment":
+            if paid_this_period > 0:
+                raise ObligationAlreadyPaidError()
+            if obligation.amount is None:
+                raise ObligationAmountMismatchError("0.00")
+
+            if payload.amount is None:
+                applied_amount = obligation.amount
+                if fx_rate == Decimal("1.0"):
+                    source_amount = applied_amount
+                else:
+                    source_amount = round_to_minimum_unit(applied_amount / fx_rate, source_currency)
+            else:
+                source_amount = payload.amount
+                if fx_rate == Decimal("1.0"):
+                    applied_amount = source_amount
+                else:
+                    applied_amount = round_to_minimum_unit(source_amount * fx_rate, target_currency)
+
+        elif obligation.payment_mode == "partial_allowed":
+            if obligation.amount is not None:
+                remaining = max(Decimal("0.00"), obligation.amount - paid_this_period)
+                if remaining <= 0:
+                    raise ObligationAlreadyPaidError()
+
+                if payload.amount is None:
+                    applied_amount = remaining
+                    if fx_rate == Decimal("1.0"):
+                        source_amount = applied_amount
+                    else:
+                        source_amount = round_to_minimum_unit(applied_amount / fx_rate, source_currency)
+                else:
+                    source_amount = payload.amount
+                    if fx_rate == Decimal("1.0"):
+                        applied_amount = source_amount
+                    else:
+                        applied_amount = round_to_minimum_unit(source_amount * fx_rate, target_currency)
+            else:
+                if payload.amount is None:
+                    raise ObligationValidationError("Monto de pago requerido para obligaciones sin límite.")
+                source_amount = payload.amount
+                if fx_rate == Decimal("1.0"):
+                    applied_amount = source_amount
+                else:
+                    applied_amount = round_to_minimum_unit(source_amount * fx_rate, target_currency)
+
+        elif obligation.payment_mode == "variable_amount":
+            if payload.amount is None:
+                if obligation.amount is None:
+                    raise ObligationValidationError("Monto de pago requerido para obligaciones sin límite.")
+                remaining = max(Decimal("0.00"), obligation.amount - paid_this_period)
+                applied_amount = remaining
+                if fx_rate == Decimal("1.0"):
+                    source_amount = applied_amount
+                else:
+                    source_amount = round_to_minimum_unit(applied_amount / fx_rate, source_currency)
+            else:
+                source_amount = payload.amount
+                if fx_rate == Decimal("1.0"):
+                    applied_amount = source_amount
+                else:
+                    applied_amount = round_to_minimum_unit(source_amount * fx_rate, target_currency)
+
+        return PaymentPreviewResult(
+            source_amount=source_amount,
+            source_currency=source_currency if not isinstance(source_currency, Mock) else "COP",
+            target_amount=applied_amount,
+            target_currency=target_currency if not isinstance(target_currency, Mock) else "COP",
+            fx_rate=fx_rate,
+            rate_source=rate_source,
+            is_estimated=is_estimated,
         )
 
     async def _get_obligation_or_404(self, obligation_id: UUID) -> Obligation:

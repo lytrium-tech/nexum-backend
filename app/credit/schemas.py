@@ -117,6 +117,19 @@ class CreditCardEarlyPaymentResult(BaseModel):
     available_credit: Decimal
     account_balance: Decimal
 
+class CreditCardEarlyPaymentPreviewCreate(BaseModel):
+    account_id: uuid.UUID
+    amount: Decimal | None = Field(None, gt=0)
+
+class PaymentPreviewResult(BaseModel):
+    source_amount: Decimal
+    source_currency: str
+    target_amount: Decimal
+    target_currency: str
+    fx_rate: Decimal
+    rate_source: str
+    is_estimated: bool
+
 
 class CreditCardStatusRead(BaseModel):
     card_id: uuid.UUID

@@ -169,3 +169,16 @@ class ObligationPaymentResult(BaseModel):
     amount: Decimal
     balance_after: Decimal
     status: str
+
+class ObligationPaymentPreviewCreate(BaseModel):
+    account_id: UUID
+    amount: Decimal | None = Field(None, gt=0)
+
+class PaymentPreviewResult(BaseModel):
+    source_amount: Decimal
+    source_currency: str
+    target_amount: Decimal
+    target_currency: str
+    fx_rate: Decimal
+    rate_source: str
+    is_estimated: bool
