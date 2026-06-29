@@ -35,9 +35,11 @@ class CreditCardRepository:
     async def get_card_debt(self, card_id: uuid.UUID) -> tuple[float, float]:
         """Returns (credit_card_debt, monthly_cc_payment) from the view."""
         query = text("""
-            SELECT credit_card_debt, monthly_cc_payment 
-            FROM v_credit_card_debt 
-            WHERE credit_card_id = :card_id
+            SELECT 
+                COALESCE(SUM(principal_amount + interest_amount - paid_amount), 0) as credit_card_debt,
+                COALESCE(SUM(CASE WHEN scheduled_period = to_char((now() AT TIME ZONE 'America/Bogota'), 'YYYY-MM') THEN principal_amount + interest_amount - paid_amount ELSE 0 END), 0) as monthly_cc_payment
+            FROM credit_card_installments 
+            WHERE credit_card_id = :card_id AND status != 'paid'
         """)
         result = await self.session.execute(query, {"card_id": card_id})
         row = result.fetchone()
@@ -93,7 +95,9 @@ class CreditCardRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_transaction_by_id(self, transaction_id: uuid.UUID) -> CreditCardTransaction | None:
+    async def get_transaction_by_id(
+        self, transaction_id: uuid.UUID
+    ) -> CreditCardTransaction | None:
         result = await self.session.execute(
             select(CreditCardTransaction).where(CreditCardTransaction.id == transaction_id)
         )
@@ -110,10 +114,9 @@ class CreditCardRepository:
         )
         return list(result.scalars().all())
 
-    async def get_early_payment_by_event(
-        self, event_id: uuid.UUID
-    ):
+    async def get_early_payment_by_event(self, event_id: uuid.UUID):
         from app.credit.models import CreditCardEarlyPayment
+
         result = await self.session.execute(
             select(CreditCardEarlyPayment).where(CreditCardEarlyPayment.event_id == event_id)
         )
@@ -121,14 +124,20 @@ class CreditCardRepository:
 
     async def get_card_status_data(self, card_id: uuid.UUID, cycle_end_date: date) -> dict:
         query = text("""
+            WITH inst AS (
+                SELECT 
+                    COALESCE(SUM(CASE WHEN scheduled_period <= to_char(:cycle_end::date, 'YYYY-MM') THEN principal_amount + interest_amount - paid_amount ELSE 0 END), 0) as billed,
+                    COALESCE(SUM(CASE WHEN scheduled_period > to_char(:cycle_end::date, 'YYYY-MM') THEN principal_amount + interest_amount - paid_amount ELSE 0 END), 0) as unbilled
+                FROM credit_card_installments
+                WHERE credit_card_id = :card_id AND status != 'paid'
+            )
             SELECT
-                COUNT(*) FILTER (WHERE type = 'purchase') as purchases_count,
-                COUNT(*) FILTER (WHERE type = 'payment') as payments_count,
-                COALESCE(SUM(CASE WHEN type = 'purchase' AND DATE(occurred_at AT TIME ZONE 'UTC') <= :cycle_end THEN COALESCE(total_with_interest, amount) ELSE 0 END), 0) as billed_purchases,
-                COALESCE(SUM(CASE WHEN type = 'purchase' AND DATE(occurred_at AT TIME ZONE 'UTC') > :cycle_end THEN COALESCE(total_with_interest, amount) ELSE 0 END), 0) as unbilled_purchases,
-                COALESCE(SUM(CASE WHEN type = 'payment' THEN amount ELSE 0 END), 0) as total_payments
-            FROM credit_card_transactions
-            WHERE credit_card_id = :card_id
+                (SELECT COUNT(*) FROM credit_card_transactions WHERE type = 'purchase' AND credit_card_id = :card_id) as purchases_count,
+                (SELECT COUNT(*) FROM credit_card_transactions WHERE type = 'payment' AND credit_card_id = :card_id) as payments_count,
+                billed as billed_purchases,
+                unbilled as unbilled_purchases,
+                0 as total_payments
+            FROM inst
         """)
         result = await self.session.execute(
             query, {"card_id": card_id, "cycle_end": cycle_end_date}
@@ -160,8 +169,10 @@ class CreditCardRepository:
         """)
         result = await self.session.execute(query, {"card_id": card_id})
         return Decimal(str(result.scalar_one_or_none() or 0))
+
     async def list_statements(self, card_id: uuid.UUID) -> list:
         from app.credit.models import CreditCardStatement
+
         result = await self.session.execute(
             select(CreditCardStatement)
             .where(CreditCardStatement.credit_card_id == card_id)
@@ -171,19 +182,18 @@ class CreditCardRepository:
 
     async def get_statement(self, card_id: uuid.UUID, period: str):
         from app.credit.models import CreditCardStatement
+
         result = await self.session.execute(
-            select(CreditCardStatement)
-            .where(
+            select(CreditCardStatement).where(
                 CreditCardStatement.credit_card_id == card_id,
-                CreditCardStatement.billing_period == period
+                CreditCardStatement.billing_period == period,
             )
         )
         return result.scalars().first()
 
-    async def list_unpaid_statement_charges_for_update(
-        self, card_id: uuid.UUID
-    ) -> list:
+    async def list_unpaid_statement_charges_for_update(self, card_id: uuid.UUID) -> list:
         from app.credit.models import CreditCardStatement, CreditCardStatementCharge
+
         result = await self.session.execute(
             select(CreditCardStatementCharge)
             .join(CreditCardStatement)
