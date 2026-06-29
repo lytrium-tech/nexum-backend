@@ -673,16 +673,20 @@ class CreditCardService:
 
         for inst, new_amt in zip(installments, new_amounts):
             paid_val = inst.paid_amount if inst.paid_amount is not None else Decimal("0.00")
-            inst.principal_amount = paid_val + new_amt
-            inst.total_amount = inst.principal_amount + (
-                inst.interest_amount if inst.interest_amount is not None else Decimal("0.00")
-            )
-            if inst.principal_amount <= paid_val and inst.principal_amount > 0:
-                inst.status = "paid"
-            elif inst.principal_amount == Decimal("0.00"):
+            new_principal = paid_val + new_amt
+
+            if new_principal <= Decimal("0.00"):
+                inst.paid_amount = inst.principal_amount
                 inst.status = "paid"
             else:
-                inst.status = "pending"
+                inst.principal_amount = new_principal
+                inst.total_amount = inst.principal_amount + (
+                    inst.interest_amount if inst.interest_amount is not None else Decimal("0.00")
+                )
+                if inst.principal_amount <= paid_val:
+                    inst.status = "paid"
+                else:
+                    inst.status = "pending"
 
         await self.session.flush()
 

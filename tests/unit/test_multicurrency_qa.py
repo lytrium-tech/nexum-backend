@@ -958,7 +958,7 @@ async def test_early_payment_amount_none_succeeds(
 
     assert res.status == "success"
     assert res.amount == Decimal("20")
-    assert mock_inst.principal_amount == Decimal("0.00")
+    assert mock_inst.paid_amount == mock_inst.principal_amount
 
 
 @pytest.mark.asyncio
