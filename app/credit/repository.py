@@ -126,8 +126,8 @@ class CreditCardRepository:
         query = text("""
             WITH inst AS (
                 SELECT 
-                    COALESCE(SUM(CASE WHEN scheduled_period <= to_char(:cycle_end::date, 'YYYY-MM') THEN principal_amount + interest_amount - paid_amount ELSE 0 END), 0) as billed,
-                    COALESCE(SUM(CASE WHEN scheduled_period > to_char(:cycle_end::date, 'YYYY-MM') THEN principal_amount + interest_amount - paid_amount ELSE 0 END), 0) as unbilled
+                    COALESCE(SUM(CASE WHEN scheduled_period <= to_char(CAST(:cycle_end AS DATE), 'YYYY-MM') THEN principal_amount + interest_amount - paid_amount ELSE 0 END), 0) as billed,
+                    COALESCE(SUM(CASE WHEN scheduled_period > to_char(CAST(:cycle_end AS DATE), 'YYYY-MM') THEN principal_amount + interest_amount - paid_amount ELSE 0 END), 0) as unbilled
                 FROM credit_card_installments
                 WHERE credit_card_id = :card_id AND status != 'paid'
             )
