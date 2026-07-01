@@ -1,11 +1,11 @@
-import uuid
-from uuid import UUID
 from datetime import datetime
+from uuid import UUID
 
-from app.obligations.models import Obligation
-from app.obligations.repository import ObligationRepository
-from app.obligations.schemas import ObligationCreate, ObligationRead, ObligationUpdate
 from app.core.errors import NotFoundError
+from app.obligations.models import Obligation, ObligationPeriod
+from app.obligations.period_engine import PeriodEngine
+from app.obligations.repository import ObligationRepository
+from app.obligations.schemas import ObligationCreate, ObligationPeriodRead, ObligationRead
 
 
 class ObligationService:
@@ -45,3 +45,39 @@ class ObligationService:
         )
         created = await self.repository.create(obligation)
         return ObligationRead.model_validate(created)
+
+    async def list_periods(self, auth_user_id: UUID, obligation_id: UUID) -> list[ObligationPeriodRead]:
+        obligation = await self.repository.get_by_id(obligation_id)
+        if not obligation or obligation.user_id != auth_user_id:
+            raise NotFoundError("Obligation not found")
+        
+        periods = await self.repository.session.execute(
+            __import__('sqlalchemy').select(ObligationPeriod).where(ObligationPeriod.obligation_id == obligation_id).order_by(ObligationPeriod.sequence_number)
+        )
+        return [ObligationPeriodRead.model_validate(p) for p in periods.scalars().all()]
+
+    async def sync_periods(self, auth_user_id: UUID, obligation_id: UUID) -> list[ObligationPeriodRead]:
+        obligation = await self.repository.get_by_id(obligation_id)
+        if not obligation or obligation.user_id != auth_user_id:
+            raise NotFoundError("Obligation not found")
+        
+        engine = PeriodEngine(self.repository.session)
+        await engine.sync_periods(obligation, datetime.now().date())
+        
+        return await self.list_periods(auth_user_id, obligation_id)
+
+    async def skip_period(self, auth_user_id: UUID, period_id: UUID) -> ObligationPeriodRead:
+        period = await self.repository.session.execute(
+            __import__('sqlalchemy').select(ObligationPeriod).where(ObligationPeriod.id == period_id)
+        )
+        period = period.scalar_one_or_none()
+        if not period:
+            raise NotFoundError("Period not found")
+            
+        obligation = await self.repository.get_by_id(period.obligation_id)
+        if not obligation or obligation.user_id != auth_user_id:
+            raise NotFoundError("Obligation not found")
+            
+        engine = PeriodEngine(self.repository.session)
+        skipped = await engine.skip_period(period_id)
+        return ObligationPeriodRead.model_validate(skipped)

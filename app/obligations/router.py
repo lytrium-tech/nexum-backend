@@ -1,13 +1,16 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
 from app.core.uow import UnitOfWork
-from app.obligations.exceptions import ObligationForbiddenError
 from app.obligations.repository import ObligationRepository
-from app.obligations.schemas import ObligationCreate, ObligationRead, ObligationUpdate
+from app.obligations.schemas import (
+    ObligationCreate,
+    ObligationPeriodRead,
+    ObligationRead,
+)
 from app.obligations.service import ObligationService
 from app.users.dependencies import CurrentUserProfile
 
@@ -52,3 +55,34 @@ async def get_obligation(
     service = get_obligation_service(session)
     user_id = current_profile.id
     return await service.get_obligation(user_id, obligation_id)
+
+@router.get("/{obligation_id}/periods", response_model=list[ObligationPeriodRead])
+async def list_periods(
+    obligation_id: UUID,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+) -> list[ObligationPeriodRead]:
+    service = get_obligation_service(session)
+    return await service.list_periods(current_profile.id, obligation_id)
+
+@router.post("/{obligation_id}/sync-periods", response_model=list[ObligationPeriodRead])
+async def sync_periods(
+    obligation_id: UUID,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+) -> list[ObligationPeriodRead]:
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = get_obligation_service(session)
+        return await service.sync_periods(current_profile.id, obligation_id)
+
+@router.post("/periods/{period_id}/skip", response_model=ObligationPeriodRead)
+async def skip_period(
+    period_id: UUID,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+) -> ObligationPeriodRead:
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = get_obligation_service(session)
+        return await service.skip_period(current_profile.id, period_id)
