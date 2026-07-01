@@ -1,7 +1,9 @@
 import uuid
 from decimal import Decimal
 from unittest.mock import AsyncMock
+
 import pytest
+
 from app.credit.models import CreditCard
 from app.credit.service import CreditCardService
 

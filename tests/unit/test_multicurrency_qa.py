@@ -803,7 +803,7 @@ async def test_early_future_payment_succeeds(
         total_amount=Decimal("20"),
         status="pending",
         paid_amount=None,  # Tests NoneType safety!
-        scheduled_period="2026-07",
+        scheduled_period="2027-07",
     )
     mock_credit_repo.list_installments_for_transaction_for_update.return_value = [mock_inst]
     mock_credit_repo.get_card_debt.return_value = (Decimal("240"), Decimal("240"))
@@ -865,7 +865,7 @@ async def test_early_future_payment_cross_currency(
         total_amount=Decimal("20"),
         status="pending",
         paid_amount=Decimal("0"),
-        scheduled_period="2026-07",
+        scheduled_period="2027-07",
     )
     mock_credit_repo.list_installments_for_transaction_for_update.return_value = [mock_inst]
     mock_credit_repo.get_card_debt.return_value = (Decimal("240"), Decimal("240"))
@@ -939,7 +939,7 @@ async def test_early_payment_amount_none_succeeds(
         total_amount=Decimal("20"),
         status="pending",
         paid_amount=Decimal("0"),
-        scheduled_period="2026-07",
+        scheduled_period="2027-07",
     )
     mock_credit_repo.list_installments_for_transaction_for_update.return_value = [mock_inst]
     mock_credit_repo.get_card_debt.return_value = (Decimal("240"), Decimal("240"))
