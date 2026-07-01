@@ -3,30 +3,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.accounts.exceptions import AccountForbiddenError
-from app.accounts.repository import AccountRepository
-from app.cash.exceptions import InsufficientFundsError
 from app.core.database import get_db_session
 from app.core.uow import UnitOfWork
-from app.ledger.repository import LedgerRepository
-from app.obligations.exceptions import (
-    ObligationAlreadyPaidError,
-    ObligationAmountMismatchError,
-    ObligationForbiddenError,
-    ObligationInactiveError,
-    ObligationOverpaymentError,
-    ObligationValidationError,
-)
+from app.obligations.exceptions import ObligationForbiddenError
 from app.obligations.repository import ObligationRepository
-from app.obligations.schemas import (
-    ObligationCreate,
-    ObligationPaymentCreate,
-    ObligationPaymentPreviewCreate,
-    ObligationPaymentResult,
-    ObligationRead,
-    ObligationUpdate,
-    PaymentPreviewResult,
-)
+from app.obligations.schemas import ObligationCreate, ObligationRead, ObligationUpdate
 from app.obligations.service import ObligationService
 from app.users.dependencies import CurrentUserProfile
 
@@ -35,9 +16,7 @@ router = APIRouter(prefix="/obligations", tags=["obligations"])
 
 def get_obligation_service(session: AsyncSession = Depends(get_db_session)) -> ObligationService:
     repo = ObligationRepository(session)
-    account_repo = AccountRepository(session)
-    ledger_repo = LedgerRepository(session)
-    return ObligationService(repo, account_repo, ledger_repo)
+    return ObligationService(repo)
 
 
 @router.post("", response_model=ObligationRead, status_code=status.HTTP_201_CREATED)
@@ -73,76 +52,3 @@ async def get_obligation(
     service = get_obligation_service(session)
     user_id = current_profile.id
     return await service.get_obligation(user_id, obligation_id)
-
-
-@router.patch("/{obligation_id}", response_model=ObligationRead)
-async def update_obligation(
-    obligation_id: UUID,
-    payload: ObligationUpdate,
-    current_profile: CurrentUserProfile,
-    session: AsyncSession = Depends(get_db_session),
-) -> ObligationRead:
-    uow = UnitOfWork(session)
-    async with uow.transaction():
-        service = get_obligation_service(session)
-        user_id = current_profile.id
-        return await service.update_obligation(user_id, obligation_id, payload)
-
-
-@router.post("/{obligation_id}/payments/preview", response_model=PaymentPreviewResult)
-async def preview_obligation_payment(
-    obligation_id: UUID,
-    payload: ObligationPaymentPreviewCreate,
-    current_profile: CurrentUserProfile,
-    session: AsyncSession = Depends(get_db_session),
-):
-    uow = UnitOfWork(session)
-    async with uow.transaction():
-        user_id = current_profile.id
-        service = get_obligation_service(session)
-        try:
-            return await service.preview_payment(user_id, obligation_id, payload)
-        except ObligationForbiddenError:
-            raise HTTPException(status_code=403, detail="Not authorized")
-        except ObligationInactiveError:
-            raise HTTPException(status_code=400, detail="Obligation is inactive")
-        except ObligationAlreadyPaidError:
-            raise HTTPException(status_code=409, detail="Obligation already paid this period")
-        except ObligationAmountMismatchError as e:
-            raise HTTPException(status_code=409, detail=f"Amount mismatch. Expected: {str(e)}")
-        except ObligationOverpaymentError as e:
-            raise HTTPException(status_code=409, detail=f"Overpayment. Max allowed: {str(e)}")
-        except ObligationValidationError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except AccountForbiddenError:
-            raise HTTPException(status_code=403, detail="Account not authorized")
-        except InsufficientFundsError:
-            raise HTTPException(status_code=400, detail="Insufficient funds")
-
-
-@router.delete("/{obligation_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_obligation(
-    obligation_id: UUID,
-    current_profile: CurrentUserProfile,
-    session: AsyncSession = Depends(get_db_session),
-) -> None:
-    uow = UnitOfWork(session)
-    async with uow.transaction():
-        service = get_obligation_service(session)
-        user_id = current_profile.id
-        await service.delete_obligation(user_id, obligation_id)
-
-
-@router.post("/{obligation_id}/payments", response_model=ObligationPaymentResult)
-async def create_payment(
-    obligation_id: UUID,
-    payload: ObligationPaymentCreate,
-    current_profile: CurrentUserProfile,
-    idempotency_key: str | None = Header(None),
-    session: AsyncSession = Depends(get_db_session),
-) -> ObligationPaymentResult:
-    uow = UnitOfWork(session)
-    async with uow.transaction():
-        service = get_obligation_service(session)
-        user_id = current_profile.id
-        return await service.create_payment(user_id, obligation_id, payload, idempotency_key)

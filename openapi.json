@@ -1207,233 +1207,6 @@
             }
           }
         }
-      },
-      "patch": {
-        "tags": [
-          "obligations"
-        ],
-        "summary": "Update Obligation",
-        "operationId": "update_obligation_api_v1_obligations__obligation_id__patch",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "obligation_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Obligation Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ObligationUpdate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ObligationRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "obligations"
-        ],
-        "summary": "Delete Obligation",
-        "operationId": "delete_obligation_api_v1_obligations__obligation_id__delete",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "obligation_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Obligation Id"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/obligations/{obligation_id}/payments/preview": {
-      "post": {
-        "tags": [
-          "obligations"
-        ],
-        "summary": "Preview Obligation Payment",
-        "operationId": "preview_obligation_payment_api_v1_obligations__obligation_id__payments_preview_post",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "obligation_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Obligation Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ObligationPaymentPreviewCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PaymentPreviewResult"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/obligations/{obligation_id}/payments": {
-      "post": {
-        "tags": [
-          "obligations"
-        ],
-        "summary": "Create Payment",
-        "operationId": "create_payment_api_v1_obligations__obligation_id__payments_post",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "obligation_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Obligation Id"
-            }
-          },
-          {
-            "name": "idempotency-key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ObligationPaymentCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ObligationPaymentResult"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
       }
     },
     "/api/v1/credit/cards": {
@@ -6567,7 +6340,48 @@
             "minLength": 1,
             "title": "Name"
           },
-          "amount": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "category_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "currency": {
+            "type": "string",
+            "maxLength": 3,
+            "minLength": 3,
+            "title": "Currency"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "frequency": {
+            "type": "string",
+            "title": "Frequency"
+          },
+          "payment_mode": {
+            "type": "string",
+            "title": "Payment Mode"
+          },
+          "base_amount": {
             "anyOf": [
               {
                 "type": "number",
@@ -6581,12 +6395,17 @@
                 "type": "null"
               }
             ],
-            "title": "Amount"
+            "title": "Base Amount"
           },
-          "payment_mode": {
+          "start_date": {
             "type": "string",
-            "title": "Payment Mode",
-            "default": "fixed_full_payment"
+            "format": "date",
+            "title": "Start Date"
+          },
+          "first_due_date": {
+            "type": "string",
+            "format": "date",
+            "title": "First Due Date"
           },
           "due_day": {
             "anyOf": [
@@ -6601,196 +6420,66 @@
             ],
             "title": "Due Day"
           },
-          "frequency": {
+          "due_month": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "integer",
+                "maximum": 12.0,
+                "minimum": 1.0
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Frequency"
+            "title": "Due Month"
           },
-          "currency": {
-            "type": "string",
-            "maxLength": 3,
-            "minLength": 3,
-            "title": "Currency"
+          "interval_count": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Interval Count",
+            "default": 1
           },
-          "category_id": {
+          "end_date": {
             "anyOf": [
               {
                 "type": "string",
-                "format": "uuid"
+                "format": "date"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Category Id"
+            "title": "End Date"
+          },
+          "end_count": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Count"
           },
           "metadata": {
             "additionalProperties": true,
             "type": "object",
             "title": "Metadata"
-          },
-          "already_paid_this_period": {
-            "type": "boolean",
-            "title": "Already Paid This Period",
-            "default": false
-          },
-          "start_next_period": {
-            "type": "boolean",
-            "title": "Start Next Period",
-            "default": false
-          },
-          "pending_this_period": {
-            "type": "boolean",
-            "title": "Pending This Period",
-            "default": false
           }
         },
         "type": "object",
         "required": [
           "name",
-          "currency"
+          "currency",
+          "type",
+          "frequency",
+          "payment_mode",
+          "start_date",
+          "first_due_date"
         ],
         "title": "ObligationCreate"
-      },
-      "ObligationPaymentCreate": {
-        "properties": {
-          "account_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Account Id"
-          },
-          "amount": {
-            "anyOf": [
-              {
-                "type": "number",
-                "exclusiveMinimum": 0.0
-              },
-              {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Amount"
-          },
-          "source_message_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Message Id"
-          },
-          "raw_message": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Raw Message"
-          }
-        },
-        "type": "object",
-        "required": [
-          "account_id"
-        ],
-        "title": "ObligationPaymentCreate"
-      },
-      "ObligationPaymentPreviewCreate": {
-        "properties": {
-          "account_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Account Id"
-          },
-          "amount": {
-            "anyOf": [
-              {
-                "type": "number",
-                "exclusiveMinimum": 0.0
-              },
-              {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Amount"
-          }
-        },
-        "type": "object",
-        "required": [
-          "account_id"
-        ],
-        "title": "ObligationPaymentPreviewCreate"
-      },
-      "ObligationPaymentResult": {
-        "properties": {
-          "payment_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Payment Id"
-          },
-          "event_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Event Id"
-          },
-          "amount": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Amount"
-          },
-          "balance_after": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Balance After"
-          },
-          "status": {
-            "type": "string",
-            "title": "Status"
-          }
-        },
-        "type": "object",
-        "required": [
-          "payment_id",
-          "event_id",
-          "amount",
-          "balance_after",
-          "status"
-        ],
-        "title": "ObligationPaymentResult"
       },
       "ObligationRead": {
         "properties": {
@@ -6808,34 +6497,7 @@
             "type": "string",
             "title": "Name"
           },
-          "amount": {
-            "anyOf": [
-              {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Amount"
-          },
-          "payment_mode": {
-            "type": "string",
-            "title": "Payment Mode"
-          },
-          "due_day": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Due Day"
-          },
-          "frequency": {
+          "description": {
             "anyOf": [
               {
                 "type": "string"
@@ -6844,11 +6506,7 @@
                 "type": "null"
               }
             ],
-            "title": "Frequency"
-          },
-          "is_active": {
-            "type": "boolean",
-            "title": "Is Active"
+            "title": "Description"
           },
           "category_id": {
             "anyOf": [
@@ -6866,10 +6524,92 @@
             "type": "string",
             "title": "Currency"
           },
-          "metadata": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Metadata"
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "frequency": {
+            "type": "string",
+            "title": "Frequency"
+          },
+          "payment_mode": {
+            "type": "string",
+            "title": "Payment Mode"
+          },
+          "base_amount": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Amount"
+          },
+          "start_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Start Date"
+          },
+          "first_due_date": {
+            "type": "string",
+            "format": "date",
+            "title": "First Due Date"
+          },
+          "due_day": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Day"
+          },
+          "due_month": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Month"
+          },
+          "interval_count": {
+            "type": "integer",
+            "title": "Interval Count"
+          },
+          "end_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Date"
+          },
+          "end_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Count"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
           },
           "created_at": {
             "type": "string",
@@ -6881,70 +6621,10 @@
             "format": "date-time",
             "title": "Updated At"
           },
-          "paid_this_period": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Paid This Period",
-            "default": "0.00"
-          },
-          "last_payment_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Payment At"
-          },
-          "remaining_amount": {
-            "anyOf": [
-              {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Remaining Amount",
-            "readOnly": true
-          },
-          "is_pending": {
-            "type": "boolean",
-            "title": "Is Pending",
-            "readOnly": true
-          },
-          "period_status": {
-            "type": "string",
-            "title": "Period Status",
-            "readOnly": true
-          },
-          "next_due_date": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Due Date",
-            "readOnly": true
-          },
-          "days_until_due": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Days Until Due",
-            "readOnly": true
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
           }
         },
         "type": "object",
@@ -6952,127 +6632,26 @@
           "id",
           "user_id",
           "name",
-          "amount",
-          "payment_mode",
-          "due_day",
-          "frequency",
-          "is_active",
+          "description",
           "category_id",
           "currency",
-          "metadata",
+          "type",
+          "frequency",
+          "payment_mode",
+          "base_amount",
+          "start_date",
+          "first_due_date",
+          "due_day",
+          "due_month",
+          "interval_count",
+          "end_date",
+          "end_count",
+          "status",
           "created_at",
           "updated_at",
-          "remaining_amount",
-          "is_pending",
-          "period_status",
-          "next_due_date",
-          "days_until_due"
+          "metadata"
         ],
         "title": "ObligationRead"
-      },
-      "ObligationUpdate": {
-        "properties": {
-          "name": {
-            "anyOf": [
-              {
-                "type": "string",
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
-          },
-          "amount": {
-            "anyOf": [
-              {
-                "type": "number",
-                "exclusiveMinimum": 0.0
-              },
-              {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Amount"
-          },
-          "payment_mode": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Payment Mode"
-          },
-          "due_day": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "maximum": 31.0,
-                "minimum": 1.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Due Day"
-          },
-          "frequency": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Frequency"
-          },
-          "category_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Category Id"
-          },
-          "is_active": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Is Active"
-          },
-          "metadata": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Metadata"
-          }
-        },
-        "type": "object",
-        "title": "ObligationUpdate"
       },
       "PaymentPreviewResult": {
         "properties": {

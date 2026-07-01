@@ -32,7 +32,7 @@ from app.goals.schemas import GoalContributionCreate, GoalCreate
 from app.goals.service import GoalService
 from app.integrations.gemini_client import gemini_client
 from app.intelligence.service import IntelligenceService
-from app.obligations.schemas import ObligationCreate, ObligationPaymentCreate
+from app.obligations.schemas import ObligationCreate
 from app.obligations.service import ObligationService
 from app.transfers.schemas import TransferCreate
 from app.transfers.service import TransfersService
@@ -926,25 +926,9 @@ class ConversationsService:
                 user_id, uuid.UUID(data["goal_id"]), dto, str(command_id)
             )
         elif intent == "create_obligation":
-            dto = ObligationCreate(
-                name=data["name"],
-                amount=Decimal(str(data["amount"])),
-                currency=data.get("currency", "COP"),
-                due_day=data.get("due_day"),
-                frequency=data.get("frequency"),
-                category_id=uuid.UUID(data["category_id"]) if "category_id" in data else None,
-            )
-            await self.obl_service.create_obligation(user_id, dto)
+            raise NotImplementedError("Obligation creation is temporarily disabled for V1.6 refactoring.")
         elif intent == "create_obligation_payment":
-            dto = ObligationPaymentCreate(
-                amount=Decimal(str(data["amount"])),
-                account_id=uuid.UUID(data["account_id"]),
-                source_message_id=source_msg_id,
-                raw_message=raw_msg,
-            )
-            await self.obl_service.create_payment(
-                user_id, uuid.UUID(data["obligation_id"]), dto, str(command_id)
-            )
+            raise NotImplementedError("Obligation payments are temporarily disabled for V1.6 refactoring.")
         elif intent == "create_credit_card_payment":
             dto = CreditCardPaymentCreate(
                 amount=Decimal(str(data["amount"])),

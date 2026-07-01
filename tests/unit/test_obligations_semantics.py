@@ -1,237 +1,72 @@
-import uuid
-from datetime import datetime
+from datetime import date, datetime, UTC
 from decimal import Decimal
-from zoneinfo import ZoneInfo
+import uuid
 
-from freezegun import freeze_time
+import pytest
+from pydantic import ValidationError
+from app.obligations.schemas import ObligationPeriodRead, ObligationPaymentRead
 
-from app.obligations.schemas import ObligationRead
+def test_create_period_amount_null_pending_definition():
+    # 4. Se puede crear obligation_period con amount null y status pending_amount_definition
+    payload = {
+        "id": uuid.uuid4(),
+        "obligation_id": uuid.uuid4(),
+        "period_key": "2026-07",
+        "sequence_number": 1,
+        "start_date": date(2026, 7, 1),
+        "end_date": date(2026, 7, 31),
+        "due_date": date(2026, 7, 15),
+        "amount": None,
+        "currency": "COP",
+        "paid_amount": "0.00",
+        "status": "pending_amount_definition",
+        "created_at": datetime.now(UTC),
+        "updated_at": datetime.now(UTC)
+    }
+    period = ObligationPeriodRead(**payload)
+    assert period.amount is None
+    assert period.status == "pending_amount_definition"
 
+def test_create_period_amount_defined_pending_payment():
+    # 5. Se puede crear obligation_period fixed con amount definido y status pending_payment
+    payload = {
+        "id": uuid.uuid4(),
+        "obligation_id": uuid.uuid4(),
+        "period_key": "2026-08",
+        "sequence_number": 2,
+        "start_date": date(2026, 8, 1),
+        "end_date": date(2026, 8, 31),
+        "due_date": date(2026, 8, 15),
+        "amount": "100.00",
+        "currency": "COP",
+        "paid_amount": "0.00",
+        "status": "pending_payment",
+        "created_at": datetime.now(UTC),
+        "updated_at": datetime.now(UTC)
+    }
+    period = ObligationPeriodRead(**payload)
+    assert period.amount == Decimal("100.00")
+    assert period.status == "pending_payment"
 
-def test_paid_obligation_is_not_pending_in_same_period():
-    o = ObligationRead(
-        id=uuid.uuid4(),
-        user_id=uuid.uuid4(),
-        name="Arriendo",
-        amount=Decimal("1000.00"),
-        payment_mode="fixed_full_payment",
-        due_day=5,
-        frequency="monthly",
-        is_active=True,
-        category_id=None,
-        currency="COP",
-        metadata_={},
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-        paid_this_period=Decimal("1000.00"),
-    )
-    assert o.period_status == "paid"
-    assert o.remaining_amount == Decimal("0.00")
-    assert not o.is_pending
-
-
-def test_overdue_obligation_after_due_day():
-    now = datetime.now(ZoneInfo("America/Bogota"))
-    past_due = now.date().day - 1
-    if past_due < 1:
-        # Can't test easily if it's the 1st of the month
-        return
-
-    o = ObligationRead(
-        id=uuid.uuid4(),
-        user_id=uuid.uuid4(),
-        name="Arriendo",
-        amount=Decimal("1000.00"),
-        payment_mode="fixed_full_payment",
-        due_day=past_due,
-        frequency="monthly",
-        is_active=True,
-        category_id=None,
-        currency="COP",
-        metadata_={},
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-        paid_this_period=Decimal("0.00"),
-    )
-    assert o.period_status == "overdue"
-
-
-def test_not_overdue_if_already_paid():
-    now = datetime.now(ZoneInfo("America/Bogota"))
-    past_due = now.date().day - 1
-    if past_due < 1:
-        return
-
-    o = ObligationRead(
-        id=uuid.uuid4(),
-        user_id=uuid.uuid4(),
-        name="Arriendo",
-        amount=Decimal("1000.00"),
-        payment_mode="fixed_full_payment",
-        due_day=past_due,
-        frequency="monthly",
-        is_active=True,
-        category_id=None,
-        currency="COP",
-        metadata_={},
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-        paid_this_period=Decimal("1000.00"),
-    )
-    assert o.period_status == "paid"
-    assert o.remaining_amount == Decimal("0.00")
-
-
-def test_creation_with_already_paid_this_period():
-    now = datetime.now(ZoneInfo("America/Bogota"))
-    current_period = f"{now.year}-{now.month:02d}"
-
-    o = ObligationRead(
-        id=uuid.uuid4(),
-        user_id=uuid.uuid4(),
-        name="Arriendo",
-        amount=Decimal("1000.00"),
-        payment_mode="fixed_full_payment",
-        due_day=5,
-        frequency="monthly",
-        is_active=True,
-        category_id=None,
-        currency="COP",
-        metadata_={"skip_periods": [current_period]},
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-        paid_this_period=Decimal("0.00"),
-    )
-    assert o.period_status == "covered"
-    assert o.remaining_amount == Decimal("0.00")
-
-
-@freeze_time("2026-06-15 12:00:00")
-def test_active_obligation_pending_before_due_date():
-    o = ObligationRead(
-        id=uuid.uuid4(),
-        user_id=uuid.uuid4(),
-        name="Arriendo",
-        amount=Decimal("1000.00"),
-        payment_mode="fixed_full_payment",
-        due_day=20,
-        frequency="monthly",
-        is_active=True,
-        category_id=None,
-        currency="COP",
-        metadata_={},
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-        paid_this_period=Decimal("0.00"),
-    )
-    assert o.period_status == "pending"
-    assert o.is_pending is True
-
-
-@freeze_time("2026-06-25 12:00:00")
-def test_active_obligation_overdue_after_due_date():
-    o = ObligationRead(
-        id=uuid.uuid4(),
-        user_id=uuid.uuid4(),
-        name="Arriendo",
-        amount=Decimal("1000.00"),
-        payment_mode="fixed_full_payment",
-        due_day=20,
-        frequency="monthly",
-        is_active=True,
-        category_id=None,
-        currency="COP",
-        metadata_={},
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-        paid_this_period=Decimal("0.00"),
-    )
-    assert o.period_status == "overdue"
-    assert o.is_pending is True
-
-
-@freeze_time("2026-06-15 12:00:00")
-def test_partial_payment_returns_partial():
-    o = ObligationRead(
-        id=uuid.uuid4(),
-        user_id=uuid.uuid4(),
-        name="Arriendo",
-        amount=Decimal("1000.00"),
-        payment_mode="partial_allowed",
-        due_day=20,
-        frequency="monthly",
-        is_active=True,
-        category_id=None,
-        currency="COP",
-        metadata_={},
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-        paid_this_period=Decimal("500.00"),
-    )
-    assert o.period_status == "partial"
-    assert o.is_pending is True
-
-
-@freeze_time("2026-06-15 12:00:00")
-def test_inactive_obligation_returns_inactive():
-    o = ObligationRead(
-        id=uuid.uuid4(),
-        user_id=uuid.uuid4(),
-        name="Arriendo",
-        amount=Decimal("1000.00"),
-        payment_mode="fixed_full_payment",
-        due_day=20,
-        frequency="monthly",
-        is_active=False,
-        category_id=None,
-        currency="COP",
-        metadata_={},
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-        paid_this_period=Decimal("0.00"),
-    )
-    assert o.period_status == "inactive"
-    assert o.is_pending is False
-
-
-@freeze_time("2026-06-15 12:00:00")
-def test_due_date_and_days_calculated_correctly():
-    o = ObligationRead(
-        id=uuid.uuid4(),
-        user_id=uuid.uuid4(),
-        name="Arriendo",
-        amount=Decimal("1000.00"),
-        payment_mode="fixed_full_payment",
-        due_day=20,
-        frequency="monthly",
-        is_active=True,
-        category_id=None,
-        currency="COP",
-        metadata_={},
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-        paid_this_period=Decimal("0.00"),
-    )
-    assert o.next_due_date == "2026-06-20"
-    assert o.days_until_due == 5
-
-
-@freeze_time("2026-06-15 12:00:00")
-def test_monthly_recurrence_reappears_next_period():
-    o = ObligationRead(
-        id=uuid.uuid4(),
-        user_id=uuid.uuid4(),
-        name="Arriendo",
-        amount=Decimal("1000.00"),
-        payment_mode="fixed_full_payment",
-        due_day=20,
-        frequency="monthly",
-        is_active=True,
-        category_id=None,
-        currency="COP",
-        metadata_={"skip_periods": ["2026-05"]},
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-        paid_this_period=Decimal("0.00"),
-    )
-    assert o.period_status == "pending"
+def test_obligation_payment_saves_amounts_correctly():
+    # 9. obligation_payment guarda amount y source_amount correctamente.
+    payload = {
+        "id": uuid.uuid4(),
+        "obligation_id": uuid.uuid4(),
+        "obligation_period_id": uuid.uuid4(),
+        "account_id": uuid.uuid4(),
+        "financial_event_id": None,
+        "amount": "100.00",
+        "currency": "COP",
+        "source_amount": "25.00",
+        "source_currency": "USD",
+        "fx_rate": "4.00",
+        "rate_source": "test",
+        "rate_timestamp": None,
+        "is_estimated": False,
+        "paid_at": datetime.now(UTC),
+        "created_at": datetime.now(UTC)
+    }
+    payment = ObligationPaymentRead(**payload)
+    assert payment.amount == Decimal("100.00")
+    assert payment.source_amount == Decimal("25.00")

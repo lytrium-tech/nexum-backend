@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils import normalize_name
-from app.obligations.models import Obligation, ObligationPayment
+from app.obligations.models import Obligation, ObligationPayment, ObligationPeriod
 
 
 class ObligationRepository:
@@ -27,37 +27,21 @@ class ObligationRepository:
     async def list_by_user(self, user_id: UUID, include_archived: bool = False) -> list[Obligation]:
         stmt = select(Obligation).where(Obligation.user_id == user_id)
         if not include_archived:
-            stmt = stmt.where(Obligation.is_active)
+            stmt = stmt.where(Obligation.status != "archived")
         stmt = stmt.order_by(Obligation.created_at.desc())
 
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def check_name_exists(self, user_id: UUID, norm_name: str) -> bool:
-        result = await self.session.execute(
-            select(Obligation).where(Obligation.user_id == user_id).where(Obligation.is_active)
-        )
-        for obligation in result.scalars().all():
-            if normalize_name(obligation.name) == norm_name:
-                return True
-        return False
-
-    async def get_period_payments(self, user_id: UUID, period: str) -> dict[UUID, Decimal]:
-        from sqlalchemy import func
-
-        stmt = (
-            select(ObligationPayment.obligation_id, func.sum(ObligationPayment.amount))
-            .where(ObligationPayment.user_id == user_id)
-            .where(ObligationPayment.period == period)
-            .group_by(ObligationPayment.obligation_id)
-        )
-        result = await self.session.execute(stmt)
-        return {row[0]: Decimal(str(row[1] or 0)) for row in result.all()}
-
     async def create(self, obligation: Obligation) -> Obligation:
         self.session.add(obligation)
         await self.session.flush()
         return obligation
+
+    async def create_period(self, period: ObligationPeriod) -> ObligationPeriod:
+        self.session.add(period)
+        await self.session.flush()
+        return period
 
     async def create_payment(self, payment: ObligationPayment) -> ObligationPayment:
         self.session.add(payment)

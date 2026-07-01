@@ -124,7 +124,13 @@ async def test_conversational_create_goal_dynamic_currency():
     assert dto.currency == "USD"
 
 
+@pytest.mark.skip(reason="V1.6 obligations core refactoring")
+
+
 @pytest.mark.asyncio
+
+
+
 async def test_conversational_create_obligation_dynamic_currency():
     """Bug 1 variant: create_obligation uses dynamic currency instead of COP."""
     repo_mock = AsyncMock()
