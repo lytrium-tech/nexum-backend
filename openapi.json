@@ -1481,6 +1481,64 @@
         }
       }
     },
+    "/api/v1/obligations/periods/{period_id}/amount": {
+      "patch": {
+        "tags": [
+          "obligations"
+        ],
+        "summary": "Define Period Amount",
+        "operationId": "define_period_amount_api_v1_obligations_periods__period_id__amount_patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "period_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Period Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObligationPeriodAmountUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObligationPeriodRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/credit/cards": {
       "get": {
         "tags": [
@@ -6953,6 +7011,28 @@
           "created_at"
         ],
         "title": "ObligationPaymentRead"
+      },
+      "ObligationPeriodAmountUpdate": {
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              }
+            ],
+            "title": "Amount"
+          }
+        },
+        "type": "object",
+        "required": [
+          "amount"
+        ],
+        "title": "ObligationPeriodAmountUpdate"
       },
       "ObligationPeriodRead": {
         "properties": {

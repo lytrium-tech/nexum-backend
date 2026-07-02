@@ -103,3 +103,6 @@ class ObligationPaymentCreate(BaseModel):
     currency: str | None = Field(None, min_length=3, max_length=3)
     source_message_id: str | None = None
     raw_message: str | None = None
+
+class ObligationPeriodAmountUpdate(BaseModel):
+    amount: Decimal = Field(..., ge=0)

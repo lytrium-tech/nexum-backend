@@ -10,6 +10,7 @@ from app.obligations.schemas import (
     ObligationCreate,
     ObligationPaymentCreate,
     ObligationPaymentRead,
+    ObligationPeriodAmountUpdate,
     ObligationPeriodRead,
     ObligationRead,
 )
@@ -112,3 +113,15 @@ async def pay_specific_period(
     async with uow.transaction():
         service = get_obligation_service(session)
         return await service.pay_specific_period(current_profile.id, period_id, payload)
+
+@router.patch("/periods/{period_id}/amount", response_model=ObligationPeriodRead)
+async def define_period_amount(
+    period_id: UUID,
+    payload: ObligationPeriodAmountUpdate,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+) -> ObligationPeriodRead:
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = get_obligation_service(session)
+        return await service.define_amount(current_profile.id, period_id, payload)
