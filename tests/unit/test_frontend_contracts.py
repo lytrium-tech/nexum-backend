@@ -2,12 +2,10 @@ import json
 import uuid
 from decimal import Decimal
 
-import pytest
-
 from app.credit.schemas import CreditCardRead
 from app.goals.schemas import GoalRead
 from app.intelligence.schemas import IntelligenceSnapshotRead, SnapshotTruth
-from app.obligations.schemas import ObligationRead
+from app.obligations.schemas import ObligationPeriodRead, ObligationRead
 
 
 def test_goal_read_contract():
@@ -15,14 +13,18 @@ def test_goal_read_contract():
     assert "remaining_required_this_period" in fields
 
 
-@pytest.mark.skip(reason="V1.6 obligations core refactoring")
-
-
 def test_obligation_read_contract():
     fields = ObligationRead.model_fields.keys() | ObligationRead.model_computed_fields.keys()
-    assert "remaining_amount" in fields
-    assert "period_status" in fields
-    assert "is_pending" in fields
+    assert "status" in fields
+    assert "payment_mode" in fields
+    assert "frequency" in fields
+
+
+def test_obligation_period_read_contract():
+    fields = ObligationPeriodRead.model_fields.keys()
+    assert "amount" in fields
+    assert "paid_amount" in fields
+    assert "status" in fields
 
 
 def test_credit_card_read_contract():
@@ -68,8 +70,7 @@ def test_snapshot_truth_contract():
     assert "free_money" in truth_fields
 
 
-@pytest.mark.skip(reason="V1.6 obligations core refactoring - fields moved to Period")
-def test_openapi_contains_v11_fields():
+def test_openapi_contains_v16_fields():
     with open("openapi.json") as f:
         spec = json.load(f)
 
@@ -79,9 +80,13 @@ def test_openapi_contains_v11_fields():
     assert "remaining_required_this_period" in goal_props
 
     obs_props = schemas.get("ObligationRead", {}).get("properties", {})
-    assert "remaining_amount" in obs_props
-    assert "period_status" in obs_props
-    assert "is_pending" in obs_props
+    assert "status" in obs_props
+    assert "payment_mode" in obs_props
+
+    period_props = schemas.get("ObligationPeriodRead", {}).get("properties", {})
+    assert "amount" in period_props
+    assert "paid_amount" in period_props
+    assert "status" in period_props
 
     cc_props = schemas.get("CreditCardRead", {}).get("properties", {})
     assert "current_debt" in cc_props
