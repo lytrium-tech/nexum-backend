@@ -8,6 +8,8 @@ from app.core.uow import UnitOfWork
 from app.obligations.repository import ObligationRepository
 from app.obligations.schemas import (
     ObligationCreate,
+    ObligationPaymentCreate,
+    ObligationPaymentRead,
     ObligationPeriodRead,
     ObligationRead,
 )
@@ -86,3 +88,27 @@ async def skip_period(
     async with uow.transaction():
         service = get_obligation_service(session)
         return await service.skip_period(current_profile.id, period_id)
+
+@router.post("/{obligation_id}/pay", response_model=list[ObligationPaymentRead])
+async def pay_obligation_fifo(
+    obligation_id: UUID,
+    payload: ObligationPaymentCreate,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+) -> list[ObligationPaymentRead]:
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = get_obligation_service(session)
+        return await service.pay_obligation_fifo(current_profile.id, obligation_id, payload)
+
+@router.post("/periods/{period_id}/pay", response_model=ObligationPaymentRead)
+async def pay_specific_period(
+    period_id: UUID,
+    payload: ObligationPaymentCreate,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+) -> ObligationPaymentRead:
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = get_obligation_service(session)
+        return await service.pay_specific_period(current_profile.id, period_id, payload)

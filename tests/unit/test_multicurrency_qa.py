@@ -18,6 +18,7 @@ from app.obligations.models import Obligation
 from app.obligations.schemas import ObligationCreate
 from app.obligations.service import ObligationService
 
+
 class ObligationPaymentCreate:
     def __init__(self, **kwargs):
         pass

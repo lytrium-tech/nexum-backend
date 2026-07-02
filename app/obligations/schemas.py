@@ -96,3 +96,10 @@ class ObligationPaymentRead(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+class ObligationPaymentCreate(BaseModel):
+    account_id: UUID
+    amount: Decimal | None = Field(None, gt=0)
+    currency: str | None = Field(None, min_length=3, max_length=3)
+    source_message_id: str | None = None
+    raw_message: str | None = None

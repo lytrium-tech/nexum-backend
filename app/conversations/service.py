@@ -32,7 +32,6 @@ from app.goals.schemas import GoalContributionCreate, GoalCreate
 from app.goals.service import GoalService
 from app.integrations.gemini_client import gemini_client
 from app.intelligence.service import IntelligenceService
-from app.obligations.schemas import ObligationCreate
 from app.obligations.service import ObligationService
 from app.transfers.schemas import TransferCreate
 from app.transfers.service import TransfersService

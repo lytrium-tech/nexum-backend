@@ -61,3 +61,14 @@ class ObligationDuplicateError(ConflictError, ValueError):
     """Ya existe una obligación activa con este nombre."""
 
     error_code = "obligation_duplicate"
+
+class ObligationPeriodAmountRequiredError(ConflictError):
+    error_code = "OBLIGATION_PERIOD_AMOUNT_REQUIRED"
+    message = "Cannot pay a variable period until its amount is defined."
+
+class ObligationPaymentExceedsBalanceError(ConflictError):
+    error_code = "OBLIGATION_PAYMENT_EXCEEDS_REMAINING_BALANCE"
+    
+    def __init__(self, remaining: str = ""):
+        message = f"Payment exceeds remaining balance. {remaining}" if remaining else "Payment exceeds remaining balance."
+        super().__init__(message=message)

@@ -1,10 +1,10 @@
 from datetime import date
 from decimal import Decimal
-import uuid
 
 import pytest
 from pydantic import ValidationError
-from app.obligations.schemas import ObligationCreate, ObligationPeriodRead
+
+from app.obligations.schemas import ObligationCreate
 
 
 def test_create_monthly_fixed_obligation():

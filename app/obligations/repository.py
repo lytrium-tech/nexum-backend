@@ -1,10 +1,8 @@
-from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.utils import normalize_name
 from app.obligations.models import Obligation, ObligationPayment, ObligationPeriod
 
 

@@ -1,10 +1,9 @@
-from datetime import date, datetime, UTC
-from decimal import Decimal
 import uuid
+from datetime import UTC, date, datetime
+from decimal import Decimal
 
-import pytest
-from pydantic import ValidationError
-from app.obligations.schemas import ObligationPeriodRead, ObligationPaymentRead
+from app.obligations.schemas import ObligationPaymentRead, ObligationPeriodRead
+
 
 def test_create_period_amount_null_pending_definition():
     # 4. Se puede crear obligation_period con amount null y status pending_amount_definition
