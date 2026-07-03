@@ -99,14 +99,16 @@ class IntelligenceRepository:
         return dict(result.mappings().first() or {})
 
     async def get_obligations_metrics(self, user_id: uuid.UUID, period: str) -> dict[str, Any]:
-        # Pending means: is_active = true AND id NOT IN (SELECT obligation_id FROM obligation_payments WHERE period = :period)
         query = text(
-            "SELECT COUNT(id) as pending_count, COALESCE(SUM(amount), 0) as pending_amount "
-            "FROM obligations "
-            "WHERE user_id = :user_id AND is_active = true "
-            "AND id NOT IN (SELECT obligation_id FROM obligation_payments WHERE user_id = :user_id AND period = :period)"
+            "SELECT COUNT(op.id) as pending_count, "
+            "COALESCE(SUM(op.amount - COALESCE(op.paid_amount, 0)), 0) as pending_amount "
+            "FROM obligation_periods op "
+            "JOIN obligations o ON op.obligation_id = o.id "
+            "WHERE o.user_id = :user_id "
+            "AND op.status IN ('pending_payment', 'partially_paid', 'overdue') "
+            "AND op.amount IS NOT NULL"
         )
-        result = await self.session.execute(query, {"user_id": user_id, "period": period})
+        result = await self.session.execute(query, {"user_id": user_id})
         return dict(result.mappings().first() or {})
 
     async def get_transfers_metrics(
@@ -171,7 +173,19 @@ class IntelligenceRepository:
 
     async def get_pending_obligations(self, user_id: uuid.UUID) -> list[dict[str, Any]]:
         query = text(
-            "SELECT * FROM public.v_pending_obligations_current_month WHERE user_id = :user_id"
+            "SELECT "
+            "  o.id as obligation_id, "
+            "  o.name as name, "
+            "  op.amount - COALESCE(op.paid_amount, 0) as amount, "
+            "  CAST(EXTRACT(DAY FROM op.due_date) AS INTEGER) as due_day, "
+            "  o.frequency as frequency, "
+            "  true as is_pending "
+            "FROM obligation_periods op "
+            "JOIN obligations o ON op.obligation_id = o.id "
+            "WHERE o.user_id = :user_id "
+            "AND op.status IN ('pending_payment', 'partially_paid', 'overdue') "
+            "AND op.amount IS NOT NULL "
+            "ORDER BY op.due_date ASC"
         )
         result = await self.session.execute(query, {"user_id": user_id})
         return [dict(r) for r in result.mappings().all()]

@@ -1,5 +1,16 @@
 # Changelog del Backend
 
+## [v1.6.1-alpha] - Backend V1.6.1 Intelligence Snapshot Hotfix
+- Corregida falla en el endpoint de snapshot (`GET /api/v1/intelligence/snapshot`) que devolvía 500 tras la migración a Obligations V1.6.
+- Se eliminaron las consultas directas al campo obsoleto `obligations.amount` y a la vista legacy `v_pending_obligations_current_month`.
+- La capa de Intelligence ahora lee el estado financiero directamente de `obligation_periods` utilizando el modelo correcto.
+
+## [v1.6.0-alpha] - Backend V1.6 Obligations Core
+- Desacoplamiento de las obligaciones recurrentes en un sistema basado en instanciación de periodos (`ObligationPeriod`).
+- Soporte para abonos parciales, pagos adelantados y secuencias de vencimientos independientes.
+- Nuevo motor generador de periodos capaz de proyectar estados de deuda.
+- Eliminación de la deuda técnica relacionada con los campos inferidos `already_paid_this_period` y `remaining_amount` de la entidad base.
+
 ## [v1.5.0-alpha] - Backend V1.5 Credit Card Advanced Model
 - Implemented Persisted Statements with immutable frozen state.
 - Developed multi-tier Payment Allocation Waterfall (Past Due -> Interest -> Fees -> Billed Quotas -> Billed Revolving -> Unbilled Revolving).

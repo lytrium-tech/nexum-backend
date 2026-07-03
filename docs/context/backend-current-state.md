@@ -9,6 +9,8 @@ This document is the source of truth for the implemented and validated backend s
 - Tech Stack: FastAPI, SQLAlchemy, Pydantic, PostgreSQL.
 
 ## Completed Features
+- **Backend V1.6.1**: Intelligence Snapshot Fix. Corrected intelligence repository to use ObligationPeriod as the source of truth, eliminating legacy obligations.amount and broken views.
+- **Backend V1.6**: Obligations Core. Implemented ObligationPeriod engine for precise state tracking, partial payments, and dynamic completion cycles.
 - **Backend V1.5**: Ready for final handoff. Implemented Credit Card Advanced Model (Persisted Statements, Payment Waterfall, Early Payments). Enforced goal/obligation time semantics and cross-currency multi-account flows.
 - **Backend V1.4**: Multi-Currency Trust & Estimated FX. Enforced `currency` in all creation schemas and removed COP fallback. Implemented `estimated_totals` using Dolar API Colombia for USD->COP visualization layer.
 - **Backend V1.3**: Alpha Blocker Fixes. Implemented `covered` period status, enforced multi-currency global totals zeroing to prevent unsafe sums, fixed ledger currency assignments, and restored `include_archived` querying for accounts and obligations.
@@ -30,8 +32,8 @@ Backend explicitly owns financial calculations:
 ## Subsystems Status
 - **Credit**: Advanced V1.5 Model active. Explicit statements, frozen snapshots, early installment payments, fees/taxes/insurance charges, and multi-tier payment allocation waterfall.
 - **Goals**: Time-aware cross-currency contributions.
-- **Obligations**: Time-aware dynamic deductions.
-- **Intelligence**: Snapshot and Conversational engine.
+- **Obligations**: V1.6 Core active. Time-aware dynamic deductions, period-based engine, and partial payments.
+- **Intelligence**: Snapshot and Conversational engine. V1.6.1 snapshot uses ObligationPeriod as source of truth.
 - **Ledger/Cash**: Cross-currency transfers and strict multi-currency balances.
 
 ## Pending for V2
