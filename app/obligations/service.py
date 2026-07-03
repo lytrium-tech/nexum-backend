@@ -172,7 +172,7 @@ class ObligationService:
         if not obligation or obligation.user_id != auth_user_id:
             raise NotFoundError("Obligation not found")
 
-        if obligation.payment_mode != "variable":
+        if obligation.payment_mode not in ("variable", "variable_amount"):
             raise ValueError("Only variable obligations can define amount")
 
         if period.status in ("paid", "skipped", "cancelled"):

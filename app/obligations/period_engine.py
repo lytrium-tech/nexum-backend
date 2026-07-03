@@ -173,8 +173,9 @@ class PeriodEngine:
         if existing:
             return existing
 
-        amount = obligation.base_amount if obligation.payment_mode == "fixed" else None
-        status = "pending_payment" if obligation.payment_mode == "fixed" else "pending_amount_definition"
+        is_fixed = obligation.payment_mode in ("fixed", "partial_allowed", "fixed_full_payment")
+        amount = obligation.base_amount if is_fixed else None
+        status = "pending_payment" if is_fixed else "pending_amount_definition"
 
         if status == "pending_payment" and p_due < current_date:
             status = "overdue"
