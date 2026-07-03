@@ -1,3 +1,4 @@
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import select
@@ -45,3 +46,36 @@ class ObligationRepository:
         self.session.add(payment)
         await self.session.flush()
         return payment
+
+    async def get_pending_period_amounts_for_snapshot(self, user_id: UUID) -> dict[str, "Decimal"]:
+        """
+        Returns a dictionary mapping currency code to the sum of pending amounts
+        for all relevant periods (overdue, pending_payment, partially_paid).
+        """
+        from decimal import Decimal
+
+        from sqlalchemy import func
+
+        stmt = (
+            select(
+                Obligation.currency,
+                func.sum(
+                    ObligationPeriod.amount
+                    - func.coalesce(ObligationPeriod.paid_amount, Decimal("0.00"))
+                ).label("total_pending"),
+            )
+            .select_from(Obligation)
+            .join(ObligationPeriod, Obligation.id == ObligationPeriod.obligation_id)
+            .where(Obligation.user_id == user_id)
+            .where(ObligationPeriod.status.in_(["overdue", "pending_payment", "partially_paid"]))
+            .where(ObligationPeriod.amount.is_not(None))
+            .group_by(Obligation.currency)
+        )
+
+        result = await self.session.execute(stmt)
+        return {
+            row.currency.upper(): (
+                row.total_pending if row.total_pending is not None else Decimal("0.00")
+            )
+            for row in result.all()
+        }

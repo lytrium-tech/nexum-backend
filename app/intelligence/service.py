@@ -128,7 +128,9 @@ class IntelligenceService:
 
         # Credit Core is the source of truth for billed/unbilled debt separation.
         credit_summary = await CreditCardService(self.session).get_credit_summary(user_id)
-        billed_debt = sum((card.billed_debt or Decimal("0.00") for card in credit_summary.cards), Decimal("0.00"))
+        billed_debt = sum(
+            (card.billed_debt or Decimal("0.00") for card in credit_summary.cards), Decimal("0.00")
+        )
         unbilled_debt = sum((card.unbilled_debt for card in credit_summary.cards), Decimal("0.00"))
         next_payment_estimate = sum(
             (card.next_payment_estimate for card in credit_summary.cards), Decimal("0.00")
@@ -144,27 +146,22 @@ class IntelligenceService:
         available_real = self._safe_decimal(cash.get("total_balance"))
 
         from app.obligations.repository import ObligationRepository
-        from app.obligations.schemas import ObligationRead
 
         obligation_repo = ObligationRepository(self.session)
-        user_obligations = await obligation_repo.list_by_user(user_id)
-        obligation_payments = await obligation_repo.get_period_payments(user_id, period_str)
+        pending_amounts_by_currency = await obligation_repo.get_pending_period_amounts_for_snapshot(
+            user_id
+        )
 
         pending_obligations = Decimal("0.00")
-        for o in user_obligations:
-            or_read = ObligationRead.model_validate(o)
-            or_read.paid_this_period = obligation_payments.get(o.id, Decimal("0.00"))
-            if or_read.period_status in ("pending", "partial", "overdue"):
-                rem = or_read.remaining_amount
-                if rem is not None and rem > 0:
-                    pending_obligations += rem
-                    curr = o.currency.upper()
-                    get_cm(curr).committed_outflows += rem
+        for curr, amt in pending_amounts_by_currency.items():
+            if amt > 0:
+                pending_obligations += amt
+                get_cm(curr).committed_outflows += amt
 
         payment_required = billed_debt
         for card in credit_summary.cards:
             curr = getattr(card, "currency", "COP").upper()
-            get_cm(curr).committed_outflows += (card.billed_debt or Decimal("0.00"))
+            get_cm(curr).committed_outflows += card.billed_debt or Decimal("0.00")
 
         data_quality = {
             "payment_required": "billed_debt",

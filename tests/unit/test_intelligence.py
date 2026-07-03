@@ -120,8 +120,9 @@ async def test_get_snapshot_success(intelligence_service, mock_intelligence_repo
                 unbilled_debt=Decimal("200.00"),
             )
         )
-        mock_obl_repo_class.return_value.list_by_user = AsyncMock(return_value=[])
-        mock_obl_repo_class.return_value.get_period_payments = AsyncMock(return_value={})
+        mock_obl_repo_class.return_value.get_pending_period_amounts_for_snapshot = AsyncMock(
+            return_value={}
+        )
         mock_goal_repo_class.return_value.list_active = AsyncMock(return_value=[])
         mock_goal_repo_class.return_value.get_period_contributions = AsyncMock(return_value={})
         result = await intelligence_service.get_snapshot(user_id)
@@ -166,8 +167,9 @@ async def test_get_snapshot_empty_user(intelligence_service, mock_intelligence_r
         mock_cc_service_class.return_value.get_credit_summary = AsyncMock(
             return_value=build_credit_summary()
         )
-        mock_obl_repo_class.return_value.list_by_user = AsyncMock(return_value=[])
-        mock_obl_repo_class.return_value.get_period_payments = AsyncMock(return_value={})
+        mock_obl_repo_class.return_value.get_pending_period_amounts_for_snapshot = AsyncMock(
+            return_value={}
+        )
         mock_goal_repo_class.return_value.list_active = AsyncMock(return_value=[])
         mock_goal_repo_class.return_value.get_period_contributions = AsyncMock(return_value={})
         result = await intelligence_service.get_snapshot(user_id)
@@ -219,8 +221,9 @@ async def test_get_snapshot_transfers_do_not_change_cashflow(
         mock_cc_service_class.return_value.get_credit_summary = AsyncMock(
             return_value=build_credit_summary()
         )
-        mock_obl_repo_class.return_value.list_by_user = AsyncMock(return_value=[])
-        mock_obl_repo_class.return_value.get_period_payments = AsyncMock(return_value={})
+        mock_obl_repo_class.return_value.get_pending_period_amounts_for_snapshot = AsyncMock(
+            return_value={}
+        )
         mock_goal_repo_class.return_value.list_active = AsyncMock(return_value=[])
         mock_goal_repo_class.return_value.get_period_contributions = AsyncMock(return_value={})
         result = await intelligence_service.get_snapshot(user_id)
@@ -335,26 +338,14 @@ async def test_get_debt_success(intelligence_service, mock_intelligence_repo):
     assert result.pending_commitments[0]["name"] == "Rent"
 
 
-@pytest.mark.skip(reason="V1.6 obligations core refactoring")
-
-
 @pytest.mark.asyncio
-
-
-
 async def test_committed_outflows_excludes_paid_obligations(
     intelligence_service, mock_intelligence_repo
 ):
     """committed_outflows must only include remaining_amount for pending/partial obligations.
     Paid obligations must contribute 0. Already-executed payments must not count as commitment."""
-    from datetime import datetime
-
-    from app.obligations.models import Obligation
 
     user_id = uuid.uuid4()
-    paid_obl_id = uuid.uuid4()
-    pending_obl_id = uuid.uuid4()
-    partial_obl_id = uuid.uuid4()
 
     mock_intelligence_repo.return_value.get_cash_metrics.return_value = {
         "total_balance": Decimal("5000.00"),
@@ -380,47 +371,6 @@ async def test_committed_outflows_excludes_paid_obligations(
     mock_intelligence_repo.return_value.get_transfers_metrics.return_value = {}
     mock_intelligence_repo.return_value.get_recent_activity.return_value = []
 
-    # Create 3 obligations:
-    # 1. fixed_full_payment, amount=500, fully paid -> should contribute 0
-    # 2. fixed_full_payment, amount=300, not paid -> should contribute 300
-    # 3. partial_allowed, amount=400, paid 150 -> should contribute 250
-    paid_obl = Obligation(
-        id=paid_obl_id,
-        user_id=user_id,
-        name="Paid",
-        amount=Decimal("500"),
-        payment_mode="fixed_full_payment",
-        is_active=True,
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-        currency="COP",
-        metadata_={},
-    )
-    pending_obl = Obligation(
-        id=pending_obl_id,
-        user_id=user_id,
-        name="Pending",
-        amount=Decimal("300"),
-        payment_mode="fixed_full_payment",
-        is_active=True,
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-        currency="COP",
-        metadata_={},
-    )
-    partial_obl = Obligation(
-        id=partial_obl_id,
-        user_id=user_id,
-        name="Partial",
-        amount=Decimal("400"),
-        payment_mode="partial_allowed",
-        is_active=True,
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-        currency="COP",
-        metadata_={},
-    )
-
     with (
         patch("app.intelligence.service.CreditCardService") as mock_cc_service_class,
         patch("app.obligations.repository.ObligationRepository") as mock_obl_repo_class,
@@ -429,15 +379,8 @@ async def test_committed_outflows_excludes_paid_obligations(
         mock_cc_service_class.return_value.get_credit_summary = AsyncMock(
             return_value=build_credit_summary()
         )
-        mock_obl_repo_class.return_value.list_by_user = AsyncMock(
-            return_value=[paid_obl, pending_obl, partial_obl]
-        )
-        mock_obl_repo_class.return_value.get_period_payments = AsyncMock(
-            return_value={
-                paid_obl_id: Decimal("500"),  # fully paid
-                # pending_obl_id: not in dict -> 0 paid
-                partial_obl_id: Decimal("150"),  # partially paid
-            }
+        mock_obl_repo_class.return_value.get_pending_period_amounts_for_snapshot = AsyncMock(
+            return_value={"COP": Decimal("550.00")}
         )
         mock_goal_repo_class.return_value.list_active = AsyncMock(return_value=[])
         mock_goal_repo_class.return_value.get_period_contributions = AsyncMock(return_value={})
@@ -492,8 +435,9 @@ async def test_get_snapshot_with_fx_provider(mock_intelligence_repo):
         mock_cc_service_class.return_value.get_credit_summary = AsyncMock(
             return_value=build_credit_summary()
         )
-        mock_obl_repo_class.return_value.list_by_user = AsyncMock(return_value=[])
-        mock_obl_repo_class.return_value.get_period_payments = AsyncMock(return_value={})
+        mock_obl_repo_class.return_value.get_pending_period_amounts_for_snapshot = AsyncMock(
+            return_value={}
+        )
         mock_goal_repo_class.return_value.list_active = AsyncMock(return_value=[])
         mock_goal_repo_class.return_value.get_period_contributions = AsyncMock(return_value={})
 
@@ -507,3 +451,37 @@ async def test_get_snapshot_with_fx_provider(mock_intelligence_repo):
     assert result.estimated_totals.estimated_total_base_currency == Decimal("41000.00")
     assert result.estimated_totals.fx_rates_used["USD_COP"] == 4000.0
     assert "cross_currency_global_totals_disabled" in result.truth.calculation_warnings
+
+
+@pytest.mark.asyncio
+async def test_get_pending_period_amounts_for_snapshot():
+    from decimal import Decimal
+
+    from app.obligations.repository import ObligationRepository
+
+    session_mock = AsyncMock()
+
+    # We will mock the result of session.execute to return specific rows
+    # The query groups by currency and returns (currency, total_pending)
+
+    class MockRow:
+        def __init__(self, currency, total_pending):
+            self.currency = currency
+            self.total_pending = total_pending
+
+    class MockResult:
+        def all(self):
+            return [
+                MockRow("COP", Decimal("550.00")),
+                MockRow("USD", None),  # tests null handling
+            ]
+
+    session_mock.execute.return_value = MockResult()
+
+    repo = ObligationRepository(session_mock)
+    res = await repo.get_pending_period_amounts_for_snapshot(uuid.uuid4())
+
+    assert "COP" in res
+    assert res["COP"] == Decimal("550.00")
+    assert "USD" in res
+    assert res["USD"] == Decimal("0.00")
