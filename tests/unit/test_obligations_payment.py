@@ -365,9 +365,10 @@ async def test_pay_cross_currency_cop_to_usd(
         mock_result.scalars.return_value.all.return_value = [p1]
         mock_repo.session.execute.return_value = mock_result
 
-        # User wants to pay 40000 COP
+        # User wants to apply 10 USD to the obligation.
+        # Since account is COP, backend will calculate source_amount = 10 / 0.00025 = 40000 COP
         payload = ObligationPaymentCreate(
-            account_id=acc.id, amount=Decimal("40000.00"), currency="COP"
+            account_id=acc.id, amount=Decimal("10.00")
         )
         await real_service.pay_obligation_fifo(base_user_id, obligation.id, payload)
 

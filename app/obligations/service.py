@@ -224,9 +224,9 @@ class ObligationService:
             applied_amount = required_obligation_amount
             source_amount = round_to_minimum_unit(applied_amount / fx_rate, account_currency)
         else:
-            # User specified source amount
-            source_amount = payload_amount
-            applied_amount = round_to_minimum_unit(source_amount * fx_rate, obligation_currency)
+            # User specified applied amount in obligation currency
+            applied_amount = payload_amount
+            source_amount = round_to_minimum_unit(applied_amount / fx_rate, account_currency)
 
         return source_amount, applied_amount, fx_rate, rate_source, rate_timestamp
 

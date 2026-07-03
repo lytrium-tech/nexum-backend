@@ -4,6 +4,8 @@
 - Agregado `remaining_amount` (calculado en backend) al modelo `ObligationPeriodRead` para permitir pagos exactos desde el frontend sin cálculo local.
 - Añadido endpoint de previsualización `POST /api/v1/obligations/periods/{period_id}/pay/preview` para pagos en la misma moneda o cross-currency, retornando estimaciones de FX en tiempo real.
 - Estandarizado el código de error `OBLIGATION_PAYMENT_EXCEEDS_REMAINING_BALANCE` para evitar sobrepagos explícitamente en previsualizaciones y transacciones definitivas.
+- Corregida la semántica de pagos en `_calculate_fx_and_amounts` (ahora `payload.amount` representa el `applied_amount` en moneda de la obligación en lugar del `source_amount`).
+- Limpieza de obligaciones de prueba de entornos dev/producción completada para usuarios de test.
 
 ## [v1.6.1-alpha] - Backend V1.6.1 Intelligence Snapshot Hotfix
 - Corregida falla en el endpoint de snapshot (`GET /api/v1/intelligence/snapshot`) que devolvía 500 tras la migración a Obligations V1.6.
