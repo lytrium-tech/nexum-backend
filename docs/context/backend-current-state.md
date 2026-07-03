@@ -9,6 +9,7 @@ This document is the source of truth for the implemented and validated backend s
 - Tech Stack: FastAPI, SQLAlchemy, Pydantic, PostgreSQL.
 
 ## Completed Features
+- **Backend V1.6.2**: Obligation Payment Preview. `remaining_amount` included directly on `ObligationPeriodRead`. Implemented `POST /api/v1/obligations/periods/{period_id}/pay/preview` for zero-risk real-time FX payment quotes.
 - **Backend V1.6.1**: Intelligence Snapshot Fix. Corrected intelligence repository to use ObligationPeriod as the source of truth, eliminating legacy obligations.amount and broken views.
 - **Backend V1.6**: Obligations Core. Implemented ObligationPeriod engine for precise state tracking, partial payments, and dynamic completion cycles.
 - **Backend V1.5**: Ready for final handoff. Implemented Credit Card Advanced Model (Persisted Statements, Payment Waterfall, Early Payments). Enforced goal/obligation time semantics and cross-currency multi-account flows.

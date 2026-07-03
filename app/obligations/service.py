@@ -24,6 +24,8 @@ from app.obligations.repository import ObligationRepository
 from app.obligations.schemas import (
     ObligationCreate,
     ObligationPaymentCreate,
+    ObligationPaymentPreviewCreate,
+    ObligationPaymentPreviewRead,
     ObligationPaymentRead,
     ObligationPeriodAmountUpdate,
     ObligationPeriodRead,
@@ -227,6 +229,68 @@ class ObligationService:
             applied_amount = round_to_minimum_unit(source_amount * fx_rate, obligation_currency)
 
         return source_amount, applied_amount, fx_rate, rate_source, rate_timestamp
+
+    async def pay_preview_specific_period(
+        self, auth_user_id: UUID, period_id: UUID, payload: ObligationPaymentPreviewCreate
+    ) -> ObligationPaymentPreviewRead:
+        stmt = select(ObligationPeriod).where(ObligationPeriod.id == period_id)
+        result = await self.repository.session.execute(stmt)
+        period = result.scalar_one_or_none()
+        if not period:
+            raise NotFoundError("Period not found")
+
+        obligation = await self.repository.get_by_id(period.obligation_id)
+        if not obligation or obligation.user_id != auth_user_id:
+            raise NotFoundError("Obligation not found")
+
+        if period.status == "pending_amount_definition":
+            raise ObligationPeriodAmountRequiredError()
+        if period.status in ("paid", "skipped", "cancelled"):
+            raise ValueError("Period is not in a payable state")
+
+        remaining_balance = period.remaining_amount
+        if remaining_balance is None:
+            raise ValueError("Period has no remaining amount to calculate preview")
+
+        account = await self.account_repo.get_by_id(payload.account_id)
+        if not account or account.user_id != auth_user_id:
+            raise NotFoundError("Account not found")
+
+        source_currency = account.currency
+        (
+            source_amount,
+            applied_amount,
+            fx_rate,
+            rate_source,
+            rate_timestamp,
+        ) = await self._calculate_fx_and_amounts(
+            source_currency, obligation.currency, payload.amount, remaining_balance
+        )
+
+        if applied_amount > remaining_balance:
+            raise ObligationPaymentExceedsBalanceError(remaining=str(remaining_balance))
+
+        can_pay = account.balance >= source_amount
+        # Note: Do not throw error for insufficient funds in preview, just set can_pay to False
+
+        quote_expires_at = datetime.now() if fx_rate != Decimal("1.0") else None
+
+        return ObligationPaymentPreviewRead(
+            period_id=period.id,
+            account_id=account.id,
+            obligation_currency=obligation.currency,
+            source_currency=source_currency,
+            requested_amount=payload.amount if payload.amount is not None else remaining_balance,
+            applied_amount=applied_amount,
+            source_amount=source_amount,
+            fx_rate=fx_rate if fx_rate != Decimal("1.0") else None,
+            is_estimated=(fx_rate != Decimal("1.0")),
+            rate_source=rate_source,
+            rate_timestamp=rate_timestamp,
+            quote_expires_at=quote_expires_at,
+            remaining_amount=remaining_balance,
+            can_pay=can_pay,
+        )
 
     async def pay_specific_period(
         self, auth_user_id: UUID, period_id: UUID, payload: ObligationPaymentCreate

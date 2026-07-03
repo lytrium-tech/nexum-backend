@@ -74,6 +74,7 @@ class ObligationPeriodRead(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+    remaining_amount: Decimal | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -97,6 +98,7 @@ class ObligationPaymentRead(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
 class ObligationPaymentCreate(BaseModel):
     account_id: UUID
     amount: Decimal | None = Field(None, gt=0)
@@ -104,5 +106,28 @@ class ObligationPaymentCreate(BaseModel):
     source_message_id: str | None = None
     raw_message: str | None = None
 
+
 class ObligationPeriodAmountUpdate(BaseModel):
     amount: Decimal = Field(..., ge=0)
+
+
+class ObligationPaymentPreviewCreate(BaseModel):
+    account_id: UUID
+    amount: Decimal | None = Field(None, gt=0)
+
+
+class ObligationPaymentPreviewRead(BaseModel):
+    period_id: UUID
+    account_id: UUID
+    obligation_currency: str
+    source_currency: str
+    requested_amount: Decimal
+    applied_amount: Decimal
+    source_amount: Decimal
+    fx_rate: Decimal | None
+    is_estimated: bool
+    rate_source: str | None
+    rate_timestamp: datetime | None
+    quote_expires_at: datetime | None
+    remaining_amount: Decimal
+    can_pay: bool

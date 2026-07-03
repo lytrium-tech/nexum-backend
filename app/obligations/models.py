@@ -43,16 +43,24 @@ class Obligation(Base):
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     end_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    metadata_: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, server_default="{}"
+    )
 
 
 class ObligationPeriod(Base):
     __tablename__ = "obligation_periods"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    obligation_id: Mapped[UUID] = mapped_column(ForeignKey("obligations.id", ondelete="CASCADE"), nullable=False)
+    obligation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("obligations.id", ondelete="CASCADE"), nullable=False
+    )
     period_key: Mapped[str] = mapped_column(Text, nullable=False)
     sequence_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -62,13 +70,27 @@ class ObligationPeriod(Base):
     currency: Mapped[str] = mapped_column(Text, nullable=False)
     paid_amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, server_default="0")
     status: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    @property
+    def remaining_amount(self) -> Decimal | None:
+        if self.status in ("paid", "skipped", "cancelled"):
+            return Decimal("0.00")
+        if self.status == "pending_amount_definition" or self.amount is None:
+            return None
+        return self.amount - self.paid_amount
 
     __table_args__ = (
         UniqueConstraint("obligation_id", "period_key", name="uq_obligation_period_key"),
         CheckConstraint("paid_amount >= 0", name="chk_paid_amount_positive"),
-        CheckConstraint("amount IS NULL OR paid_amount <= amount", name="chk_paid_amount_lte_amount"),
+        CheckConstraint(
+            "amount IS NULL OR paid_amount <= amount", name="chk_paid_amount_lte_amount"
+        ),
         CheckConstraint("amount IS NULL OR amount >= 0", name="chk_amount_positive"),
     )
 
@@ -77,10 +99,16 @@ class ObligationPayment(Base):
     __tablename__ = "obligation_payments"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    obligation_id: Mapped[UUID] = mapped_column(ForeignKey("obligations.id", ondelete="CASCADE"), nullable=False)
-    obligation_period_id: Mapped[UUID] = mapped_column(ForeignKey("obligation_periods.id", ondelete="CASCADE"), nullable=False)
+    obligation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("obligations.id", ondelete="CASCADE"), nullable=False
+    )
+    obligation_period_id: Mapped[UUID] = mapped_column(
+        ForeignKey("obligation_periods.id", ondelete="CASCADE"), nullable=False
+    )
     account_id: Mapped[UUID | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
-    financial_event_id: Mapped[UUID | None] = mapped_column(ForeignKey("financial_events.id"), nullable=True)
+    financial_event_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("financial_events.id"), nullable=True
+    )
     amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     currency: Mapped[str] = mapped_column(Text, nullable=False)
     source_amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
@@ -89,5 +117,9 @@ class ObligationPayment(Base):
     rate_source: Mapped[str | None] = mapped_column(Text, nullable=True)
     rate_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
     is_estimated: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    paid_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())
+    paid_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), nullable=False, server_default=func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), server_default=func.now()
+    )
