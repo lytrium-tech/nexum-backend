@@ -452,7 +452,9 @@ async def test_pay_specific_period(mock_db):
     def side_effect(stmt):
         mock_result = MagicMock()
         stmt_str = str(stmt).lower()
-        if "obligation_period" in stmt_str:
+        if "obligationpayment" in stmt_str:
+            mock_result.scalars.return_value.first.return_value = None
+        elif "obligation_period" in stmt_str:
             mock_result.scalars.return_value.first.return_value = mock_period
         else:
             mock_result.scalars.return_value.first.return_value = mock_obligation
@@ -545,6 +547,26 @@ async def test_pay_specific_period(mock_db):
             )
             assert response.status_code == 404
             assert response.json()["detail"] == "obligation_not_found"
+
+            # 9. Idempotency Conflict
+            def side_effect_idempotency(stmt):
+                mock_result = MagicMock()
+                stmt_str = str(stmt).lower()
+                if "obligationpayment" in stmt_str:
+                    mock_result.scalars.return_value.first.return_value = "EXISTING_PAYMENT"
+                elif "obligation_period" in stmt_str:
+                    mock_result.scalars.return_value.first.return_value = mock_period
+                else:
+                    mock_result.scalars.return_value.first.return_value = mock_obligation
+                return mock_result
+
+            mock_db.execute.side_effect = side_effect_idempotency
+            response = await client.post(
+                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/payments",
+                json={"amount": 100, "idempotency_key": "req-123"}
+            )
+            assert response.status_code == 409
+            assert response.json()["detail"] == "idempotency_conflict"
 
     finally:
         settings.NEXUM_OBLIGATIONS_V17_ENABLED = False

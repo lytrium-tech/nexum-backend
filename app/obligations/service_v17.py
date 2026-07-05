@@ -190,6 +190,15 @@ class ObligationV17Service:
         if not obligation:
             raise HTTPException(status_code=404, detail="obligation_not_found")
 
+        if data.idempotency_key:
+            stmt = select(ObligationPayment).where(
+                ObligationPayment.user_id == str(user_id),
+                ObligationPayment.idempotency_key == data.idempotency_key
+            )
+            existing = await self.session.execute(stmt)
+            if existing.scalars().first():
+                raise HTTPException(status_code=409, detail="idempotency_conflict")
+
         period = await self.get_period(obligation_id, period_id)
         if not period:
             raise HTTPException(status_code=404, detail="period_not_found")
@@ -206,7 +215,9 @@ class ObligationV17Service:
         if data.currency and data.currency != obligation.currency:
             raise HTTPException(status_code=422, detail="currency_mismatch")
 
-        remaining_amount = period.amount - period.paid_amount
+        from decimal import Decimal
+        paid_amt = period.paid_amount or Decimal("0")
+        remaining_amount = period.amount - paid_amt
         if data.amount > remaining_amount:
             raise HTTPException(status_code=422, detail="payment_exceeds_remaining_amount")
 
@@ -224,7 +235,7 @@ class ObligationV17Service:
         )
         self.session.add(payment)
 
-        period.paid_amount += data.amount
+        period.paid_amount = paid_amt + data.amount
         if period.paid_amount < period.amount:
             period.status = PeriodStatus.partially_paid.value
         else:
