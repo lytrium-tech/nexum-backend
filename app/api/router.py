@@ -35,6 +35,7 @@ from app.goals.router import router as goals_router
 from app.intelligence.router import router as intelligence_router
 from app.ledger.router import router as ledger_router
 from app.obligations.router import router as obligations_router
+from app.obligations.router_v17 import router as obligations_router_v17
 from app.transfers.router import router as transfers_router
 from app.users.router import router as users_router
 
@@ -45,6 +46,9 @@ api_router = APIRouter()
 
 # Router v1 — todos los dominios futuros viven aquí
 v1_router = APIRouter(prefix="/api/v1")
+
+# Router v1.7 — API experimental
+v1_7_router = APIRouter(prefix="/api/v1.7")
 
 
 # ── Health Check ──────────────────────────────────────────────────────────────
@@ -117,4 +121,7 @@ v1_router.include_router(intelligence_router)
 v1_router.include_router(conversations_router)
 v1_router.include_router(transfers_router)
 
+v1_7_router.include_router(obligations_router_v17, prefix="/obligations", tags=["Obligations V1.7"])
+
 api_router.include_router(v1_router)
+api_router.include_router(v1_7_router)

@@ -52,6 +52,8 @@ class Obligation(Base):
     metadata_: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, server_default="{}"
     )
+    # V1.7
+    amount_type: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ObligationPeriod(Base):
@@ -76,6 +78,8 @@ class ObligationPeriod(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    # V1.7
+    is_current: Mapped[bool | None] = mapped_column(Boolean, server_default="false", nullable=True)
 
     @property
     def remaining_amount(self) -> Decimal | None:
@@ -105,6 +109,7 @@ class ObligationPayment(Base):
     obligation_period_id: Mapped[UUID] = mapped_column(
         ForeignKey("obligation_periods.id", ondelete="CASCADE"), nullable=False
     )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     account_id: Mapped[UUID | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
     financial_event_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("financial_events.id"), nullable=True
@@ -123,3 +128,42 @@ class ObligationPayment(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=False), server_default=func.now()
     )
+    # V1.7
+    quote_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ExchangeRate(Base):
+    __tablename__ = "exchange_rates"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    base_currency: Mapped[str] = mapped_column(Text, nullable=False)
+    quote_currency: Mapped[str] = mapped_column(Text, nullable=False)
+    rate: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    is_stale: Mapped[bool | None] = mapped_column(Boolean, server_default="false", nullable=True)
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, server_default="{}" , nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=True)
+
+
+class FXQuote(Base):
+    __tablename__ = "fx_quotes"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[UUID] = mapped_column(nullable=False)
+    from_currency: Mapped[str] = mapped_column(Text, nullable=False)
+    to_currency: Mapped[str] = mapped_column(Text, nullable=False)
+    source_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    target_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    rate: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    rate_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, server_default="{}", nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=True)

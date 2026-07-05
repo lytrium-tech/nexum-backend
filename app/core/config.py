@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     FX_BASE_CURRENCY: str = "COP"
     FX_TIMEOUT_SECONDS: float = 3.0
 
+    # ── Feature Flags ─────────────────────────────────────────────────────
+    NEXUM_OBLIGATIONS_V17_ENABLED: bool = False
+
     # ── Propiedades derivadas ─────────────────────────────────────────────
 
     @property
