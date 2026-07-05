@@ -1,14 +1,16 @@
 import uuid
-from typing import Any
-from datetime import datetime
 
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-
-from app.obligations.enums_v17 import ObligationStatus, PeriodStatus, AmountType
-from app.obligations.models import Obligation, ObligationPeriod
-from app.obligations.schemas_v17 import ObligationV17CreateRequest, ObligationPeriodAmountDefineRequest
 from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.obligations.enums_v17 import AmountType, ObligationStatus, PeriodStatus
+from app.obligations.models import Obligation, ObligationPayment, ObligationPeriod
+from app.obligations.schemas_v17 import (
+    ObligationPeriodAmountDefineRequest,
+    ObligationPeriodPaymentCreateRequest,
+    ObligationV17CreateRequest,
+)
 
 
 class ObligationV17Service:
@@ -132,17 +134,23 @@ class ObligationV17Service:
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_period(self, obligation_id: uuid.UUID, period_id: uuid.UUID) -> ObligationPeriod | None:
+    async def get_period(
+        self, obligation_id: uuid.UUID, period_id: uuid.UUID
+    ) -> ObligationPeriod | None:
         """Get a specific period."""
         stmt = select(ObligationPeriod).where(
             ObligationPeriod.obligation_id == str(obligation_id),
-            ObligationPeriod.id == str(period_id)
+            ObligationPeriod.id == str(period_id),
         )
         result = await self.session.execute(stmt)
         return result.scalars().first()
 
     async def define_period_amount(
-        self, user_id: str, obligation_id: uuid.UUID, period_id: uuid.UUID, data: ObligationPeriodAmountDefineRequest
+        self,
+        user_id: str,
+        obligation_id: uuid.UUID,
+        period_id: uuid.UUID,
+        data: ObligationPeriodAmountDefineRequest,
     ) -> ObligationPeriod:
         """Define the amount for a variable period in pending_amount_definition status."""
         obligation = await self.get_obligation(user_id, obligation_id)
@@ -169,3 +177,61 @@ class ObligationV17Service:
         await self.session.refresh(period)
 
         return period
+
+    async def pay_specific_period(
+        self,
+        user_id: str,
+        obligation_id: uuid.UUID,
+        period_id: uuid.UUID,
+        data: ObligationPeriodPaymentCreateRequest,
+    ) -> tuple[ObligationPayment, ObligationPeriod]:
+        """Pay a specific period."""
+        obligation = await self.get_obligation(user_id, obligation_id)
+        if not obligation:
+            raise HTTPException(status_code=404, detail="obligation_not_found")
+
+        period = await self.get_period(obligation_id, period_id)
+        if not period:
+            raise HTTPException(status_code=404, detail="period_not_found")
+
+        if period.amount is None or period.status == PeriodStatus.pending_amount_definition.value:
+            raise HTTPException(status_code=422, detail="period_amount_not_defined")
+
+        if period.status not in (
+            PeriodStatus.pending_payment.value,
+            PeriodStatus.partially_paid.value,
+        ):
+            raise HTTPException(status_code=422, detail="period_not_payable")
+
+        if data.currency and data.currency != obligation.currency:
+            raise HTTPException(status_code=422, detail="currency_mismatch")
+
+        remaining_amount = period.amount - period.paid_amount
+        if data.amount > remaining_amount:
+            raise HTTPException(status_code=422, detail="payment_exceeds_remaining_amount")
+
+        payment = ObligationPayment(
+            id=uuid.uuid4(),
+            obligation_id=obligation.id,
+            obligation_period_id=period.id,
+            user_id=user_id,
+            account_id=data.source_account_id,
+            amount=data.amount,
+            currency=obligation.currency,
+            source_amount=data.amount,
+            source_currency=obligation.currency,
+            idempotency_key=data.idempotency_key,
+        )
+        self.session.add(payment)
+
+        period.paid_amount += data.amount
+        if period.paid_amount < period.amount:
+            period.status = PeriodStatus.partially_paid.value
+        else:
+            period.status = PeriodStatus.paid.value
+
+        await self.session.commit()
+        await self.session.refresh(period)
+        await self.session.refresh(payment)
+
+        return payment, period

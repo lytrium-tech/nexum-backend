@@ -1,9 +1,8 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.obligations.enums_v17 import (
     AmountType,
@@ -20,9 +19,9 @@ class ObligationV17Response(BaseModel):
     id: UUID
     user_id: UUID
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     amount: Decimal
-    amount_type: Optional[AmountType] = None
+    amount_type: AmountType | None = None
     currency: str
     frequency: Frequency
     obligation_type: ObligationType
@@ -53,15 +52,15 @@ class ObligationPaymentV17Response(BaseModel):
     obligation_period_id: UUID
     user_id: UUID
     amount: Decimal
-    quote_id: Optional[UUID] = None
-    idempotency_key: Optional[str] = None
+    quote_id: UUID | None = None
+    idempotency_key: str | None = None
     created_at: datetime
     updated_at: datetime
 
 
 class EmptyStateResponse(BaseModel):
     message: str
-    items: List = Field(default_factory=list)
+    items: list = Field(default_factory=list)
 
 
 class ApiErrorResponse(BaseModel):
@@ -73,13 +72,13 @@ class ObligationV17CreateRequest(BaseModel):
     obligation_type: ObligationType
     frequency: Frequency
     amount_type: AmountType
-    base_amount: Optional[Decimal] = None
+    base_amount: Decimal | None = None
     currency: str = Field(default="COP", min_length=3, max_length=3)
     start_date: date
     first_due_date: date
-    end_date: Optional[date] = None
-    end_count: Optional[int] = Field(None, gt=0)
-    metadata_: Optional[dict] = Field(default_factory=dict, alias="metadata")
+    end_date: date | None = None
+    end_count: int | None = Field(None, gt=0)
+    metadata_: dict | None = Field(default_factory=dict, alias="metadata")
 
     @model_validator(mode="after")
     def validate_amounts_and_dates(self) -> "ObligationV17CreateRequest":
@@ -105,13 +104,34 @@ class ObligationV17CreateRequest(BaseModel):
 
         return self
 
+
 class ObligationPeriodAmountDefineRequest(BaseModel):
     amount: Decimal = Field(..., gt=0)
-    currency: Optional[str] = Field(None, min_length=3, max_length=3)
-    metadata_: Optional[dict] = Field(default_factory=dict, alias="metadata")
+    currency: str | None = Field(None, min_length=3, max_length=3)
+    metadata_: dict | None = Field(default_factory=dict, alias="metadata")
 
     @model_validator(mode="after")
     def validate_currency(self) -> "ObligationPeriodAmountDefineRequest":
         if self.currency:
             self.currency = self.currency.upper()
         return self
+
+
+class ObligationPeriodPaymentCreateRequest(BaseModel):
+    amount: Decimal = Field(..., gt=0)
+    currency: str | None = Field(None, min_length=3, max_length=3)
+    payment_date: date | None = None
+    source_account_id: UUID | None = None
+    metadata_: dict | None = Field(default_factory=dict, alias="metadata")
+    idempotency_key: str | None = None
+
+    @model_validator(mode="after")
+    def validate_currency(self) -> "ObligationPeriodPaymentCreateRequest":
+        if self.currency:
+            self.currency = self.currency.upper()
+        return self
+
+
+class ObligationPeriodPaymentResultResponse(BaseModel):
+    payment: ObligationPaymentV17Response
+    period: ObligationPeriodV17Response
