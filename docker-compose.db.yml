@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  db_test:
+    image: postgres:15
+    container_name: nexum_backend_db_test
+    environment:
+      POSTGRES_USER: nexum_test
+      POSTGRES_PASSWORD: nexum_password
+      POSTGRES_DB: nexum_test_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - nexum_test_data:/var/lib/postgresql/data
+    restart: always
+
+volumes:
+  nexum_test_data:
