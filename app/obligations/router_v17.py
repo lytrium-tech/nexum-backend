@@ -15,6 +15,7 @@ from app.obligations.schemas_v17 import (
     EmptyStateResponse,
     ApiErrorResponse,
     ObligationPaymentV17Response,
+    ObligationPeriodAmountDefineRequest,
 )
 from app.obligations.service_v17 import ObligationV17Service
 
@@ -156,6 +157,41 @@ async def get_obligation_periods_v17(
             )
         )
     return mapped_periods
+
+
+@router.patch(
+    "/{obligation_id}/periods/{period_id}/amount",
+    response_model=ObligationPeriodV17Response,
+    responses={403: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}, 422: {"model": ApiErrorResponse}},
+    summary="Define Variable Period Amount (V1.7)",
+    description="Defines the amount for a variable period currently pending amount definition.",
+)
+async def define_period_amount_v17(
+    obligation_id: UUID,
+    period_id: UUID,
+    data: ObligationPeriodAmountDefineRequest,
+    identity: AuthenticatedIdentity,
+    session: AsyncSession = Depends(get_db_session),
+    _: None = Depends(check_v17_feature_flag),
+):
+    """
+    Define el monto para un periodo variable en V1.7.
+    """
+    service = ObligationV17Service(session)
+    period = await service.define_period_amount(identity.user_id, obligation_id, period_id, data)
+
+    from datetime import datetime
+    return ObligationPeriodV17Response(
+        id=period.id,
+        obligation_id=period.obligation_id,
+        due_date=period.due_date,
+        status=period.status,
+        is_current=period.is_current,
+        amount_due=period.amount or Decimal("0"),
+        amount_paid=period.paid_amount or Decimal("0"),
+        created_at=period.created_at or datetime.utcnow(),
+        updated_at=period.updated_at or datetime.utcnow(),
+    )
 
 
 @router.get(

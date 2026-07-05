@@ -35,6 +35,12 @@ async def test_v17_endpoints_disabled_by_default(mock_db):
         )
         assert response.status_code == 403
 
+        response = await client.patch(
+            "/api/v1.7/obligations/00000000-0000-0000-0000-000000000000/periods/00000000-0000-0000-0000-000000000000/amount",
+            json={"amount": 100}
+        )
+        assert response.status_code == 403
+
 
 @pytest.mark.asyncio
 async def test_v17_endpoints_empty_states(mock_db):
@@ -267,5 +273,129 @@ async def test_create_obligation_validations(mock_db):
                 },
             )
             assert response.status_code == 422
+    finally:
+        settings.NEXUM_OBLIGATIONS_V17_ENABLED = False
+
+
+@pytest.mark.asyncio
+async def test_define_period_amount(mock_db):
+    """Test define period amount validations and success."""
+    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
+
+    from unittest.mock import MagicMock
+    from app.obligations.models import Obligation, ObligationPeriod
+    from datetime import datetime, date
+    import uuid
+
+    obs_id = uuid.uuid4()
+    period_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+
+    mock_obligation = Obligation(
+        id=obs_id,
+        user_id=str(user_id),
+        name="Mock Obligation",
+        currency="COP",
+        base_amount=None,
+        status="active",
+        type="indefinite",
+        frequency="monthly",
+        amount_type="variable",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+
+    mock_period = ObligationPeriod(
+        id=period_id,
+        obligation_id=obs_id,
+        period_key="2026-07",
+        sequence_number=1,
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 31),
+        due_date=date(2026, 7, 31),
+        amount=None,
+        currency="COP",
+        paid_amount=0,
+        status="pending_amount_definition",
+        is_current=True,
+    )
+
+    def side_effect(stmt):
+        mock_result = MagicMock()
+        stmt_str = str(stmt).lower()
+        if "obligation_period" in stmt_str:
+            mock_result.scalars.return_value.first.return_value = mock_period
+        else:
+            mock_result.scalars.return_value.first.return_value = mock_obligation
+        return mock_result
+
+    mock_db.execute.side_effect = side_effect
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            # 1. Success
+            response = await client.patch(
+                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/amount",
+                json={"amount": 1500.50, "currency": "COP"}
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert data["amount_due"] == "1500.5"
+            assert data["status"] == "pending_payment"
+            assert mock_period.amount == Decimal("1500.50")
+            assert mock_period.status == "pending_payment"
+            assert mock_db.commit.call_count >= 1
+
+            # 2. <= 0 fails
+            response = await client.patch(
+                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/amount",
+                json={"amount": 0}
+            )
+            assert response.status_code == 422
+
+            # 3. Already defined
+            mock_period.status = "pending_payment"
+            response = await client.patch(
+                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/amount",
+                json={"amount": 100}
+            )
+            assert response.status_code == 422
+            assert response.json()["detail"] == "period_amount_already_defined"
+
+            # Reset
+            mock_period.status = "pending_amount_definition"
+
+            # 4. Fixed obligation fails
+            mock_obligation.amount_type = "fixed"
+            response = await client.patch(
+                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/amount",
+                json={"amount": 100}
+            )
+            assert response.status_code == 422
+            assert response.json()["detail"] == "period_not_variable"
+            mock_obligation.amount_type = "variable"
+
+            # 5. Currency mismatch
+            response = await client.patch(
+                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/amount",
+                json={"amount": 100, "currency": "USD"}
+            )
+            assert response.status_code == 422
+            assert response.json()["detail"] == "currency_mismatch"
+
+            # 6. Obligation not found
+            def side_effect_not_found(stmt):
+                mock_result = MagicMock()
+                mock_result.scalars.return_value.first.return_value = None
+                return mock_result
+
+            mock_db.execute.side_effect = side_effect_not_found
+            response = await client.patch(
+                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/amount",
+                json={"amount": 100}
+            )
+            assert response.status_code == 404
+            assert response.json()["detail"] == "obligation_not_found"
+
     finally:
         settings.NEXUM_OBLIGATIONS_V17_ENABLED = False

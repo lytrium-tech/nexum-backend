@@ -7,7 +7,8 @@ from sqlalchemy import select
 
 from app.obligations.enums_v17 import ObligationStatus, PeriodStatus, AmountType
 from app.obligations.models import Obligation, ObligationPeriod
-from app.obligations.schemas_v17 import ObligationV17CreateRequest
+from app.obligations.schemas_v17 import ObligationV17CreateRequest, ObligationPeriodAmountDefineRequest
+from fastapi import HTTPException
 
 
 class ObligationV17Service:
@@ -130,3 +131,41 @@ class ObligationV17Service:
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_period(self, obligation_id: uuid.UUID, period_id: uuid.UUID) -> ObligationPeriod | None:
+        """Get a specific period."""
+        stmt = select(ObligationPeriod).where(
+            ObligationPeriod.obligation_id == str(obligation_id),
+            ObligationPeriod.id == str(period_id)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().first()
+
+    async def define_period_amount(
+        self, user_id: str, obligation_id: uuid.UUID, period_id: uuid.UUID, data: ObligationPeriodAmountDefineRequest
+    ) -> ObligationPeriod:
+        """Define the amount for a variable period in pending_amount_definition status."""
+        obligation = await self.get_obligation(user_id, obligation_id)
+        if not obligation:
+            raise HTTPException(status_code=404, detail="obligation_not_found")
+
+        period = await self.get_period(obligation_id, period_id)
+        if not period:
+            raise HTTPException(status_code=404, detail="period_not_found")
+
+        if obligation.amount_type != AmountType.variable.value:
+            raise HTTPException(status_code=422, detail="period_not_variable")
+
+        if period.status != PeriodStatus.pending_amount_definition.value:
+            raise HTTPException(status_code=422, detail="period_amount_already_defined")
+
+        if data.currency and data.currency != obligation.currency:
+            raise HTTPException(status_code=422, detail="currency_mismatch")
+
+        period.amount = data.amount
+        period.status = PeriodStatus.pending_payment.value
+
+        await self.session.commit()
+        await self.session.refresh(period)
+
+        return period

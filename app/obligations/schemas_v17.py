@@ -104,3 +104,14 @@ class ObligationV17CreateRequest(BaseModel):
             raise ValueError("end_date cannot be before start_date")
 
         return self
+
+class ObligationPeriodAmountDefineRequest(BaseModel):
+    amount: Decimal = Field(..., gt=0)
+    currency: Optional[str] = Field(None, min_length=3, max_length=3)
+    metadata_: Optional[dict] = Field(default_factory=dict, alias="metadata")
+
+    @model_validator(mode="after")
+    def validate_currency(self) -> "ObligationPeriodAmountDefineRequest":
+        if self.currency:
+            self.currency = self.currency.upper()
+        return self
