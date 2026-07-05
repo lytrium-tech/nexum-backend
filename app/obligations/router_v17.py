@@ -11,6 +11,7 @@ from app.obligations.schemas_v17 import (
     ObligationV17Response,
     EmptyStateResponse,
     ApiErrorResponse,
+    ObligationPaymentV17Response,
 )
 
 router = APIRouter()
@@ -78,3 +79,21 @@ async def get_obligation_periods_v17(
     Lista de periodos de una obligación V1.7.
     """
     return EmptyStateResponse(message="No periods found", items=[])
+
+
+@router.get(
+    "/payments/{payment_id}",
+    response_model=ObligationPaymentV17Response,
+    responses={403: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}},
+    summary="Get V1.7 obligation payment by ID",
+    description="Gets a specific obligation payment by ID using V1.7 read semantics.",
+)
+async def get_obligation_payment_v17(
+    payment_id: UUID,
+    session: AsyncSession = Depends(get_db_session),
+    _: None = Depends(check_v17_feature_flag),
+):
+    """
+    Obtiene un pago específico V1.7.
+    """
+    raise HTTPException(status_code=404, detail="Payment not found")

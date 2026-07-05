@@ -70,12 +70,14 @@ def test_snapshot_truth_contract():
     assert "free_money" in truth_fields
 
 
-def test_openapi_contains_v16_fields():
-    with open("openapi.json") as f:
-        spec = json.load(f)
+def test_openapi_contract_v15_v17():
+    from app.main import app
+    
+    spec = app.openapi()
 
     schemas = spec.get("components", {}).get("schemas", {})
 
+    # V1.5 Legacy Schemas Validation
     goal_props = schemas.get("GoalRead", {}).get("properties", {})
     assert "remaining_required_this_period" in goal_props
 
@@ -97,3 +99,21 @@ def test_openapi_contains_v16_fields():
 
     truth_props = schemas.get("SnapshotTruth", {}).get("properties", {})
     assert "free_money" in truth_props
+
+    # V1.7 New Schemas Validation
+    assert "ObligationV17Response" in schemas
+    assert "ObligationPeriodV17Response" in schemas
+    assert "ObligationPaymentV17Response" in schemas
+    assert "EmptyStateResponse" in schemas
+    assert "ApiErrorResponse" in schemas
+
+    # Routes Validation
+    paths = spec.get("paths", {})
+    
+    # Check V1.5 routes still exist
+    assert "/api/v1/obligations" in paths
+    
+    # Check V1.7 routes exist
+    assert "/api/v1.7/obligations" in paths
+    assert "/api/v1.7/obligations/{obligation_id}" in paths
+    assert "/api/v1.7/obligations/{obligation_id}/periods" in paths
