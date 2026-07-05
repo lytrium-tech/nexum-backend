@@ -135,3 +135,26 @@ class ObligationPeriodPaymentCreateRequest(BaseModel):
 class ObligationPeriodPaymentResultResponse(BaseModel):
     payment: ObligationPaymentV17Response
     period: ObligationPeriodV17Response
+
+
+class ObligationFIFOPaymentCreateRequest(BaseModel):
+    amount: Decimal = Field(..., gt=0)
+    currency: str | None = Field(None, min_length=3, max_length=3)
+    payment_date: date | None = None
+    source_account_id: UUID | None = None
+    metadata_: dict | None = Field(default_factory=dict, alias="metadata")
+    idempotency_key: str | None = None
+
+    @model_validator(mode="after")
+    def validate_currency(self) -> "ObligationFIFOPaymentCreateRequest":
+        if self.currency:
+            self.currency = self.currency.upper()
+        return self
+
+
+class ObligationFIFOPaymentResultResponse(BaseModel):
+    payments: list[ObligationPaymentV17Response]
+    periods: list[ObligationPeriodV17Response]
+    total_applied: Decimal
+    remaining_unapplied: Decimal
+    strategy: str = "fifo"

@@ -570,3 +570,154 @@ async def test_pay_specific_period(mock_db):
 
     finally:
         settings.NEXUM_OBLIGATIONS_V17_ENABLED = False
+
+
+@pytest.mark.asyncio
+async def test_pay_obligation_fifo(mock_db):
+    """Test pay obligation FIFO strategy."""
+    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
+
+    import uuid
+    from datetime import date, datetime
+    from unittest.mock import MagicMock
+    from decimal import Decimal
+
+    from app.obligations.models import Obligation, ObligationPeriod
+
+    obs_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+
+    mock_obligation = Obligation(
+        id=obs_id,
+        user_id=str(user_id),
+        name="Mock Obligation",
+        currency="COP",
+        base_amount=Decimal("1500.00"),
+        status="active",
+        type="indefinite",
+        frequency="monthly",
+        amount_type="fixed",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+
+    mock_period_1 = ObligationPeriod(
+        id=uuid.uuid4(),
+        obligation_id=obs_id,
+        period_key="2026-07",
+        sequence_number=1,
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 31),
+        due_date=date(2026, 7, 31),
+        amount=Decimal("1000.00"),
+        currency="COP",
+        paid_amount=Decimal("0.00"),
+        status="pending_payment",
+        is_current=True,
+    )
+
+    mock_period_2 = ObligationPeriod(
+        id=uuid.uuid4(),
+        obligation_id=obs_id,
+        period_key="2026-08",
+        sequence_number=2,
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 8, 31),
+        due_date=date(2026, 8, 31),
+        amount=Decimal("1500.00"),
+        currency="COP",
+        paid_amount=Decimal("0.00"),
+        status="pending_payment",
+        is_current=False,
+    )
+
+    def side_effect(stmt):
+        mock_result = MagicMock()
+        stmt_str = str(stmt).lower()
+        if "obligationpayment" in stmt_str:
+            mock_result.scalars.return_value.first.return_value = None
+        elif "obligation_period" in stmt_str:
+            mock_result.scalars.return_value.all.return_value = [mock_period_1, mock_period_2]
+        else:
+            mock_result.scalars.return_value.first.return_value = mock_obligation
+        return mock_result
+
+    mock_db.execute.side_effect = side_effect
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            # 1. Partial payment to first period
+            response = await client.post(
+                f"/api/v1.7/obligations/{obs_id}/payments",
+                json={"amount": 500.00, "currency": "COP"},
+            )
+            assert response.status_code == 201
+            data = response.json()
+            assert data["strategy"] == "fifo"
+            assert len(data["payments"]) == 1
+            assert Decimal(data["payments"][0]["amount"]) == Decimal("500.00")
+            assert mock_period_1.paid_amount == Decimal("500.00")
+            assert mock_period_1.status == "partially_paid"
+            assert mock_period_2.paid_amount == Decimal("0.00")
+
+            # 2. Payment crossing multiple periods (remaining 500 of p1 + 1000 of p2)
+            response = await client.post(
+                f"/api/v1.7/obligations/{obs_id}/payments",
+                json={"amount": 1500.00, "currency": "COP"},
+            )
+            assert response.status_code == 201
+            data = response.json()
+            assert len(data["payments"]) == 2
+            assert Decimal(data["payments"][0]["amount"]) == Decimal("500.00")
+            assert Decimal(data["payments"][1]["amount"]) == Decimal("1000.00")
+            assert mock_period_1.paid_amount == Decimal("1000.00")
+            assert mock_period_1.status == "paid"
+            assert mock_period_2.paid_amount == Decimal("1000.00")
+            assert mock_period_2.status == "partially_paid"
+
+            # 3. Overpayment fails (p2 has 500 remaining)
+            response = await client.post(
+                f"/api/v1.7/obligations/{obs_id}/payments",
+                json={"amount": 1000.00, "currency": "COP"},
+            )
+            assert response.status_code == 422
+            assert response.json()["detail"] == "payment_exceeds_total_remaining_amount"
+
+            # 4. No payable periods
+            mock_period_1.status = "paid"
+            mock_period_2.status = "paid"
+            def side_effect_empty(stmt):
+                mock_result = MagicMock()
+                stmt_str = str(stmt).lower()
+                if "obligationpayment" in stmt_str:
+                    mock_result.scalars.return_value.first.return_value = None
+                elif "obligation_period" in stmt_str:
+                    mock_result.scalars.return_value.all.return_value = []
+                else:
+                    mock_result.scalars.return_value.first.return_value = mock_obligation
+                return mock_result
+            mock_db.execute.side_effect = side_effect_empty
+            response = await client.post(
+                f"/api/v1.7/obligations/{obs_id}/payments",
+                json={"amount": 100.00, "currency": "COP"},
+            )
+            assert response.status_code == 422
+            assert response.json()["detail"] == "no_payable_periods"
+
+            # 5. Idempotency Conflict
+            def side_effect_idempotency(stmt):
+                mock_result = MagicMock()
+                stmt_str = str(stmt).lower()
+                if "obligationpayment" in stmt_str:
+                    mock_result.scalars.return_value.first.return_value = "EXISTING_PAYMENT"
+                return mock_result
+            mock_db.execute.side_effect = side_effect_idempotency
+            response = await client.post(
+                f"/api/v1.7/obligations/{obs_id}/payments",
+                json={"amount": 100, "idempotency_key": "req-123"}
+            )
+            assert response.status_code == 409
+            assert response.json()["detail"] == "idempotency_conflict"
+
+    finally:
+        settings.NEXUM_OBLIGATIONS_V17_ENABLED = False

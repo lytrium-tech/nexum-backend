@@ -11,6 +11,8 @@ from app.obligations.schemas_v17 import (
     ApiErrorResponse,
     EmptyStateResponse,
     ObligationPaymentV17Response,
+    ObligationFIFOPaymentCreateRequest,
+    ObligationFIFOPaymentResultResponse,
     ObligationPeriodAmountDefineRequest,
     ObligationPeriodPaymentCreateRequest,
     ObligationPeriodPaymentResultResponse,
@@ -256,6 +258,73 @@ async def create_period_payment_v17(
 
     return ObligationPeriodPaymentResultResponse(payment=payment_response, period=period_response)
 
+
+@router.post(
+    "/{obligation_id}/payments",
+    response_model=ObligationFIFOPaymentResultResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        403: {"model": ApiErrorResponse},
+        404: {"model": ApiErrorResponse},
+        409: {"model": ApiErrorResponse},
+        422: {"model": ApiErrorResponse},
+    },
+    summary="Pay Obligation (FIFO)",
+    description="Registers a payment using FIFO strategy across obligation periods.",
+)
+async def create_obligation_payment_fifo_v17(
+    obligation_id: UUID,
+    data: ObligationFIFOPaymentCreateRequest,
+    identity: AuthenticatedIdentity,
+    session: AsyncSession = Depends(get_db_session),
+    _: None = Depends(check_v17_feature_flag),
+):
+    """
+    Registra un pago general a una obligacion en V1.7 usando estrategia FIFO.
+    """
+    service = ObligationV17Service(session)
+    payments, periods = await service.pay_obligation_fifo(
+        identity.user_id, obligation_id, data
+    )
+
+    from datetime import datetime
+
+    payment_responses = [
+        ObligationPaymentV17Response(
+            id=pay.id,
+            obligation_id=pay.obligation_id,
+            obligation_period_id=pay.obligation_period_id,
+            user_id=pay.user_id,
+            amount=pay.amount,
+            quote_id=pay.quote_id,
+            idempotency_key=pay.idempotency_key,
+            created_at=pay.created_at or datetime.utcnow(),
+            updated_at=pay.created_at or datetime.utcnow(),
+        ) for pay in payments
+    ]
+
+    period_responses = [
+        ObligationPeriodV17Response(
+            id=p.id,
+            obligation_id=p.obligation_id,
+            due_date=p.due_date,
+            status=p.status,
+            is_current=p.is_current,
+            amount_due=p.amount or Decimal("0"),
+            amount_paid=p.paid_amount or Decimal("0"),
+            created_at=p.created_at or datetime.utcnow(),
+            updated_at=p.updated_at or datetime.utcnow(),
+        ) for p in periods
+    ]
+
+    from decimal import Decimal
+    return ObligationFIFOPaymentResultResponse(
+        payments=payment_responses,
+        periods=period_responses,
+        total_applied=data.amount,
+        remaining_unapplied=Decimal("0"),
+        strategy="fifo"
+    )
 
 @router.get(
     "/payments/{payment_id}",
