@@ -3,6 +3,7 @@ from typing import Any
 from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.obligations.enums_v17 import ObligationStatus, PeriodStatus, AmountType
 from app.obligations.models import Obligation, ObligationPeriod
@@ -95,3 +96,37 @@ class ObligationV17Service:
             status=status,
             is_current=True,
         )
+
+    async def list_obligations(self, user_id: str) -> list[Obligation]:
+        """List obligations for a given user."""
+        stmt = (
+            select(Obligation)
+            .where(Obligation.user_id == user_id)
+            .order_by(Obligation.created_at.desc())
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_obligation(self, user_id: str, obligation_id: uuid.UUID) -> Obligation | None:
+        """Get a specific obligation for a user."""
+        stmt = select(Obligation).where(
+            Obligation.user_id == user_id, Obligation.id == str(obligation_id)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().first()
+
+    async def list_periods_for_obligation(
+        self, user_id: str, obligation_id: uuid.UUID
+    ) -> list[ObligationPeriod] | None:
+        """List periods for a given obligation. Returns None if obligation not found or not owned by user."""
+        obligation = await self.get_obligation(user_id, obligation_id)
+        if not obligation:
+            return None
+
+        stmt = (
+            select(ObligationPeriod)
+            .where(ObligationPeriod.obligation_id == str(obligation_id))
+            .order_by(ObligationPeriod.sequence_number.asc())
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
