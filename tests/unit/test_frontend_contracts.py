@@ -106,6 +106,7 @@ def test_openapi_contract_v15_v17():
     assert "ObligationPaymentV17Response" in schemas
     assert "EmptyStateResponse" in schemas
     assert "ApiErrorResponse" in schemas
+    assert "ObligationV17CreateRequest" in schemas
 
     # Routes Validation
     paths = spec.get("paths", {})
