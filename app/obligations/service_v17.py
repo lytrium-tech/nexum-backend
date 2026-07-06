@@ -1,15 +1,14 @@
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import UTC, datetime
 
+from app.ledger.enums import Direction, EventType
+from app.ledger.repository import LedgerRepository
 from app.ledger.schemas import LedgerEventCreate
 from app.ledger.service import LedgerService
-from app.ledger.repository import LedgerRepository
-from app.ledger.enums import Direction, EventType
-
 from app.obligations.enums_v17 import AmountType, ObligationStatus, PeriodStatus
 from app.obligations.models import Obligation, ObligationPayment, ObligationPeriod
 from app.obligations.schemas_v17 import (
@@ -198,14 +197,16 @@ class ObligationV17Service:
         if not obligation:
             raise HTTPException(status_code=404, detail="obligation_not_found")
 
-        if data.idempotency_key:
-            stmt = select(ObligationPayment).where(
-                ObligationPayment.user_id == str(user_id),
-                ObligationPayment.idempotency_key == data.idempotency_key,
-            )
-            existing = await self.session.execute(stmt)
-            if existing.scalars().first():
-                raise HTTPException(status_code=409, detail="idempotency_conflict")
+        if not data.idempotency_key:
+            raise HTTPException(status_code=422, detail="missing_idempotency_key")
+
+        stmt = select(ObligationPayment).where(
+            ObligationPayment.user_id == str(user_id),
+            ObligationPayment.idempotency_key == data.idempotency_key,
+        )
+        existing = await self.session.execute(stmt)
+        if existing.scalars().first():
+            raise HTTPException(status_code=409, detail="idempotency_conflict")
 
         period = await self.get_period(obligation_id, period_id)
         if not period:
@@ -292,10 +293,9 @@ class ObligationV17Service:
         else:
             period.status = PeriodStatus.paid.value
 
-        if data.idempotency_key:
-            command_id = data.idempotency_key
-        else:
-            command_id = payment.id
+        command_id = uuid.uuid5(
+            uuid.NAMESPACE_OID, f"obligations_v1_7:{user_id}:{data.idempotency_key}"
+        )
 
         event_create = LedgerEventCreate(
             user_id=uuid.UUID(user_id),
@@ -306,14 +306,14 @@ class ObligationV17Service:
             currency=source_currency,
             description=f"Obligation Payment V1.7: {obligation.name}",
             occurred_at=datetime.now(UTC),
-            command_id=uuid.UUID(str(command_id)) if command_id else None,
+            command_id=command_id,
             metadata_={
                 "obligation_period_id": str(period.id),
                 "fx_quote_id": str(quote_id) if quote_id else None,
                 "source_amount": str(source_amount),
                 "source_currency": source_currency,
                 "fx_rate": str(fx_rate),
-            }
+            },
         )
         await self.ledger_service.record_event(event_create)
 
@@ -334,14 +334,16 @@ class ObligationV17Service:
         if not obligation:
             raise HTTPException(status_code=404, detail="obligation_not_found")
 
-        if data.idempotency_key:
-            stmt = select(ObligationPayment).where(
-                ObligationPayment.user_id == str(user_id),
-                ObligationPayment.idempotency_key == data.idempotency_key,
-            )
-            existing = await self.session.execute(stmt)
-            if existing.scalars().first():
-                raise HTTPException(status_code=409, detail="idempotency_conflict")
+        if not data.idempotency_key:
+            raise HTTPException(status_code=422, detail="missing_idempotency_key")
+
+        stmt = select(ObligationPayment).where(
+            ObligationPayment.user_id == str(user_id),
+            ObligationPayment.idempotency_key == data.idempotency_key,
+        )
+        existing = await self.session.execute(stmt)
+        if existing.scalars().first():
+            raise HTTPException(status_code=409, detail="idempotency_conflict")
 
         if data.currency and data.currency != obligation.currency:
             raise HTTPException(status_code=422, detail="currency_mismatch")
@@ -466,10 +468,9 @@ class ObligationV17Service:
             updated_periods.append(p)
             allocations.append((p, payment_slice))
 
-        if data.idempotency_key:
-            command_id = data.idempotency_key
-        else:
-            command_id = uuid.uuid4()
+        command_id = uuid.uuid5(
+            uuid.NAMESPACE_OID, f"obligations_v1_7:{user_id}:{data.idempotency_key}"
+        )
 
         event_create = LedgerEventCreate(
             user_id=uuid.UUID(user_id),
@@ -480,20 +481,17 @@ class ObligationV17Service:
             currency=source_currency,
             description=f"Obligation FIFO Payment V1.7: {obligation.name}",
             occurred_at=datetime.now(UTC),
-            command_id=uuid.UUID(str(command_id)) if command_id else None,
+            command_id=command_id,
             metadata_={
                 "fx_quote_id": str(quote_id) if quote_id else None,
                 "source_amount": str(source_amount),
                 "source_currency": source_currency,
                 "fx_rate": str(fx_rate),
                 "allocations": [
-                    {
-                        "obligation_period_id": str(p.id),
-                        "amount": str(slice_amt)
-                    }
+                    {"obligation_period_id": str(p.id), "amount": str(slice_amt)}
                     for p, slice_amt in allocations
-                ]
-            }
+                ],
+            },
         )
         await self.ledger_service.record_event(event_create)
 

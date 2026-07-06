@@ -11,9 +11,9 @@ from app.main import app
 
 @pytest.fixture
 def mock_db():
-    from unittest.mock import AsyncMock, MagicMock
     import uuid
     from datetime import datetime
+    from unittest.mock import MagicMock
 
     mock_session = AsyncMock()
 
@@ -57,13 +57,13 @@ async def test_v17_endpoints_disabled_by_default(mock_db):
 
         response = await client.patch(
             "/api/v1.7/obligations/00000000-0000-0000-0000-000000000000/periods/00000000-0000-0000-0000-000000000000/amount",
-            json={"amount": 100},
+            json={"idempotency_key": "test-req-1", "amount": 100},
         )
         assert response.status_code == 403
 
         response = await client.post(
             "/api/v1.7/obligations/00000000-0000-0000-0000-000000000000/periods/00000000-0000-0000-0000-000000000000/payments",
-            json={"amount": 100},
+            json={"idempotency_key": "test-req-2", "amount": 100},
         )
         assert response.status_code == 403
 
@@ -192,6 +192,7 @@ async def test_create_obligation_minimal(mock_db):
             response = await client.post(
                 "/api/v1.7/obligations",
                 json={
+                    "idempotency_key": "test-req-3",
                     "name": "Test Minimal",
                     "obligation_type": "recurring",
                     "frequency": "monthly",
@@ -240,6 +241,7 @@ async def test_create_obligation_validations(mock_db):
             response = await client.post(
                 "/api/v1.7/obligations",
                 json={
+                    "idempotency_key": "test-req-4",
                     "name": "Test",
                     "obligation_type": "recurring",
                     "frequency": "monthly",
@@ -254,6 +256,7 @@ async def test_create_obligation_validations(mock_db):
             response = await client.post(
                 "/api/v1.7/obligations",
                 json={
+                    "idempotency_key": "test-req-5",
                     "name": "Test",
                     "obligation_type": "recurring",
                     "frequency": "monthly",
@@ -269,6 +272,7 @@ async def test_create_obligation_validations(mock_db):
             response = await client.post(
                 "/api/v1.7/obligations",
                 json={
+                    "idempotency_key": "test-req-6",
                     "name": "Test",
                     "obligation_type": "recurring",
                     "frequency": "monthly",
@@ -291,6 +295,7 @@ async def test_create_obligation_validations(mock_db):
             response = await client.post(
                 "/api/v1.7/obligations",
                 json={
+                    "idempotency_key": "test-req-7",
                     "name": "Test",
                     "obligation_type": "recurring",
                     "frequency": "monthly",
@@ -364,7 +369,7 @@ async def test_define_period_amount(mock_db):
             # 1. Success
             response = await client.patch(
                 f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/amount",
-                json={"amount": 1500.50, "currency": "COP"},
+                json={"idempotency_key": "test-req-8", "amount": 1500.50, "currency": "COP"},
             )
             assert response.status_code == 200
             data = response.json()
@@ -376,14 +381,16 @@ async def test_define_period_amount(mock_db):
 
             # 2. <= 0 fails
             response = await client.patch(
-                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/amount", json={"amount": 0}
+                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/amount",
+                json={"idempotency_key": "test-req-9", "amount": 0},
             )
             assert response.status_code == 422
 
             # 3. Already defined
             mock_period.status = "pending_payment"
             response = await client.patch(
-                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/amount", json={"amount": 100}
+                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/amount",
+                json={"idempotency_key": "test-req-10", "amount": 100},
             )
             assert response.status_code == 422
             assert response.json()["detail"] == "period_amount_already_defined"
@@ -394,7 +401,8 @@ async def test_define_period_amount(mock_db):
             # 4. Fixed obligation fails
             mock_obligation.amount_type = "fixed"
             response = await client.patch(
-                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/amount", json={"amount": 100}
+                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/amount",
+                json={"idempotency_key": "test-req-11", "amount": 100},
             )
             assert response.status_code == 422
             assert response.json()["detail"] == "period_not_variable"
@@ -403,7 +411,7 @@ async def test_define_period_amount(mock_db):
             # 5. Currency mismatch
             response = await client.patch(
                 f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/amount",
-                json={"amount": 100, "currency": "USD"},
+                json={"idempotency_key": "test-req-12", "amount": 100, "currency": "USD"},
             )
             assert response.status_code == 422
             assert response.json()["detail"] == "currency_mismatch"
@@ -416,7 +424,8 @@ async def test_define_period_amount(mock_db):
 
             mock_db.execute.side_effect = side_effect_not_found
             response = await client.patch(
-                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/amount", json={"amount": 100}
+                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/amount",
+                json={"idempotency_key": "test-req-13", "amount": 100},
             )
             assert response.status_code == 404
             assert response.json()["detail"] == "obligation_not_found"
@@ -472,7 +481,7 @@ async def test_pay_specific_period(mock_db):
     def side_effect(stmt):
         mock_result = MagicMock()
         stmt_str = str(stmt).lower()
-        if "obligationpayment" in stmt_str:
+        if "obligation_payments" in stmt_str:
             mock_result.scalars.return_value.first.return_value = None
         elif "obligation_period" in stmt_str:
             mock_result.scalars.return_value.first.return_value = mock_period
@@ -487,7 +496,7 @@ async def test_pay_specific_period(mock_db):
             # 1. Partial payment success
             response = await client.post(
                 f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/payments",
-                json={"amount": 500.00, "currency": "COP"},
+                json={"idempotency_key": "test-req-14", "amount": 500.00, "currency": "COP"},
             )
             assert response.status_code == 201
             data = response.json()
@@ -501,7 +510,7 @@ async def test_pay_specific_period(mock_db):
             # 2. Exact payment (remaining 1000)
             response = await client.post(
                 f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/payments",
-                json={"amount": 1000.00, "currency": "COP"},
+                json={"idempotency_key": "test-req-15", "amount": 1000.00, "currency": "COP"},
             )
             assert response.status_code == 201
             data = response.json()
@@ -514,7 +523,7 @@ async def test_pay_specific_period(mock_db):
             # 3. Already paid fails
             response = await client.post(
                 f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/payments",
-                json={"amount": 100.00},
+                json={"idempotency_key": "test-req-16", "amount": 100.00},
             )
             assert response.status_code == 422
             assert response.json()["detail"] == "period_not_payable"
@@ -526,21 +535,22 @@ async def test_pay_specific_period(mock_db):
             # 4. Overpayment fails
             response = await client.post(
                 f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/payments",
-                json={"amount": 2000.00},
+                json={"idempotency_key": "test-req-17", "amount": 2000.00},
             )
             assert response.status_code == 422
             assert response.json()["detail"] == "payment_exceeds_remaining_amount"
 
             # 5. <= 0 fails
             response = await client.post(
-                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/payments", json={"amount": 0}
+                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/payments",
+                json={"idempotency_key": "test-req-18", "amount": 0},
             )
             assert response.status_code == 422
 
             # 6. Currency mismatch
             response = await client.post(
                 f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/payments",
-                json={"amount": 100.00, "currency": "USD"},
+                json={"idempotency_key": "test-req-19", "amount": 100.00, "currency": "USD"},
             )
             assert response.status_code == 422
             assert response.json()["detail"] == "currency_mismatch"
@@ -550,7 +560,7 @@ async def test_pay_specific_period(mock_db):
             mock_period.status = "pending_amount_definition"
             response = await client.post(
                 f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/payments",
-                json={"amount": 100.00},
+                json={"idempotency_key": "test-req-20", "amount": 100.00},
             )
             assert response.status_code == 422
             assert response.json()["detail"] == "period_amount_not_defined"
@@ -563,7 +573,8 @@ async def test_pay_specific_period(mock_db):
 
             mock_db.execute.side_effect = side_effect_not_found
             response = await client.post(
-                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/payments", json={"amount": 100}
+                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/payments",
+                json={"idempotency_key": "test-req-21", "amount": 100},
             )
             assert response.status_code == 404
             assert response.json()["detail"] == "obligation_not_found"
@@ -572,7 +583,7 @@ async def test_pay_specific_period(mock_db):
             def side_effect_idempotency(stmt):
                 mock_result = MagicMock()
                 stmt_str = str(stmt).lower()
-                if "obligationpayment" in stmt_str:
+                if "obligation_payments" in stmt_str:
                     mock_result.scalars.return_value.first.return_value = "EXISTING_PAYMENT"
                 elif "obligation_period" in stmt_str:
                     mock_result.scalars.return_value.first.return_value = mock_period
@@ -583,7 +594,7 @@ async def test_pay_specific_period(mock_db):
             mock_db.execute.side_effect = side_effect_idempotency
             response = await client.post(
                 f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/payments",
-                json={"amount": 100, "idempotency_key": "req-123"},
+                json={"idempotency_key": "test-req-22", "amount": 100},
             )
             assert response.status_code == 409
             assert response.json()["detail"] == "idempotency_conflict"
@@ -654,7 +665,7 @@ async def test_pay_obligation_fifo(mock_db):
     def side_effect(stmt):
         mock_result = MagicMock()
         stmt_str = str(stmt).lower()
-        if "obligationpayment" in stmt_str:
+        if "obligation_payments" in stmt_str:
             mock_result.scalars.return_value.first.return_value = None
         elif "obligation_period" in stmt_str:
             mock_result.scalars.return_value.all.return_value = [mock_period_1, mock_period_2]
@@ -669,7 +680,7 @@ async def test_pay_obligation_fifo(mock_db):
             # 1. Partial payment to first period
             response = await client.post(
                 f"/api/v1.7/obligations/{obs_id}/payments",
-                json={"amount": 500.00, "currency": "COP"},
+                json={"idempotency_key": "test-req-23", "amount": 500.00, "currency": "COP"},
             )
             assert response.status_code == 201
             data = response.json()
@@ -683,7 +694,7 @@ async def test_pay_obligation_fifo(mock_db):
             # 2. Payment crossing multiple periods (remaining 500 of p1 + 1000 of p2)
             response = await client.post(
                 f"/api/v1.7/obligations/{obs_id}/payments",
-                json={"amount": 1500.00, "currency": "COP"},
+                json={"idempotency_key": "test-req-24", "amount": 1500.00, "currency": "COP"},
             )
             assert response.status_code == 201
             data = response.json()
@@ -698,7 +709,7 @@ async def test_pay_obligation_fifo(mock_db):
             # 3. Overpayment fails (p2 has 500 remaining)
             response = await client.post(
                 f"/api/v1.7/obligations/{obs_id}/payments",
-                json={"amount": 1000.00, "currency": "COP"},
+                json={"idempotency_key": "test-req-25", "amount": 1000.00, "currency": "COP"},
             )
             assert response.status_code == 422
             assert response.json()["detail"] == "payment_exceeds_total_remaining_amount"
@@ -710,7 +721,7 @@ async def test_pay_obligation_fifo(mock_db):
             def side_effect_empty(stmt):
                 mock_result = MagicMock()
                 stmt_str = str(stmt).lower()
-                if "obligationpayment" in stmt_str:
+                if "obligation_payments" in stmt_str:
                     mock_result.scalars.return_value.first.return_value = None
                 elif "obligation_period" in stmt_str:
                     mock_result.scalars.return_value.all.return_value = []
@@ -721,7 +732,7 @@ async def test_pay_obligation_fifo(mock_db):
             mock_db.execute.side_effect = side_effect_empty
             response = await client.post(
                 f"/api/v1.7/obligations/{obs_id}/payments",
-                json={"amount": 100.00, "currency": "COP"},
+                json={"idempotency_key": "test-req-26", "amount": 100.00, "currency": "COP"},
             )
             assert response.status_code == 422
             assert response.json()["detail"] == "no_payable_periods"
@@ -730,14 +741,14 @@ async def test_pay_obligation_fifo(mock_db):
             def side_effect_idempotency(stmt):
                 mock_result = MagicMock()
                 stmt_str = str(stmt).lower()
-                if "obligationpayment" in stmt_str:
+                if "obligation_payments" in stmt_str:
                     mock_result.scalars.return_value.first.return_value = "EXISTING_PAYMENT"
                 return mock_result
 
             mock_db.execute.side_effect = side_effect_idempotency
             response = await client.post(
                 f"/api/v1.7/obligations/{obs_id}/payments",
-                json={"amount": 100, "idempotency_key": "req-123"},
+                json={"idempotency_key": "test-req-27", "amount": 100},
             )
             assert response.status_code == 409
             assert response.json()["detail"] == "idempotency_conflict"
@@ -965,6 +976,7 @@ async def test_pay_specific_period_cross_currency_success(mock_db, monkeypatch):
     mock_db.execute.side_effect = mock_execute_side_effect
 
     payload = {
+        "idempotency_key": "test-req-28",
         "amount": 100000,
         "currency": "COP",
         "source_amount": 25.0,
@@ -1050,7 +1062,13 @@ async def test_pay_specific_period_cross_currency_without_quote(mock_db, monkeyp
 
     mock_db.execute.side_effect = mock_execute_side_effect
 
-    payload = {"amount": 100000, "currency": "COP", "source_amount": 25.0, "source_currency": "USD"}
+    payload = {
+        "idempotency_key": "test-req-29",
+        "amount": 100000,
+        "currency": "COP",
+        "source_amount": 25.0,
+        "source_currency": "USD",
+    }
 
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -1061,5 +1079,66 @@ async def test_pay_specific_period_cross_currency_without_quote(mock_db, monkeyp
             assert response.status_code == 422
             data = response.json()
             assert data["detail"] == "quote_required"
+    finally:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_pay_specific_period_missing_idempotency_key(mock_db):
+    import uuid
+
+    from httpx import ASGITransport, AsyncClient
+
+    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
+
+    obs_id = uuid.uuid4()
+    period_id = uuid.uuid4()
+
+    from unittest.mock import MagicMock
+
+    mock_db.execute.side_effect = lambda stmt: MagicMock(
+        scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value="dummy_obligation")))
+    )
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/payments",
+                json={"amount": 500.00, "currency": "COP"},  # missing idempotency_key
+            )
+            print("DEBUG STATUS CODE:", response.status_code)
+            print("DEBUG JSON:", response.json())
+            assert response.status_code == 422
+            assert response.json()["detail"] == "missing_idempotency_key"
+    finally:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_pay_obligation_fifo_missing_idempotency_key(mock_db):
+    import uuid
+
+    from httpx import ASGITransport, AsyncClient
+
+    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
+
+    obs_id = uuid.uuid4()
+
+    from unittest.mock import MagicMock
+
+    mock_db.execute.side_effect = lambda stmt: MagicMock(
+        scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value="dummy_obligation")))
+    )
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                f"/api/v1.7/obligations/{obs_id}/payments",
+                json={"amount": 500.00, "currency": "COP"},  # missing idempotency_key
+            )
+            print("DEBUG STATUS CODE FIFO:", response.status_code)
+            print("DEBUG JSON FIFO:", response.json())
+            assert response.status_code == 422
+            assert response.json()["detail"] == "missing_idempotency_key"
     finally:
         pass
