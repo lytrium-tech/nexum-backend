@@ -1236,3 +1236,62 @@ async def test_get_summary_v17_feature_flag_off(monkeypatch):
             "/api/v1.7/obligations/summary?month=2026-07",
         )
         assert response.status_code in (401, 403)
+
+
+@pytest.mark.asyncio
+async def test_get_summary_v17_invalid_month(monkeypatch):
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        res = await client.get(
+            "/api/v1.7/obligations/summary?month=202607",
+            headers={"Authorization": "Bearer TEST_TOKEN"}
+        )
+        assert res.status_code == 422
+
+@pytest.mark.asyncio
+async def test_get_intelligence_context_v17(mock_db, monkeypatch):
+    import uuid
+    from datetime import date
+    from decimal import Decimal
+    from unittest.mock import MagicMock
+
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+    from app.obligations.models import Obligation, ObligationPeriod
+    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
+
+    obl1 = Obligation(id=uuid.uuid4(), user_id="00000000-0000-0000-0000-000000000000", name="Obs1", currency="COP", status="active")
+    period1 = ObligationPeriod(id=uuid.uuid4(), obligation_id=obl1.id, period_key="2026-07", amount=Decimal("100.00"), paid_amount=Decimal("20.00"), status="overdue", due_date=date(2026, 7, 10))
+
+    mock_result = MagicMock()
+    mock_result.all.return_value = [(period1, obl1)]
+    mock_db.execute.return_value = mock_result
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        res = await client.get(
+            "/api/v1.7/obligations/intelligence-context?month=2026-07",
+            headers={"Authorization": "Bearer TEST_TOKEN"}
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert len(data["risk_flags"]) == 1
+        assert data["risk_flags"][0]["type"] == "overdue_obligations"
+        assert data["financial_load_by_currency"][0]["currency"] == "COP"
+        assert data["financial_load_by_currency"][0]["pending_amount"] == "80.00"
+
+@pytest.mark.asyncio
+async def test_get_intelligence_context_v17_feature_flag_off(monkeypatch):
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", False)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        res = await client.get(
+            "/api/v1.7/obligations/intelligence-context?month=2026-07"
+        )
+        assert res.status_code in (401, 403)

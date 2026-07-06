@@ -696,12 +696,20 @@ class ObligationV17Service:
                     )
 
         # Build response
-        currency_totals = [
-            ObligationsV17CurrencyTotal(**v) for v in totals_by_currency_map.values()
-        ]
+        currency_totals = []
+        for v in sorted(totals_by_currency_map.values(), key=lambda x: x["currency"]):
+            currency_totals.append(
+                ObligationsV17CurrencyTotal(
+                    currency=v["currency"],
+                    pending_amount=f"{v['pending_amount']:.2f}",
+                    paid_amount=f"{v['paid_amount']:.2f}",
+                    overdue_amount=f"{v['overdue_amount']:.2f}",
+                    period_count=v["period_count"],
+                )
+            )
 
-        # Sort requires_action by due_date
-        requires_action.sort(key=lambda x: x.due_date)
+        # Sort requires_action by due_date asc, then name asc
+        requires_action.sort(key=lambda x: (x.due_date, x.name))
 
         return ObligationsV17SummaryResponse(
             month=month,
@@ -710,5 +718,54 @@ class ObligationV17Service:
             requires_action=requires_action,
             overdue_count=overdue_count,
             pending_definition_count=pending_def_count,
+            generated_at=datetime.utcnow(),
+        )
+
+    async def get_intelligence_context(
+        self, user_id: str, month: str | None = None
+    ):
+        from datetime import datetime
+
+        from app.obligations.schemas_v17 import (
+            ObligationsV17IntelligenceContextResponse,
+            ObligationsV17IntelligenceRiskFlag,
+        )
+
+        # Reuse summary logic entirely
+        summary = await self.get_summary(user_id, month)
+
+        risk_flags = []
+        narrative_facts = []
+
+        if summary.overdue_count > 0:
+            risk_flags.append(
+                ObligationsV17IntelligenceRiskFlag(
+                    type="overdue_obligations",
+                    severity="high" if summary.overdue_count > 2 else "medium",
+                    count=summary.overdue_count,
+                )
+            )
+            narrative_facts.append(f"User has {summary.overdue_count} overdue obligation period(s).")
+            
+        if summary.pending_definition_count > 0:
+            risk_flags.append(
+                ObligationsV17IntelligenceRiskFlag(
+                    type="pending_amount_definition",
+                    severity="medium",
+                    count=summary.pending_definition_count,
+                )
+            )
+            narrative_facts.append(f"There are {summary.pending_definition_count} variable obligation(s) pending amount definition.")
+            
+        if len(summary.totals_by_currency) > 0:
+            currencies = [t.currency for t in summary.totals_by_currency]
+            narrative_facts.append(f"User has pending obligations in {', '.join(currencies)}.")
+
+        return ObligationsV17IntelligenceContextResponse(
+            month=summary.month,
+            financial_load_by_currency=summary.totals_by_currency,
+            requires_action=summary.requires_action,
+            risk_flags=risk_flags,
+            narrative_facts=narrative_facts,
             generated_at=datetime.utcnow(),
         )

@@ -1,7 +1,7 @@
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -18,6 +18,7 @@ from app.obligations.schemas_v17 import (
     ObligationPeriodPaymentResultResponse,
     ObligationPeriodRefreshOverdueResponse,
     ObligationPeriodV17Response,
+    ObligationsV17IntelligenceContextResponse,
     ObligationsV17SummaryResponse,
     ObligationV17CreateRequest,
     ObligationV17Response,
@@ -104,7 +105,7 @@ async def create_obligation_v17(
 )
 async def get_obligations_summary_v17(
     identity: AuthenticatedIdentity,
-    month: str | None = None,
+    month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$", description="Month in YYYY-MM format"),
     session: AsyncSession = Depends(get_db_session),
     _: None = Depends(check_v17_feature_flag),
 ):
@@ -113,6 +114,25 @@ async def get_obligations_summary_v17(
     """
     service = ObligationV17Service(session)
     return await service.get_summary(identity.user_id, month)
+
+
+@router.get(
+    "/intelligence-context",
+    response_model=ObligationsV17IntelligenceContextResponse,
+    summary="Get Intelligence Context (V1.7)",
+    description="Gets a read-only context of V1.7 obligations designed for AI features.",
+)
+async def get_obligations_intelligence_context_v17(
+    identity: AuthenticatedIdentity,
+    month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$", description="Month in YYYY-MM format"),
+    session: AsyncSession = Depends(get_db_session),
+    _: None = Depends(check_v17_feature_flag),
+):
+    """
+    Returns an AI-friendly context summary, reusing the summary endpoint logic.
+    """
+    service = ObligationV17Service(session)
+    return await service.get_intelligence_context(identity.user_id, month)
 
 
 @router.get(

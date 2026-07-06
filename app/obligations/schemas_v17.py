@@ -177,9 +177,9 @@ class ObligationPeriodRefreshOverdueResponse(BaseModel):
 
 class ObligationsV17CurrencyTotal(BaseModel):
     currency: str
-    pending_amount: Decimal
-    paid_amount: Decimal
-    overdue_amount: Decimal
+    pending_amount: str
+    paid_amount: str
+    overdue_amount: str
     period_count: int
 
 
@@ -209,4 +209,19 @@ class ObligationsV17SummaryResponse(BaseModel):
     requires_action: list[ObligationsV17ActionRequiredItem]
     overdue_count: int
     pending_definition_count: int
+    generated_at: datetime
+
+
+class ObligationsV17IntelligenceRiskFlag(BaseModel):
+    type: str
+    severity: str
+    count: int
+
+
+class ObligationsV17IntelligenceContextResponse(BaseModel):
+    month: str
+    financial_load_by_currency: list[ObligationsV17CurrencyTotal]
+    requires_action: list[ObligationsV17ActionRequiredItem]
+    risk_flags: list[ObligationsV17IntelligenceRiskFlag]
+    narrative_facts: list[str]
     generated_at: datetime
