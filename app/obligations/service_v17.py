@@ -590,3 +590,125 @@ class ObligationV17Service:
                 await self.session.refresh(p)
 
         return updated_periods, len(updated_periods)
+
+    async def get_summary(
+        self, user_id: str, month: str | None = None
+    ):
+        from datetime import date, datetime
+        from decimal import Decimal
+
+        from app.obligations.schemas_v17 import (
+            ObligationsV17ActionRequiredItem,
+            ObligationsV17CurrencyTotal,
+            ObligationsV17StatusBreakdown,
+            ObligationsV17SummaryResponse,
+        )
+
+        if not month:
+            month = date.today().strftime("%Y-%m")
+
+        stmt = (
+            select(ObligationPeriod, Obligation)
+            .join(Obligation, ObligationPeriod.obligation_id == Obligation.id)
+            .where(Obligation.user_id == user_id)
+            .where(
+                (ObligationPeriod.period_key == month)
+                | (
+                    ObligationPeriod.status.in_(
+                        [
+                            PeriodStatus.pending_payment.value,
+                            PeriodStatus.partially_paid.value,
+                            PeriodStatus.overdue.value,
+                            PeriodStatus.pending_amount_definition.value,
+                        ]
+                    )
+                )
+            )
+        )
+        result = await self.session.execute(stmt)
+        rows = result.all()
+
+        totals_by_currency_map: dict[str, dict] = {}
+        status_counts = ObligationsV17StatusBreakdown()
+        requires_action = []
+
+        overdue_count = 0
+        pending_def_count = 0
+
+        for period, obligation in rows:
+            currency = obligation.currency
+            if currency not in totals_by_currency_map:
+                totals_by_currency_map[currency] = {
+                    "currency": currency,
+                    "pending_amount": Decimal("0.00"),
+                    "paid_amount": Decimal("0.00"),
+                    "overdue_amount": Decimal("0.00"),
+                    "period_count": 0,
+                }
+
+            c_map = totals_by_currency_map[currency]
+            c_map["period_count"] += 1
+
+            # Update status counts
+            status_val = period.status
+            if status_val == PeriodStatus.pending_payment.value:
+                status_counts.pending_payment += 1
+            elif status_val == PeriodStatus.partially_paid.value:
+                status_counts.partially_paid += 1
+            elif status_val == PeriodStatus.paid.value:
+                status_counts.paid += 1
+            elif status_val == PeriodStatus.overdue.value:
+                status_counts.overdue += 1
+                overdue_count += 1
+            elif status_val == PeriodStatus.pending_amount_definition.value:
+                status_counts.pending_amount_definition += 1
+                pending_def_count += 1
+            elif status_val == PeriodStatus.skipped.value:
+                status_counts.skipped += 1
+            elif status_val == PeriodStatus.cancelled.value:
+                status_counts.cancelled += 1
+
+            amt = period.amount or Decimal("0.00")
+            paid = period.paid_amount or Decimal("0.00")
+            remaining = amt - paid
+
+            # Do not sum amounts for skipped/cancelled into pending
+            if status_val not in (PeriodStatus.skipped.value, PeriodStatus.cancelled.value):
+                # paid_amount is always added if there's any paid
+                c_map["paid_amount"] += paid
+
+                if status_val == PeriodStatus.overdue.value:
+                    c_map["overdue_amount"] += remaining
+                    c_map["pending_amount"] += remaining
+                elif status_val in (PeriodStatus.pending_payment.value, PeriodStatus.partially_paid.value):
+                    c_map["pending_amount"] += remaining
+                elif status_val == PeriodStatus.pending_amount_definition.value:
+                    # pending_amount_definition has amount=None, so amt=0. Does not add to totals.
+                    requires_action.append(
+                        ObligationsV17ActionRequiredItem(
+                            obligation_id=obligation.id,
+                            period_id=period.id,
+                            name=obligation.name,
+                            reason=status_val,
+                            currency=currency,
+                            due_date=period.due_date,
+                        )
+                    )
+
+        # Build response
+        currency_totals = [
+            ObligationsV17CurrencyTotal(**v) for v in totals_by_currency_map.values()
+        ]
+
+        # Sort requires_action by due_date
+        requires_action.sort(key=lambda x: x.due_date)
+
+        return ObligationsV17SummaryResponse(
+            month=month,
+            totals_by_currency=currency_totals,
+            status_counts=status_counts,
+            requires_action=requires_action,
+            overdue_count=overdue_count,
+            pending_definition_count=pending_def_count,
+            generated_at=datetime.utcnow(),
+        )

@@ -93,3 +93,54 @@ async def test_get_pending_obligations_v16_model():
     assert len(res) == 3
     assert res[0]["name"] == "Fixed Obligation"
     assert res[1]["amount"] == Decimal("50.00")
+
+
+@pytest.mark.asyncio
+async def test_get_obligations_metrics_currency_safety():
+    from app.intelligence.repository import IntelligenceRepository
+    from unittest.mock import AsyncMock
+    import uuid
+
+    mock_db = AsyncMock()
+    repo = IntelligenceRepository(mock_db)
+
+    # Let's just execute the method and ensure the query contains the currency safety patch
+    from unittest.mock import MagicMock
+    mock_result = MagicMock()
+    mock_result.mappings.return_value.first.return_value = {"pending_count": 1, "pending_amount": 100}
+    mock_db.execute.return_value = mock_result
+
+    res = await repo.get_obligations_metrics(uuid.uuid4(), "2026-07")
+    assert res["pending_amount"] == 100
+    
+    # Extract query
+    call_args = mock_db.execute.call_args
+    query_text = str(call_args[0][0])
+    assert "o.currency = 'COP'" in query_text
+
+@pytest.mark.asyncio
+async def test_get_pending_obligations_pending_definition_safety():
+    from app.intelligence.repository import IntelligenceRepository
+    from unittest.mock import AsyncMock
+    import uuid
+
+    mock_db = AsyncMock()
+    repo = IntelligenceRepository(mock_db)
+
+    from unittest.mock import MagicMock
+    mock_result = MagicMock()
+    # Mock returning one normal and one pending_amount_definition
+    mock_result.mappings.return_value.all.return_value = [
+        {"obligation_id": uuid.uuid4(), "amount": 100},
+        {"obligation_id": uuid.uuid4(), "amount": 0} # Pydantic expects Decimal or 0, our COALESCE gives 0
+    ]
+    mock_db.execute.return_value = mock_result
+
+    res = await repo.get_pending_obligations(uuid.uuid4())
+    assert len(res) == 2
+    
+    # Extract query
+    call_args = mock_db.execute.call_args
+    query_text = str(call_args[0][0])
+    assert "pending_amount_definition" in query_text
+    assert "COALESCE(op.amount" in query_text

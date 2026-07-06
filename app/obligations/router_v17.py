@@ -10,14 +10,15 @@ from app.core.security import AuthenticatedIdentity
 from app.obligations.schemas_v17 import (
     ApiErrorResponse,
     EmptyStateResponse,
-    ObligationPaymentV17Response,
     ObligationFIFOPaymentCreateRequest,
     ObligationFIFOPaymentResultResponse,
+    ObligationPaymentV17Response,
     ObligationPeriodAmountDefineRequest,
     ObligationPeriodPaymentCreateRequest,
     ObligationPeriodPaymentResultResponse,
     ObligationPeriodRefreshOverdueResponse,
     ObligationPeriodV17Response,
+    ObligationsV17SummaryResponse,
     ObligationV17CreateRequest,
     ObligationV17Response,
 )
@@ -93,6 +94,25 @@ async def create_obligation_v17(
 
     # Map fields for response
     return _map_obligation(obligation)
+
+
+@router.get(
+    "/summary",
+    response_model=ObligationsV17SummaryResponse,
+    summary="Get Obligations Summary (V1.7)",
+    description="Gets a high-level summary of V1.7 obligations for a specific month.",
+)
+async def get_obligations_summary_v17(
+    identity: AuthenticatedIdentity,
+    month: str | None = None,
+    session: AsyncSession = Depends(get_db_session),
+    _: None = Depends(check_v17_feature_flag),
+):
+    """
+    Returns a dashboard summary for the specified month (or current month).
+    """
+    service = ObligationV17Service(session)
+    return await service.get_summary(identity.user_id, month)
 
 
 @router.get(

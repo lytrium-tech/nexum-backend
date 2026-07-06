@@ -1142,3 +1142,97 @@ async def test_pay_obligation_fifo_missing_idempotency_key(mock_db):
             assert response.json()["detail"] == "missing_idempotency_key"
     finally:
         pass
+
+
+@pytest.mark.asyncio
+async def test_get_summary_v17(mock_db, monkeypatch):
+    import uuid
+    from datetime import date
+    from decimal import Decimal
+    from unittest.mock import MagicMock
+
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+    from app.obligations.enums_v17 import PeriodStatus
+    from app.obligations.models import Obligation, ObligationPeriod
+
+    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
+
+    obl1 = Obligation(
+        id=uuid.uuid4(),
+        user_id="00000000-0000-0000-0000-000000000000",
+        name="Obligation 1",
+        currency="COP",
+        status="active"
+    )
+    period1 = ObligationPeriod(
+        id=uuid.uuid4(),
+        obligation_id=obl1.id,
+        period_key="2026-07",
+        amount=Decimal("100.00"),
+        paid_amount=Decimal("20.00"),
+        status=PeriodStatus.pending_payment.value,
+        due_date=date(2026, 7, 10)
+    )
+
+    obl2 = Obligation(
+        id=uuid.uuid4(),
+        user_id="00000000-0000-0000-0000-000000000000",
+        name="Obligation 2",
+        currency="USD",
+        status="active"
+    )
+    period2 = ObligationPeriod(
+        id=uuid.uuid4(),
+        obligation_id=obl2.id,
+        period_key="2026-07",
+        amount=None,
+        paid_amount=Decimal("0.00"),
+        status=PeriodStatus.pending_amount_definition.value,
+        due_date=date(2026, 7, 15)
+    )
+
+    mock_result = MagicMock()
+    mock_result.all.return_value = [
+        (period1, obl1),
+        (period2, obl2)
+    ]
+    mock_db.execute.return_value = mock_result
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            "/api/v1.7/obligations/summary?month=2026-07",
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["month"] == "2026-07"
+        
+        totals = {t["currency"]: t for t in data["totals_by_currency"]}
+        assert "COP" in totals
+        assert totals["COP"]["pending_amount"] == "80.00"
+        assert totals["COP"]["paid_amount"] == "20.00"
+        
+        assert "USD" in totals
+        assert totals["USD"]["pending_amount"] == "0.00"
+        
+        assert len(data["requires_action"]) == 1
+        action = data["requires_action"][0]
+        assert action["currency"] == "USD"
+        assert action["reason"] == "pending_amount_definition"
+        assert data["pending_definition_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_summary_v17_feature_flag_off(monkeypatch):
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", False)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            "/api/v1.7/obligations/summary?month=2026-07",
+        )
+        assert response.status_code in (401, 403)

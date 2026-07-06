@@ -105,8 +105,9 @@ class IntelligenceRepository:
             "FROM obligation_periods op "
             "JOIN obligations o ON op.obligation_id = o.id "
             "WHERE o.user_id = :user_id "
-            "AND op.status IN ('pending_payment', 'partially_paid', 'overdue') "
-            "AND op.amount IS NOT NULL"
+            "AND op.status IN ('pending_payment', 'partially_paid', 'overdue', 'pending_amount_definition') "
+            # [SAFETY PATCH] Only sum COP to prevent cross-currency corruption in V1.7
+            "AND o.currency = 'COP'"
         )
         result = await self.session.execute(query, {"user_id": user_id})
         return dict(result.mappings().first() or {})
@@ -176,15 +177,14 @@ class IntelligenceRepository:
             "SELECT "
             "  o.id as obligation_id, "
             "  o.name as name, "
-            "  op.amount - COALESCE(op.paid_amount, 0) as amount, "
+            "  COALESCE(op.amount - COALESCE(op.paid_amount, 0), 0) as amount, "
             "  CAST(EXTRACT(DAY FROM op.due_date) AS INTEGER) as due_day, "
             "  o.frequency as frequency, "
             "  true as is_pending "
             "FROM obligation_periods op "
             "JOIN obligations o ON op.obligation_id = o.id "
             "WHERE o.user_id = :user_id "
-            "AND op.status IN ('pending_payment', 'partially_paid', 'overdue') "
-            "AND op.amount IS NOT NULL "
+            "AND op.status IN ('pending_payment', 'partially_paid', 'overdue', 'pending_amount_definition') "
             "ORDER BY op.due_date ASC"
         )
         result = await self.session.execute(query, {"user_id": user_id})

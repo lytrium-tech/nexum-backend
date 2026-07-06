@@ -173,3 +173,40 @@ class ObligationFIFOPaymentResultResponse(BaseModel):
 class ObligationPeriodRefreshOverdueResponse(BaseModel):
     updated_periods: list[ObligationPeriodV17Response]
     updated_count: int
+
+
+class ObligationsV17CurrencyTotal(BaseModel):
+    currency: str
+    pending_amount: Decimal
+    paid_amount: Decimal
+    overdue_amount: Decimal
+    period_count: int
+
+
+class ObligationsV17StatusBreakdown(BaseModel):
+    pending_payment: int = 0
+    partially_paid: int = 0
+    paid: int = 0
+    overdue: int = 0
+    pending_amount_definition: int = 0
+    skipped: int = 0
+    cancelled: int = 0
+
+
+class ObligationsV17ActionRequiredItem(BaseModel):
+    obligation_id: UUID
+    period_id: UUID
+    name: str
+    reason: str
+    currency: str
+    due_date: date
+
+
+class ObligationsV17SummaryResponse(BaseModel):
+    month: str
+    totals_by_currency: list[ObligationsV17CurrencyTotal]
+    status_counts: ObligationsV17StatusBreakdown
+    requires_action: list[ObligationsV17ActionRequiredItem]
+    overdue_count: int
+    pending_definition_count: int
+    generated_at: datetime
