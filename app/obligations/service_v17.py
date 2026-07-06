@@ -343,3 +343,87 @@ class ObligationV17Service:
             await self.session.refresh(payment)
 
         return created_payments, updated_periods
+
+    async def skip_period(
+        self, user_id: str, obligation_id: uuid.UUID, period_id: uuid.UUID
+    ) -> ObligationPeriod:
+        obligation = await self.get_obligation(user_id, obligation_id)
+        if not obligation:
+            raise HTTPException(status_code=404, detail="obligation_not_found")
+
+        period = await self.get_period(obligation_id, period_id)
+        if not period:
+            raise HTTPException(status_code=404, detail="period_not_found")
+
+        if period.status not in (
+            PeriodStatus.pending_amount_definition.value,
+            PeriodStatus.pending_payment.value,
+        ):
+            raise HTTPException(status_code=422, detail="period_not_skippable")
+
+        period.status = PeriodStatus.skipped.value
+        await self.session.commit()
+        await self.session.refresh(period)
+        return period
+
+    async def cancel_period(
+        self, user_id: str, obligation_id: uuid.UUID, period_id: uuid.UUID
+    ) -> ObligationPeriod:
+        obligation = await self.get_obligation(user_id, obligation_id)
+        if not obligation:
+            raise HTTPException(status_code=404, detail="obligation_not_found")
+
+        period = await self.get_period(obligation_id, period_id)
+        if not period:
+            raise HTTPException(status_code=404, detail="period_not_found")
+
+        from decimal import Decimal
+        paid_amt = period.paid_amount or Decimal("0")
+        if paid_amt > 0:
+            raise HTTPException(status_code=422, detail="period_has_payments")
+
+        if period.status not in (
+            PeriodStatus.pending_amount_definition.value,
+            PeriodStatus.pending_payment.value,
+            PeriodStatus.overdue.value,
+            PeriodStatus.skipped.value,
+        ):
+            raise HTTPException(status_code=422, detail="period_not_cancellable")
+
+        period.status = PeriodStatus.cancelled.value
+        await self.session.commit()
+        await self.session.refresh(period)
+        return period
+
+    async def refresh_overdue_periods(
+        self, user_id: str, obligation_id: uuid.UUID
+    ) -> tuple[list[ObligationPeriod], int]:
+        obligation = await self.get_obligation(user_id, obligation_id)
+        if not obligation:
+            raise HTTPException(status_code=404, detail="obligation_not_found")
+
+        from datetime import date
+        today = date.today()
+
+        stmt = select(ObligationPeriod).where(
+            ObligationPeriod.obligation_id == obligation_id,
+            ObligationPeriod.status.in_([
+                PeriodStatus.pending_payment.value,
+                PeriodStatus.partially_paid.value,
+            ]),
+            ObligationPeriod.due_date < today
+        )
+        periods_result = await self.session.execute(stmt)
+        periods = periods_result.scalars().all()
+
+        updated_periods = []
+        for p in periods:
+            p.status = PeriodStatus.overdue.value
+            updated_periods.append(p)
+
+        if updated_periods:
+            await self.session.commit()
+            for p in updated_periods:
+                await self.session.refresh(p)
+
+        return updated_periods, len(updated_periods)

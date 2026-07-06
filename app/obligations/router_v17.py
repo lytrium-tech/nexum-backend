@@ -16,6 +16,7 @@ from app.obligations.schemas_v17 import (
     ObligationPeriodAmountDefineRequest,
     ObligationPeriodPaymentCreateRequest,
     ObligationPeriodPaymentResultResponse,
+    ObligationPeriodRefreshOverdueResponse,
     ObligationPeriodV17Response,
     ObligationV17CreateRequest,
     ObligationV17Response,
@@ -283,9 +284,7 @@ async def create_obligation_payment_fifo_v17(
     Registra un pago general a una obligacion en V1.7 usando estrategia FIFO.
     """
     service = ObligationV17Service(session)
-    payments, periods = await service.pay_obligation_fifo(
-        identity.user_id, obligation_id, data
-    )
+    payments, periods = await service.pay_obligation_fifo(identity.user_id, obligation_id, data)
 
     from datetime import datetime
 
@@ -300,7 +299,8 @@ async def create_obligation_payment_fifo_v17(
             idempotency_key=pay.idempotency_key,
             created_at=pay.created_at or datetime.utcnow(),
             updated_at=pay.created_at or datetime.utcnow(),
-        ) for pay in payments
+        )
+        for pay in payments
     ]
 
     period_responses = [
@@ -314,17 +314,131 @@ async def create_obligation_payment_fifo_v17(
             amount_paid=p.paid_amount or Decimal("0"),
             created_at=p.created_at or datetime.utcnow(),
             updated_at=p.updated_at or datetime.utcnow(),
-        ) for p in periods
+        )
+        for p in periods
     ]
 
     from decimal import Decimal
+
     return ObligationFIFOPaymentResultResponse(
         payments=payment_responses,
         periods=period_responses,
         total_applied=data.amount,
         remaining_unapplied=Decimal("0"),
-        strategy="fifo"
+        strategy="fifo",
     )
+
+
+@router.post(
+    "/{obligation_id}/periods/{period_id}/skip",
+    response_model=ObligationPeriodV17Response,
+    dependencies=[Depends(check_v17_feature_flag)],
+)
+async def skip_obligation_period(
+    obligation_id: UUID,
+    period_id: UUID,
+    identity: AuthenticatedIdentity,
+    session: AsyncSession = Depends(get_db_session),
+):
+    """
+    Skip a period. Only allowed for pending_amount_definition or pending_payment.
+    """
+    service = ObligationV17Service(session)
+    period = await service.skip_period(
+        user_id=str(identity.user_id),
+        obligation_id=obligation_id,
+        period_id=period_id,
+    )
+    from datetime import datetime
+
+    return ObligationPeriodV17Response(
+        id=period.id,
+        obligation_id=period.obligation_id,
+        due_date=period.due_date,
+        status=period.status,
+        is_current=period.is_current,
+        amount_due=period.amount or Decimal("0"),
+        amount_paid=period.paid_amount or Decimal("0"),
+        created_at=period.created_at or datetime.utcnow(),
+        updated_at=period.updated_at or datetime.utcnow(),
+    )
+
+
+@router.post(
+    "/{obligation_id}/periods/{period_id}/cancel",
+    response_model=ObligationPeriodV17Response,
+    dependencies=[Depends(check_v17_feature_flag)],
+)
+async def cancel_obligation_period(
+    obligation_id: UUID,
+    period_id: UUID,
+    identity: AuthenticatedIdentity,
+    session: AsyncSession = Depends(get_db_session),
+):
+    """
+    Cancel a period. Allowed for pending states, overdue, and skipped if no payments.
+    """
+    service = ObligationV17Service(session)
+    period = await service.cancel_period(
+        user_id=str(identity.user_id),
+        obligation_id=obligation_id,
+        period_id=period_id,
+    )
+    from datetime import datetime
+
+    return ObligationPeriodV17Response(
+        id=period.id,
+        obligation_id=period.obligation_id,
+        due_date=period.due_date,
+        status=period.status,
+        is_current=period.is_current,
+        amount_due=period.amount or Decimal("0"),
+        amount_paid=period.paid_amount or Decimal("0"),
+        created_at=period.created_at or datetime.utcnow(),
+        updated_at=period.updated_at or datetime.utcnow(),
+    )
+
+
+@router.post(
+    "/{obligation_id}/periods/refresh-overdue",
+    response_model=ObligationPeriodRefreshOverdueResponse,
+    dependencies=[Depends(check_v17_feature_flag)],
+)
+async def refresh_overdue_periods(
+    obligation_id: UUID,
+    identity: AuthenticatedIdentity,
+    session: AsyncSession = Depends(get_db_session),
+):
+    """
+    Refresh overdue periods for an obligation.
+    """
+    service = ObligationV17Service(session)
+    updated_periods, count = await service.refresh_overdue_periods(
+        user_id=str(identity.user_id),
+        obligation_id=obligation_id,
+    )
+
+    from datetime import datetime
+
+    response_periods = [
+        ObligationPeriodV17Response(
+            id=p.id,
+            obligation_id=p.obligation_id,
+            due_date=p.due_date,
+            status=p.status,
+            is_current=p.is_current,
+            amount_due=p.amount or Decimal("0"),
+            amount_paid=p.paid_amount or Decimal("0"),
+            created_at=p.created_at or datetime.utcnow(),
+            updated_at=p.updated_at or datetime.utcnow(),
+        )
+        for p in updated_periods
+    ]
+
+    return ObligationPeriodRefreshOverdueResponse(
+        updated_periods=response_periods, updated_count=count
+    )
+
 
 @router.get(
     "/payments/{payment_id}",

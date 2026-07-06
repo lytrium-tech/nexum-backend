@@ -158,3 +158,8 @@ class ObligationFIFOPaymentResultResponse(BaseModel):
     total_applied: Decimal
     remaining_unapplied: Decimal
     strategy: str = "fifo"
+
+
+class ObligationPeriodRefreshOverdueResponse(BaseModel):
+    updated_periods: list[ObligationPeriodV17Response]
+    updated_count: int

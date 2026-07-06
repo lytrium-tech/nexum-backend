@@ -563,7 +563,7 @@ async def test_pay_specific_period(mock_db):
             mock_db.execute.side_effect = side_effect_idempotency
             response = await client.post(
                 f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/payments",
-                json={"amount": 100, "idempotency_key": "req-123"}
+                json={"amount": 100, "idempotency_key": "req-123"},
             )
             assert response.status_code == 409
             assert response.json()["detail"] == "idempotency_conflict"
@@ -686,6 +686,7 @@ async def test_pay_obligation_fifo(mock_db):
             # 4. No payable periods
             mock_period_1.status = "paid"
             mock_period_2.status = "paid"
+
             def side_effect_empty(stmt):
                 mock_result = MagicMock()
                 stmt_str = str(stmt).lower()
@@ -696,6 +697,7 @@ async def test_pay_obligation_fifo(mock_db):
                 else:
                     mock_result.scalars.return_value.first.return_value = mock_obligation
                 return mock_result
+
             mock_db.execute.side_effect = side_effect_empty
             response = await client.post(
                 f"/api/v1.7/obligations/{obs_id}/payments",
@@ -711,13 +713,145 @@ async def test_pay_obligation_fifo(mock_db):
                 if "obligationpayment" in stmt_str:
                     mock_result.scalars.return_value.first.return_value = "EXISTING_PAYMENT"
                 return mock_result
+
             mock_db.execute.side_effect = side_effect_idempotency
             response = await client.post(
                 f"/api/v1.7/obligations/{obs_id}/payments",
-                json={"amount": 100, "idempotency_key": "req-123"}
+                json={"amount": 100, "idempotency_key": "req-123"},
             )
             assert response.status_code == 409
             assert response.json()["detail"] == "idempotency_conflict"
 
+    finally:
+        settings.NEXUM_OBLIGATIONS_V17_ENABLED = False
+
+
+@pytest.mark.asyncio
+async def test_skip_period_success(mock_db):
+    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
+    try:
+        import uuid
+        from decimal import Decimal
+        from unittest.mock import MagicMock
+        from app.obligations.models import ObligationPeriod, Obligation
+
+        obs_id = uuid.uuid4()
+        period_id = uuid.uuid4()
+
+        from datetime import date
+
+        mock_obl = Obligation(id=obs_id, currency="COP", amount_type="fixed")
+        mock_period = ObligationPeriod(
+            id=period_id,
+            obligation_id=obs_id,
+            status="pending_payment",
+            amount=Decimal("100"),
+            paid_amount=Decimal("0"),
+            is_current=True,
+            due_date=date.today(),
+        )
+
+        def side_effect(stmt):
+            mock_result = MagicMock()
+            if "obligation_period" in str(stmt).lower():
+                mock_result.scalars.return_value.first.return_value = mock_period
+            else:
+                mock_result.scalars.return_value.first.return_value = mock_obl
+            return mock_result
+
+        mock_db.execute.side_effect = side_effect
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/skip")
+            assert response.status_code == 200
+            assert mock_period.status == "skipped"
+    finally:
+        settings.NEXUM_OBLIGATIONS_V17_ENABLED = False
+
+
+@pytest.mark.asyncio
+async def test_cancel_period_success(mock_db):
+    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
+    try:
+        import uuid
+        from decimal import Decimal
+        from unittest.mock import MagicMock
+        from app.obligations.models import ObligationPeriod, Obligation
+
+        obs_id = uuid.uuid4()
+        period_id = uuid.uuid4()
+
+        from datetime import date
+
+        mock_obl = Obligation(id=obs_id, currency="COP", amount_type="fixed")
+        mock_period = ObligationPeriod(
+            id=period_id,
+            obligation_id=obs_id,
+            status="pending_payment",
+            amount=Decimal("100"),
+            paid_amount=Decimal("0"),
+            is_current=True,
+            due_date=date.today(),
+        )
+
+        def side_effect(stmt):
+            mock_result = MagicMock()
+            if "obligation_period" in str(stmt).lower():
+                mock_result.scalars.return_value.first.return_value = mock_period
+            else:
+                mock_result.scalars.return_value.first.return_value = mock_obl
+            return mock_result
+
+        mock_db.execute.side_effect = side_effect
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/cancel"
+            )
+            assert response.status_code == 200
+            assert mock_period.status == "cancelled"
+    finally:
+        settings.NEXUM_OBLIGATIONS_V17_ENABLED = False
+
+
+@pytest.mark.asyncio
+async def test_refresh_overdue_periods(mock_db):
+    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
+    try:
+        import uuid
+        from decimal import Decimal
+        from datetime import date, timedelta
+        from unittest.mock import MagicMock
+        from app.obligations.models import ObligationPeriod, Obligation
+
+        obs_id = uuid.uuid4()
+        period_id = uuid.uuid4()
+
+        mock_obl = Obligation(id=obs_id, currency="COP", amount_type="fixed")
+        mock_period = ObligationPeriod(
+            id=period_id,
+            obligation_id=obs_id,
+            status="pending_payment",
+            due_date=date.today() - timedelta(days=1),
+            amount=Decimal("100"),
+            paid_amount=Decimal("0"),
+            is_current=True,
+        )
+
+        def side_effect(stmt):
+            mock_result = MagicMock()
+            if "obligation_period" in str(stmt).lower():
+                mock_result.scalars.return_value.all.return_value = [mock_period]
+            else:
+                mock_result.scalars.return_value.first.return_value = mock_obl
+            return mock_result
+
+        mock_db.execute.side_effect = side_effect
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(f"/api/v1.7/obligations/{obs_id}/periods/refresh-overdue")
+            assert response.status_code == 200
+            assert mock_period.status == "overdue"
+            assert response.json()["updated_count"] == 1
     finally:
         settings.NEXUM_OBLIGATIONS_V17_ENABLED = False
