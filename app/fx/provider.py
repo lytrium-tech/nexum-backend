@@ -1,4 +1,5 @@
 import logging
+from decimal import Decimal, InvalidOperation
 from typing import Protocol
 
 import httpx
@@ -7,10 +8,10 @@ logger = logging.getLogger(__name__)
 
 
 class FxRateProvider(Protocol):
-    async def get_rate(self, from_currency: str, to_currency: str) -> float | None:
+    async def get_rate(self, from_currency: str, to_currency: str) -> Decimal | None:
         """
         Devuelve la tasa de cambio de from_currency a to_currency.
-        Ej: get_rate("USD", "COP") -> 4000.0
+        Ej: get_rate("USD", "COP") -> Decimal('4000.00000000')
         Si no se soporta o hay un error, devuelve None.
         """
         ...
@@ -19,16 +20,18 @@ class FxRateProvider(Protocol):
 class StaticFxRateProvider(FxRateProvider):
     """Proveedor estático para tests y fallback local."""
 
-    def __init__(self, rates: dict[str, float] | None = None):
+    def __init__(self, rates: dict[str, Decimal] | None = None):
         self.rates = rates or {
-            "USD_COP": 4000.0,
-            "EUR_COP": 4300.0,
+            "USD_COP": Decimal("4000.00"),
+            "EUR_COP": Decimal("4300.00"),
         }
 
-    async def get_rate(self, from_currency: str, to_currency: str) -> float | None:
-        if from_currency == to_currency:
-            return 1.0
-        pair = f"{from_currency.upper()}_{to_currency.upper()}"
+    async def get_rate(self, from_currency: str, to_currency: str) -> Decimal | None:
+        from_c = from_currency.upper()
+        to_c = to_currency.upper()
+        if from_c == to_c:
+            return Decimal("1.00000000")
+        pair = f"{from_c}_{to_c}"
         return self.rates.get(pair)
 
 
@@ -42,12 +45,12 @@ class DolarApiColombiaFxRateProvider(FxRateProvider):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout_seconds
 
-    async def get_rate(self, from_currency: str, to_currency: str) -> float | None:
+    async def get_rate(self, from_currency: str, to_currency: str) -> Decimal | None:
         from_c = from_currency.upper()
         to_c = to_currency.upper()
 
         if from_c == to_c:
-            return 1.0
+            return Decimal("1.00000000")
 
         if from_c == "USD" and to_c == "COP":
             url = f"{self.base_url}/v1/cotizaciones/usd"
@@ -56,8 +59,11 @@ class DolarApiColombiaFxRateProvider(FxRateProvider):
                     response = await client.get(url)
                     response.raise_for_status()
                     data = response.json()
-                    # Retornamos el valor de 'venta' por defecto para el calculo del snapshot
-                    return float(data.get("venta", 0.0))
+                    venta_val = str(data.get("venta", "0.0"))
+                    return Decimal(venta_val)
+            except InvalidOperation as e:
+                logger.warning(f"Error parseando tasa FX de DolarAPI a Decimal: {e}")
+                return None
             except Exception as e:
                 logger.warning(f"Error fetching FX rate from DolarAPI: {e}")
                 return None
