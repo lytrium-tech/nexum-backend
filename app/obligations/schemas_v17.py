@@ -124,11 +124,16 @@ class ObligationPeriodPaymentCreateRequest(BaseModel):
     source_account_id: UUID | None = None
     metadata_: dict | None = Field(default_factory=dict, alias="metadata")
     idempotency_key: str | None = None
+    source_amount: Decimal | None = None
+    source_currency: str | None = Field(None, min_length=3, max_length=3)
+    quote_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_currency(self) -> "ObligationPeriodPaymentCreateRequest":
         if self.currency:
             self.currency = self.currency.upper()
+        if self.source_currency:
+            self.source_currency = self.source_currency.upper()
         return self
 
 
@@ -144,11 +149,16 @@ class ObligationFIFOPaymentCreateRequest(BaseModel):
     source_account_id: UUID | None = None
     metadata_: dict | None = Field(default_factory=dict, alias="metadata")
     idempotency_key: str | None = None
+    source_amount: Decimal | None = None
+    source_currency: str | None = Field(None, min_length=3, max_length=3)
+    quote_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_currency(self) -> "ObligationFIFOPaymentCreateRequest":
         if self.currency:
             self.currency = self.currency.upper()
+        if self.source_currency:
+            self.source_currency = self.source_currency.upper()
         return self
 
 

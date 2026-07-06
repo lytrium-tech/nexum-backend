@@ -579,8 +579,8 @@ async def test_pay_obligation_fifo(mock_db):
 
     import uuid
     from datetime import date, datetime
-    from unittest.mock import MagicMock
     from decimal import Decimal
+    from unittest.mock import MagicMock
 
     from app.obligations.models import Obligation, ObligationPeriod
 
@@ -733,7 +733,8 @@ async def test_skip_period_success(mock_db):
         import uuid
         from decimal import Decimal
         from unittest.mock import MagicMock
-        from app.obligations.models import ObligationPeriod, Obligation
+
+        from app.obligations.models import Obligation, ObligationPeriod
 
         obs_id = uuid.uuid4()
         period_id = uuid.uuid4()
@@ -776,7 +777,8 @@ async def test_cancel_period_success(mock_db):
         import uuid
         from decimal import Decimal
         from unittest.mock import MagicMock
-        from app.obligations.models import ObligationPeriod, Obligation
+
+        from app.obligations.models import Obligation, ObligationPeriod
 
         obs_id = uuid.uuid4()
         period_id = uuid.uuid4()
@@ -819,10 +821,11 @@ async def test_refresh_overdue_periods(mock_db):
     settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
     try:
         import uuid
-        from decimal import Decimal
         from datetime import date, timedelta
+        from decimal import Decimal
         from unittest.mock import MagicMock
-        from app.obligations.models import ObligationPeriod, Obligation
+
+        from app.obligations.models import Obligation, ObligationPeriod
 
         obs_id = uuid.uuid4()
         period_id = uuid.uuid4()
@@ -855,3 +858,188 @@ async def test_refresh_overdue_periods(mock_db):
             assert response.json()["updated_count"] == 1
     finally:
         settings.NEXUM_OBLIGATIONS_V17_ENABLED = False
+
+
+@pytest.mark.asyncio
+async def test_pay_specific_period_cross_currency_success(mock_db, monkeypatch):
+    import uuid
+    from datetime import UTC, date, datetime, timedelta
+    from decimal import Decimal
+    from unittest.mock import MagicMock
+
+    from httpx import ASGITransport, AsyncClient
+
+    from app.core.config import settings
+    from app.main import app
+    from app.obligations.enums_v17 import ObligationStatus, PeriodStatus
+    from app.obligations.models import FXQuote, Obligation, ObligationPeriod
+
+    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
+
+    obs_id = uuid.uuid4()
+    period_id = uuid.uuid4()
+    quote_id = uuid.uuid4()
+    user_id = settings.DEV_USER_ID
+
+    mock_obligation = Obligation(
+        id=obs_id,
+        user_id=user_id,
+        currency="COP",
+        status=ObligationStatus.active.value,
+        type="indefinite",
+        frequency="monthly",
+        amount_type="fixed",
+        start_date=date(2026, 1, 1),
+        first_due_date=date(2026, 1, 15),
+        base_amount=Decimal("100000"),
+    )
+    mock_period = ObligationPeriod(
+        id=period_id,
+        obligation_id=obs_id,
+        amount=Decimal("100000"),
+        paid_amount=Decimal("0"),
+        status=PeriodStatus.pending_payment.value,
+        currency="COP",
+        due_date=date(2026, 1, 15),
+        is_current=True,
+    )
+
+    mock_quote = FXQuote(
+        id=quote_id,
+        user_id=user_id,
+        from_currency="USD",
+        to_currency="COP",
+        source_amount=Decimal("25.0000"),
+        target_amount=Decimal("100000.0000"),
+        rate=Decimal("4000.00000000"),
+        provider="StaticFxRateProvider",
+        rate_timestamp=datetime.now(UTC),
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        status="active",
+    )
+
+    def mock_execute_side_effect(stmt):
+        stmt_str = str(stmt).lower()
+        if "from obligations" in stmt_str:
+            return MagicMock(
+                scalars=MagicMock(
+                    return_value=MagicMock(first=MagicMock(return_value=mock_obligation))
+                )
+            )
+        if "from obligation_periods" in stmt_str:
+            return MagicMock(
+                scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=mock_period)))
+            )
+        if "from fx_quotes" in stmt_str:
+            return MagicMock(
+                scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=mock_quote)))
+            )
+        if "from obligation_payments" in stmt_str:
+            return MagicMock(
+                scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+            )
+        return MagicMock(
+            scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+        )
+
+    mock_db.execute.side_effect = mock_execute_side_effect
+
+    payload = {
+        "amount": 100000,
+        "currency": "COP",
+        "source_amount": 25.0,
+        "source_currency": "USD",
+        "quote_id": str(quote_id),
+    }
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/payments", json=payload
+            )
+
+            assert response.status_code == 201
+            data = response.json()
+            assert (
+                data["payment"]["amount"] == "100000.0000"
+                or data["payment"]["amount"] == "100000.00"
+            )
+            assert data["payment"]["quote_id"] == str(quote_id)
+    finally:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_pay_specific_period_cross_currency_without_quote(mock_db, monkeypatch):
+    import uuid
+    from datetime import date
+    from decimal import Decimal
+    from unittest.mock import MagicMock
+
+    from httpx import ASGITransport, AsyncClient
+
+    from app.core.config import settings
+    from app.main import app
+    from app.obligations.enums_v17 import ObligationStatus, PeriodStatus
+    from app.obligations.models import Obligation, ObligationPeriod
+
+    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
+
+    obs_id = uuid.uuid4()
+    period_id = uuid.uuid4()
+    user_id = settings.DEV_USER_ID
+
+    mock_obligation = Obligation(
+        id=obs_id,
+        user_id=user_id,
+        currency="COP",
+        status=ObligationStatus.active.value,
+        type="indefinite",
+        frequency="monthly",
+        amount_type="fixed",
+        start_date=date(2026, 1, 1),
+        first_due_date=date(2026, 1, 15),
+        base_amount=Decimal("100000"),
+    )
+    mock_period = ObligationPeriod(
+        id=period_id,
+        obligation_id=obs_id,
+        amount=Decimal("100000"),
+        paid_amount=Decimal("0"),
+        status=PeriodStatus.pending_payment.value,
+        currency="COP",
+        due_date=date(2026, 1, 15),
+        is_current=True,
+    )
+
+    def mock_execute_side_effect(stmt):
+        stmt_str = str(stmt).lower()
+        if "from obligations" in stmt_str:
+            return MagicMock(
+                scalars=MagicMock(
+                    return_value=MagicMock(first=MagicMock(return_value=mock_obligation))
+                )
+            )
+        if "from obligation_periods" in stmt_str:
+            return MagicMock(
+                scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=mock_period)))
+            )
+        return MagicMock(
+            scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+        )
+
+    mock_db.execute.side_effect = mock_execute_side_effect
+
+    payload = {"amount": 100000, "currency": "COP", "source_amount": 25.0, "source_currency": "USD"}
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/payments", json=payload
+            )
+
+            assert response.status_code == 422
+            data = response.json()
+            assert data["detail"] == "quote_required"
+    finally:
+        pass

@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.database import get_db_session
 from app.core.errors import ValidationError
 from app.core.security import AuthenticatedIdentity
 from app.fx.provider import DolarApiColombiaFxRateProvider, StaticFxRateProvider
@@ -10,13 +12,14 @@ from app.fx.service import FXService
 router = APIRouter(prefix="/fx", tags=["FX Engine"])
 
 
-def get_fx_service() -> FXService:
+def get_fx_service(db: AsyncSession = Depends(get_db_session)) -> FXService:
     provider = (
         StaticFxRateProvider()
-        if getattr(settings, "APP_ENV", "") == "development" or getattr(settings, "APP_ENV", "") == "test"
+        if getattr(settings, "APP_ENV", "") == "development"
+        or getattr(settings, "APP_ENV", "") == "test"
         else DolarApiColombiaFxRateProvider()
     )
-    return FXService(provider=provider)
+    return FXService(provider=provider, session=db)
 
 
 @router.get("/rates/latest", response_model=FXRatesLatestResponse)

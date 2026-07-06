@@ -4,18 +4,20 @@ from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
 
-from app.core.errors import (
-    ValidationError,
-)
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.errors import ValidationError
 from app.fx.provider import FxRateProvider
 from app.fx.schemas import FXQuoteResponse, FXRatesLatestResponse
+from app.obligations.models import FXQuote
 
 logger = logging.getLogger(__name__)
 
 
 class FXService:
-    def __init__(self, provider: FxRateProvider):
+    def __init__(self, provider: FxRateProvider, session: AsyncSession | None = None):
         self.provider = provider
+        self.session = session
         self.quote_validity_minutes = 5
         self.tolerance_bps = 50
 
@@ -77,7 +79,24 @@ class FXService:
         now = datetime.now(UTC)
         expires_at = now + timedelta(minutes=self.quote_validity_minutes)
 
-        # TODO: Persist FXQuote to DB if models are available. For Phase 5B, returning mock-persistence is enough as we don't modify the database.
+        if self.session:
+            db_quote = FXQuote(
+                id=quote_id,
+                user_id=user_id,
+                from_currency=from_c,
+                to_currency=to_c,
+                source_amount=source_amount,
+                target_amount=target_amount,
+                rate=rate,
+                provider=self.provider.__class__.__name__,
+                rate_timestamp=now,
+                expires_at=expires_at,
+                status="active",
+                idempotency_key=idempotency_key,
+            )
+            self.session.add(db_quote)
+            await self.session.commit()
+
         return FXQuoteResponse(
             quote_id=quote_id,
             source_amount=source_amount,
