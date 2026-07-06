@@ -11,7 +11,27 @@ from app.main import app
 
 @pytest.fixture
 def mock_db():
+    from unittest.mock import AsyncMock, MagicMock
+    import uuid
+    from datetime import datetime
+
     mock_session = AsyncMock()
+
+    def fake_add(obj):
+        if not getattr(obj, "id", None):
+            obj.id = uuid.uuid4()
+        if hasattr(obj, "period") and getattr(obj, "period", None) is None:
+            obj.period = "2026-07"
+        if hasattr(obj, "created_at") and getattr(obj, "created_at", None) is None:
+            obj.created_at = datetime.utcnow()
+
+    mock_session.add = MagicMock(side_effect=fake_add)
+
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=mock_session)
+    cm.__aexit__ = AsyncMock(return_value=None)
+    mock_session.begin_nested = MagicMock(return_value=cm)
+
     app.dependency_overrides[get_db_session] = lambda: mock_session
     yield mock_session
     app.dependency_overrides.clear()

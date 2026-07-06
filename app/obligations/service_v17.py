@@ -3,6 +3,12 @@ import uuid
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import UTC, datetime
+
+from app.ledger.schemas import LedgerEventCreate
+from app.ledger.service import LedgerService
+from app.ledger.repository import LedgerRepository
+from app.ledger.enums import Direction, EventType
 
 from app.obligations.enums_v17 import AmountType, ObligationStatus, PeriodStatus
 from app.obligations.models import Obligation, ObligationPayment, ObligationPeriod
@@ -17,6 +23,7 @@ from app.obligations.schemas_v17 import (
 class ObligationV17Service:
     def __init__(self, session: AsyncSession):
         self.session = session
+        self.ledger_service = LedgerService(LedgerRepository(session))
 
     async def create_obligation(
         self, user_id: str, data: ObligationV17CreateRequest
@@ -221,9 +228,6 @@ class ObligationV17Service:
         if data.source_currency and data.source_currency != obligation.currency:
             if not data.quote_id:
                 raise HTTPException(status_code=422, detail="quote_required")
-
-            from datetime import UTC, datetime
-
             from app.obligations.models import FXQuote
 
             stmt = select(FXQuote).where(FXQuote.id == data.quote_id)
@@ -288,6 +292,31 @@ class ObligationV17Service:
         else:
             period.status = PeriodStatus.paid.value
 
+        if data.idempotency_key:
+            command_id = data.idempotency_key
+        else:
+            command_id = payment.id
+
+        event_create = LedgerEventCreate(
+            user_id=uuid.UUID(user_id),
+            account_id=data.source_account_id,
+            event_type=EventType.OBLIGATION_PAYMENT,
+            direction=Direction.OUTFLOW,
+            amount=source_amount,
+            currency=source_currency,
+            description=f"Obligation Payment V1.7: {obligation.name}",
+            occurred_at=datetime.now(UTC),
+            command_id=uuid.UUID(str(command_id)) if command_id else None,
+            metadata_={
+                "obligation_period_id": str(period.id),
+                "fx_quote_id": str(quote_id) if quote_id else None,
+                "source_amount": str(source_amount),
+                "source_currency": source_currency,
+                "fx_rate": str(fx_rate),
+            }
+        )
+        await self.ledger_service.record_event(event_create)
+
         await self.session.commit()
         await self.session.refresh(period)
         await self.session.refresh(payment)
@@ -323,8 +352,6 @@ class ObligationV17Service:
             if not data.quote_id:
                 raise HTTPException(status_code=422, detail="quote_required")
 
-            from datetime import UTC, datetime
-
             from app.obligations.models import FXQuote
 
             stmt = select(FXQuote).where(FXQuote.id == data.quote_id)
@@ -345,6 +372,7 @@ class ObligationV17Service:
                 raise HTTPException(status_code=422, detail="invalid_fx_quote")
 
             amount = quote.target_amount
+            source_amount = quote.source_amount
             source_currency = quote.from_currency
             fx_rate = quote.rate
             rate_source = quote.provider
@@ -352,6 +380,7 @@ class ObligationV17Service:
             quote_id = quote.id
         else:
             amount = data.amount
+            source_amount = data.amount if data.source_amount is None else data.source_amount
             source_currency = obligation.currency
             fx_rate = Decimal("1.00000000")
             rate_source = None
@@ -401,6 +430,7 @@ class ObligationV17Service:
         remaining_input = amount
         created_payments = []
         updated_periods = []
+        allocations = []
 
         for p, paid_amt, remaining in period_data:
             if remaining_input <= Decimal("0"):
@@ -434,6 +464,38 @@ class ObligationV17Service:
             else:
                 p.status = PeriodStatus.paid.value
             updated_periods.append(p)
+            allocations.append((p, payment_slice))
+
+        if data.idempotency_key:
+            command_id = data.idempotency_key
+        else:
+            command_id = uuid.uuid4()
+
+        event_create = LedgerEventCreate(
+            user_id=uuid.UUID(user_id),
+            account_id=data.source_account_id,
+            event_type=EventType.OBLIGATION_PAYMENT,
+            direction=Direction.OUTFLOW,
+            amount=source_amount,
+            currency=source_currency,
+            description=f"Obligation FIFO Payment V1.7: {obligation.name}",
+            occurred_at=datetime.now(UTC),
+            command_id=uuid.UUID(str(command_id)) if command_id else None,
+            metadata_={
+                "fx_quote_id": str(quote_id) if quote_id else None,
+                "source_amount": str(source_amount),
+                "source_currency": source_currency,
+                "fx_rate": str(fx_rate),
+                "allocations": [
+                    {
+                        "obligation_period_id": str(p.id),
+                        "amount": str(slice_amt)
+                    }
+                    for p, slice_amt in allocations
+                ]
+            }
+        )
+        await self.ledger_service.record_event(event_create)
 
         await self.session.commit()
         for p in updated_periods:
