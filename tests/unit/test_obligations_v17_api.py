@@ -1224,7 +1224,7 @@ async def test_get_summary_v17(mock_db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_get_summary_v17_feature_flag_off(monkeypatch):
+async def test_get_summary_v17_feature_flag_off(mock_db, monkeypatch):
     from httpx import ASGITransport, AsyncClient
 
     from app.main import app
@@ -1239,7 +1239,7 @@ async def test_get_summary_v17_feature_flag_off(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_get_summary_v17_invalid_month(monkeypatch):
+async def test_get_summary_v17_invalid_month(mock_db, monkeypatch):
     from httpx import ASGITransport, AsyncClient
 
     from app.main import app
@@ -1284,7 +1284,7 @@ async def test_get_intelligence_context_v17(mock_db, monkeypatch):
         assert data["financial_load_by_currency"][0]["pending_amount"] == "80.00"
 
 @pytest.mark.asyncio
-async def test_get_intelligence_context_v17_feature_flag_off(monkeypatch):
+async def test_get_intelligence_context_v17_feature_flag_off(mock_db, monkeypatch):
     from httpx import ASGITransport, AsyncClient
 
     from app.main import app
