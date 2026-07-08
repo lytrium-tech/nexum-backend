@@ -41,18 +41,18 @@ class ObligationRead(BaseModel):
     description: str | None
     category_id: UUID | None
     currency: str
-    type: str
+    type: str | None = None
     frequency: str
     payment_mode: str
     base_amount: Decimal | None
-    start_date: date
-    first_due_date: date
+    start_date: date | None = None
+    first_due_date: date | None = None
     due_day: int | None
     due_month: int | None
     interval_count: int
     end_date: date | None
     end_count: int | None
-    status: str
+    status: str | None = None
     created_at: datetime
     updated_at: datetime
     metadata: dict[str, Any] = Field(validation_alias="metadata_")

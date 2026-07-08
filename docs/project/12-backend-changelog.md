@@ -1,5 +1,7 @@
 # Changelog del Backend
 
+## Backend Legacy Obligations V1.7 Compatibility Fix
+- Actualizado el esquema legacy `ObligationRead` para permitir valores `NULL` introducidos por registros de V1.7 (campos `type`, `start_date`, `first_due_date`, `status`). Esto evita el error 500 en `GET /api/v1/obligations` consumido por el frontend legacy.
 ## [v1.6.2-alpha] - Backend V1.6.2 Obligation Payment Preview
 - Agregado `remaining_amount` (calculado en backend) al modelo `ObligationPeriodRead` para permitir pagos exactos desde el frontend sin cálculo local.
 - Añadido endpoint de previsualización `POST /api/v1/obligations/periods/{period_id}/pay/preview` para pagos en la misma moneda o cross-currency, retornando estimaciones de FX en tiempo real.

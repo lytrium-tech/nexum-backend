@@ -69,3 +69,36 @@ def test_negative_base_amount_fails():
     }
     with pytest.raises(ValidationError):
         ObligationCreate(**payload)
+
+def test_legacy_obligation_read_tolerates_null():
+    import uuid
+    from datetime import datetime
+    from app.obligations.schemas import ObligationRead
+    payload = {
+        "id": uuid.uuid4(),
+        "user_id": uuid.uuid4(),
+        "name": "Test Nullable",
+        "description": None,
+        "category_id": None,
+        "currency": "COP",
+        "type": None,
+        "frequency": "monthly",
+        "payment_mode": "variable",
+        "base_amount": None,
+        "start_date": None,
+        "first_due_date": None,
+        "due_day": None,
+        "due_month": None,
+        "interval_count": 1,
+        "end_date": None,
+        "end_count": None,
+        "status": None,
+        "created_at": datetime.now(),
+        "updated_at": datetime.now(),
+        "metadata_": {}
+    }
+    obl = ObligationRead.model_validate(payload)
+    assert obl.type is None
+    assert obl.start_date is None
+    assert obl.first_due_date is None
+    assert obl.status is None

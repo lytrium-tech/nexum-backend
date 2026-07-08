@@ -9,6 +9,7 @@ This document is the source of truth for the implemented and validated backend s
 - Tech Stack: FastAPI, SQLAlchemy, Pydantic, PostgreSQL.
 
 ## Completed Features
+- **Backend Legacy V1.7 Compatibility Fix**: Updated `ObligationRead` schema to tolerate `NULL` values introduced by V1.7 records (`type`, `start_date`, `first_due_date`, `status`), preventing 500 errors on legacy frontend endpoints.
 - **Backend V1.6.2**: Obligation Payment Preview. `remaining_amount` included directly on `ObligationPeriodRead`. Implemented `POST /api/v1/obligations/periods/{period_id}/pay/preview` for zero-risk real-time FX payment quotes. Fixed cross-currency payload semantics (treating payload.amount as applied_amount). Test data cleaned up.
 - **Backend V1.6.1**: Intelligence Snapshot Fix. Corrected intelligence repository to use ObligationPeriod as the source of truth, eliminating legacy obligations.amount and broken views.
 - **Backend V1.6**: Obligations Core. Implemented ObligationPeriod engine for precise state tracking, partial payments, and dynamic completion cycles.
