@@ -310,7 +310,17 @@ class ObligationV17Service:
 
         from decimal import Decimal
 
-        if data.source_currency and data.source_currency != obligation.currency:
+        # Determine source currency
+        source_currency = obligation.currency
+        if data.source_account_id:
+            account = await self.account_repo.get_by_id(data.source_account_id)
+            if not account or account.user_id != user_id:
+                raise HTTPException(status_code=404, detail="account_not_found")
+            source_currency = account.currency
+        elif data.source_currency:
+            source_currency = data.source_currency
+
+        if source_currency != obligation.currency:
             if not data.quote_id:
                 raise HTTPException(status_code=422, detail="quote_required")
             from app.obligations.models import FXQuote
@@ -323,13 +333,13 @@ class ObligationV17Service:
             if quote.expires_at < datetime.now(UTC):
                 raise HTTPException(status_code=422, detail="expired_fx_quote")
 
-            if (
-                quote.from_currency != data.source_currency
-                or quote.to_currency != obligation.currency
-            ):
+            if quote.from_currency != source_currency or quote.to_currency != obligation.currency:
                 raise HTTPException(status_code=422, detail="invalid_fx_quote")
 
             if data.source_amount is not None and quote.source_amount != data.source_amount:
+                raise HTTPException(status_code=422, detail="invalid_fx_quote")
+
+            if quote.target_amount != data.amount:
                 raise HTTPException(status_code=422, detail="invalid_fx_quote")
 
             amount = quote.target_amount
@@ -459,7 +469,17 @@ class ObligationV17Service:
 
         from decimal import Decimal
 
-        if data.source_currency and data.source_currency != obligation.currency:
+        # Determine source currency
+        source_currency = obligation.currency
+        if data.source_account_id:
+            account = await self.account_repo.get_by_id(data.source_account_id)
+            if not account or account.user_id != user_id:
+                raise HTTPException(status_code=404, detail="account_not_found")
+            source_currency = account.currency
+        elif data.source_currency:
+            source_currency = data.source_currency
+
+        if source_currency != obligation.currency:
             if not data.quote_id:
                 raise HTTPException(status_code=422, detail="quote_required")
 
@@ -473,13 +493,13 @@ class ObligationV17Service:
             if quote.expires_at < datetime.now(UTC):
                 raise HTTPException(status_code=422, detail="expired_fx_quote")
 
-            if (
-                quote.from_currency != data.source_currency
-                or quote.to_currency != obligation.currency
-            ):
+            if quote.from_currency != source_currency or quote.to_currency != obligation.currency:
                 raise HTTPException(status_code=422, detail="invalid_fx_quote")
 
             if data.source_amount is not None and quote.source_amount != data.source_amount:
+                raise HTTPException(status_code=422, detail="invalid_fx_quote")
+
+            if quote.target_amount != data.amount:
                 raise HTTPException(status_code=422, detail="invalid_fx_quote")
 
             amount = quote.target_amount
