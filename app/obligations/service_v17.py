@@ -239,7 +239,15 @@ class ObligationV17Service:
             source_amount = round_to_minimum_unit(applied_amount / fx_rate, account.currency)
 
             # create a quote so the user can use it
-            fx_service = FXService(provider=StaticFxRateProvider(), session=self.session)
+            provider = StaticFxRateProvider(
+                rates={
+                    f"{account.currency.upper()}_{obligation.currency.upper()}": fx_rate,
+                    f"{obligation.currency.upper()}_{account.currency.upper()}": Decimal("1.0")
+                    / fx_rate,
+                }
+            )
+            fx_service = FXService(provider=provider, session=self.session)
+            fx_service.quote_validity_minutes = 1.5  # 90 seconds TTL
             quote = await fx_service.create_quote(
                 user_id=user_id,
                 source_currency=account.currency,
@@ -331,7 +339,7 @@ class ObligationV17Service:
                 raise HTTPException(status_code=404, detail="fx_quote_not_found")
 
             if quote.expires_at < datetime.now(UTC):
-                raise HTTPException(status_code=422, detail="expired_fx_quote")
+                raise HTTPException(status_code=422, detail="fx_quote_expired")
 
             if quote.from_currency != source_currency or quote.to_currency != obligation.currency:
                 raise HTTPException(status_code=422, detail="invalid_fx_quote")
@@ -339,7 +347,12 @@ class ObligationV17Service:
             if data.source_amount is not None and quote.source_amount != data.source_amount:
                 raise HTTPException(status_code=422, detail="invalid_fx_quote")
 
-            if quote.target_amount != data.amount:
+            # Relative tolerance of 0.10% (0.001) or absolute tolerance of 50 COP / 0.01 USD/EUR
+            allowed_diff = max(
+                data.amount * Decimal("0.001"),
+                Decimal("50.00") if obligation.currency == "COP" else Decimal("0.01")
+            )
+            if abs(quote.target_amount - data.amount) > allowed_diff:
                 raise HTTPException(status_code=422, detail="invalid_fx_quote")
 
             amount = quote.target_amount
@@ -491,7 +504,7 @@ class ObligationV17Service:
                 raise HTTPException(status_code=404, detail="fx_quote_not_found")
 
             if quote.expires_at < datetime.now(UTC):
-                raise HTTPException(status_code=422, detail="expired_fx_quote")
+                raise HTTPException(status_code=422, detail="fx_quote_expired")
 
             if quote.from_currency != source_currency or quote.to_currency != obligation.currency:
                 raise HTTPException(status_code=422, detail="invalid_fx_quote")
@@ -499,7 +512,12 @@ class ObligationV17Service:
             if data.source_amount is not None and quote.source_amount != data.source_amount:
                 raise HTTPException(status_code=422, detail="invalid_fx_quote")
 
-            if quote.target_amount != data.amount:
+            # Relative tolerance of 0.10% (0.001) or absolute tolerance of 50 COP / 0.01 USD/EUR
+            allowed_diff = max(
+                data.amount * Decimal("0.001"),
+                Decimal("50.00") if obligation.currency == "COP" else Decimal("0.01")
+            )
+            if abs(quote.target_amount - data.amount) > allowed_diff:
                 raise HTTPException(status_code=422, detail="invalid_fx_quote")
 
             amount = quote.target_amount
