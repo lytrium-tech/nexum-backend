@@ -1,4 +1,4 @@
-from decimal import Decimal
+﻿from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -49,7 +49,7 @@ def _map_obligation(obligation) -> ObligationV17Response:
         name=obligation.name,
         currency=obligation.currency,
         amount=obligation.base_amount or Decimal("0"),
-        status=obligation.status,
+        status=obligation.status or "active",
         obligation_type="recurring" if obligation.type == "indefinite" else "one_time",
         frequency=obligation.frequency,
         amount_type=obligation.amount_type or "variable",
@@ -152,7 +152,7 @@ async def get_obligation_v17(
     _: None = Depends(check_v17_feature_flag),
 ):
     """
-    Obtiene una obligación específica V1.7.
+    Obtiene una obligaciÃ³n especÃ­fica V1.7.
     """
     service = ObligationV17Service(session)
     obligation = await service.get_obligation(current_profile.id, obligation_id)
@@ -175,7 +175,7 @@ async def get_obligation_periods_v17(
     _: None = Depends(check_v17_feature_flag),
 ):
     """
-    Lista de periodos de una obligación V1.7.
+    Lista de periodos de una obligaciÃ³n V1.7.
     """
     service = ObligationV17Service(session)
     periods = await service.list_periods_for_obligation(current_profile.id, obligation_id)
@@ -260,7 +260,7 @@ async def preview_pay_period_v17(
     session: AsyncSession = Depends(get_db_session),
 ):
     """
-    Simula o previsualiza un pago para un periodo específico, retornando el tipo de cambio y los montos exactos requeridos.
+    Simula o previsualiza un pago para un periodo especÃ­fico, retornando el tipo de cambio y los montos exactos requeridos.
     """
     service = ObligationV17Service(session)
     return await service.pay_preview_specific_period(
@@ -290,7 +290,7 @@ async def create_period_payment_v17(
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
     """
-    Registra un pago específico a un periodo en V1.7.
+    Registra un pago especÃ­fico a un periodo en V1.7.
     """
     if idempotency_key:
         data.idempotency_key = idempotency_key
@@ -524,6 +524,6 @@ async def get_obligation_payment_v17(
     _: None = Depends(check_v17_feature_flag),
 ):
     """
-    Obtiene un pago específico V1.7.
+    Obtiene un pago especÃ­fico V1.7.
     """
     raise HTTPException(status_code=404, detail="Payment not found")
