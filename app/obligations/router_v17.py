@@ -1,7 +1,7 @@
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -286,10 +286,13 @@ async def create_period_payment_v17(
     identity: AuthenticatedIdentity,
     session: AsyncSession = Depends(get_db_session),
     _: None = Depends(check_v17_feature_flag),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
     """
     Registra un pago específico a un periodo en V1.7.
     """
+    if idempotency_key:
+        data.idempotency_key = idempotency_key
     service = ObligationV17Service(session)
     payment, period = await service.pay_specific_period(
         identity.user_id, obligation_id, period_id, data
@@ -343,10 +346,13 @@ async def create_obligation_payment_fifo_v17(
     identity: AuthenticatedIdentity,
     session: AsyncSession = Depends(get_db_session),
     _: None = Depends(check_v17_feature_flag),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
     """
     Registra un pago general a una obligacion en V1.7 usando estrategia FIFO.
     """
+    if idempotency_key:
+        data.idempotency_key = idempotency_key
     service = ObligationV17Service(session)
     payments, periods = await service.pay_obligation_fifo(identity.user_id, obligation_id, data)
 

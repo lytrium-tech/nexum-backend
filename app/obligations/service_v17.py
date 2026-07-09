@@ -271,7 +271,7 @@ class ObligationV17Service:
             raise HTTPException(status_code=422, detail="missing_idempotency_key")
 
         stmt = select(ObligationPayment).where(
-            ObligationPayment.user_id == str(user_id),
+            ObligationPayment.user_id == uuid.UUID(user_id),
             ObligationPayment.idempotency_key == data.idempotency_key,
         )
         existing = await self.session.execute(stmt)
@@ -433,7 +433,7 @@ class ObligationV17Service:
             raise HTTPException(status_code=422, detail="missing_idempotency_key")
 
         stmt = select(ObligationPayment).where(
-            ObligationPayment.user_id == str(user_id),
+            ObligationPayment.user_id == uuid.UUID(user_id),
             ObligationPayment.idempotency_key == data.idempotency_key,
         )
         existing = await self.session.execute(stmt)
