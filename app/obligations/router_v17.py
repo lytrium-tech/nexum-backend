@@ -12,6 +12,8 @@ from app.obligations.schemas_v17 import (
     EmptyStateResponse,
     ObligationFIFOPaymentCreateRequest,
     ObligationFIFOPaymentResultResponse,
+    ObligationPaymentPreviewV17Request,
+    ObligationPaymentPreviewV17Response,
     ObligationPaymentV17Response,
     ObligationPeriodAmountDefineRequest,
     ObligationPeriodPaymentCreateRequest,
@@ -240,6 +242,28 @@ async def define_period_amount_v17(
         amount_paid=period.paid_amount or Decimal("0"),
         created_at=period.created_at or datetime.utcnow(),
         updated_at=period.updated_at or datetime.utcnow(),
+    )
+
+
+@router.post(
+    "/{obligation_id}/periods/{period_id}/payments/preview",
+    response_model=ObligationPaymentPreviewV17Response,
+    responses={404: {"model": ApiErrorResponse}, 422: {"model": ApiErrorResponse}},
+    summary="Preview a specific period payment (V1.7)",
+)
+async def preview_pay_period_v17(
+    obligation_id: UUID,
+    period_id: UUID,
+    data: ObligationPaymentPreviewV17Request,
+    identity: AuthenticatedIdentity,
+    session: AsyncSession = Depends(get_db_session),
+):
+    """
+    Simula o previsualiza un pago para un periodo específico, retornando el tipo de cambio y los montos exactos requeridos.
+    """
+    service = ObligationV17Service(session)
+    return await service.pay_preview_specific_period(
+        identity.user_id, obligation_id, period_id, data
     )
 
 

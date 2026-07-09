@@ -1,4 +1,4 @@
-from datetime import date, datetime
+﻿from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -225,3 +225,18 @@ class ObligationsV17IntelligenceContextResponse(BaseModel):
     risk_flags: list[ObligationsV17IntelligenceRiskFlag]
     narrative_facts: list[str]
     generated_at: datetime
+
+
+class ObligationPaymentPreviewV17Request(BaseModel):
+    account_id: UUID
+    amount: Decimal = Field(gt=0)
+
+class ObligationPaymentPreviewV17Response(BaseModel):
+    obligation_currency: str
+    source_currency: str
+    applied_amount: Decimal
+    source_amount: Decimal
+    fx_rate: Decimal | None = None
+    rate_timestamp: datetime | None = None
+    quote_expires_at: datetime | None = None
+    quote_id: UUID | None = None

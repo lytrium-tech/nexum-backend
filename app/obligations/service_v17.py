@@ -13,6 +13,8 @@ from app.obligations.enums_v17 import AmountType, ObligationStatus, PeriodStatus
 from app.obligations.models import Obligation, ObligationPayment, ObligationPeriod
 from app.obligations.schemas_v17 import (
     ObligationFIFOPaymentCreateRequest,
+    ObligationPaymentPreviewV17Request,
+    ObligationPaymentPreviewV17Response,
     ObligationPeriodAmountDefineRequest,
     ObligationPeriodPaymentCreateRequest,
     ObligationV17CreateRequest,
@@ -23,6 +25,8 @@ class ObligationV17Service:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.ledger_service = LedgerService(LedgerRepository(session))
+        from app.accounts.repository import AccountRepository
+        self.account_repo = AccountRepository(session)
 
     async def create_obligation(
         self, user_id: str, data: ObligationV17CreateRequest
@@ -185,6 +189,71 @@ class ObligationV17Service:
 
         return period
 
+    async def pay_preview_specific_period(
+        self,
+        user_id: str,
+        obligation_id: uuid.UUID,
+        period_id: uuid.UUID,
+        data: "ObligationPaymentPreviewV17Request",
+    ) -> "ObligationPaymentPreviewV17Response":
+        """Preview a specific period payment."""
+        from app.obligations.schemas_v17 import ObligationPaymentPreviewV17Response
+        obligation = await self.get_obligation(user_id, obligation_id)
+        if not obligation:
+            raise HTTPException(status_code=404, detail="obligation_not_found")
+
+        period = await self.get_period(obligation_id, period_id)
+        if not period:
+            raise HTTPException(status_code=404, detail="period_not_found")
+
+        account = await self.account_repo.get_by_id(data.account_id)
+        if not account or account.user_id != uuid.UUID(user_id):
+            raise HTTPException(status_code=404, detail="account_not_found")
+
+        from decimal import Decimal
+        applied_amount = data.amount
+
+        if account.currency == obligation.currency:
+            source_amount = applied_amount
+            fx_rate = Decimal("1.0")
+            rate_timestamp = None
+            quote_expires_at = None
+            quote_id = None
+        else:
+            from app.core.currency import get_fx_rate, round_to_minimum_unit
+            from app.fx.provider import DummyFxProvider
+            from app.fx.service import FXService
+
+            fx_info = await get_fx_rate(account.currency, obligation.currency)
+            fx_rate = fx_info["fx_rate"]
+            rate_timestamp = fx_info["rate_timestamp"]
+            
+            # calculate source_amount = applied_amount / fx_rate
+            source_amount = round_to_minimum_unit(applied_amount / fx_rate, account.currency)
+            
+            # create a quote so the user can use it
+            fx_service = FXService(provider=DummyFxProvider(), session=self.session)
+            quote = await fx_service.create_quote(
+                user_id=uuid.UUID(user_id),
+                source_currency=account.currency,
+                target_currency=obligation.currency,
+                source_amount=source_amount,
+            )
+            
+            quote_expires_at = quote.expires_at
+            quote_id = quote.quote_id
+
+        return ObligationPaymentPreviewV17Response(
+            obligation_currency=obligation.currency,
+            source_currency=account.currency,
+            applied_amount=applied_amount,
+            source_amount=source_amount,
+            fx_rate=fx_rate if fx_rate != Decimal("1.0") else None,
+            rate_timestamp=rate_timestamp,
+            quote_expires_at=quote_expires_at,
+            quote_id=quote_id,
+        )
+
     async def pay_specific_period(
         self,
         user_id: str,
@@ -315,7 +384,16 @@ class ObligationV17Service:
                 "fx_rate": str(fx_rate),
             },
         )
-        await self.ledger_service.record_event(event_create)
+        ledger_result = await self.ledger_service.record_event(event_create)
+
+        if not ledger_result.idempotent and data.source_account_id:
+            # Debit the account
+            account = await self.account_repo.get_by_id_for_update(data.source_account_id)
+            if not account or account.user_id != uuid.UUID(user_id):
+                raise HTTPException(status_code=404, detail="account_not_found")
+            if account.balance < source_amount:
+                raise HTTPException(status_code=400, detail="insufficient_balance")
+            await self.account_repo.update_balance(account, -source_amount)
 
         await self.session.commit()
         await self.session.refresh(period)
@@ -493,7 +571,16 @@ class ObligationV17Service:
                 ],
             },
         )
-        await self.ledger_service.record_event(event_create)
+        ledger_result = await self.ledger_service.record_event(event_create)
+
+        if not ledger_result.idempotent and data.source_account_id:
+            # Debit the account
+            account = await self.account_repo.get_by_id_for_update(data.source_account_id)
+            if not account or account.user_id != uuid.UUID(user_id):
+                raise HTTPException(status_code=404, detail="account_not_found")
+            if account.balance < source_amount:
+                raise HTTPException(status_code=400, detail="insufficient_balance")
+            await self.account_repo.update_balance(account, -source_amount)
 
         await self.session.commit()
         for p in updated_periods:
