@@ -360,7 +360,7 @@ class ObligationV17Service:
             source_currency = quote.from_currency
             fx_rate = quote.rate
             rate_source = quote.provider
-            rate_timestamp = quote.rate_timestamp
+            rate_timestamp = quote.rate_timestamp.replace(tzinfo=None) if quote.rate_timestamp else None
             quote_id = quote.id
         else:
             amount = data.amount
@@ -525,7 +525,7 @@ class ObligationV17Service:
             source_currency = quote.from_currency
             fx_rate = quote.rate
             rate_source = quote.provider
-            rate_timestamp = quote.rate_timestamp
+            rate_timestamp = quote.rate_timestamp.replace(tzinfo=None) if quote.rate_timestamp else None
             quote_id = quote.id
         else:
             amount = data.amount

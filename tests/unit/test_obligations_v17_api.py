@@ -1603,7 +1603,7 @@ async def test_pay_specific_period_cross_currency_validations(mock_db, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_cross_currency_preview_quote_can_be_used_for_payment(mock_db, monkeypatch):
+async def test_cross_currency_preview_then_payment_runtime_path(mock_db, monkeypatch):
     import uuid
     from datetime import UTC, date, datetime
     from decimal import Decimal
