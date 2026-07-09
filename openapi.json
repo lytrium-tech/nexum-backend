@@ -3710,6 +3710,85 @@
         }
       }
     },
+    "/api/v1.7/obligations/{obligation_id}/periods/{period_id}/payments/preview": {
+      "post": {
+        "tags": [
+          "Obligations V1.7"
+        ],
+        "summary": "Preview a specific period payment (V1.7)",
+        "description": "Simula o previsualiza un pago para un periodo espec\u00c3\u00adfico, retornando el tipo de cambio y los montos exactos requeridos.",
+        "operationId": "preview_pay_period_v17_api_v1_7_obligations__obligation_id__periods__period_id__payments_preview_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "obligation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Obligation Id"
+            }
+          },
+          {
+            "name": "period_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Period Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObligationPaymentPreviewV17Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObligationPaymentPreviewV17Response"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        }
+      }
+    },
     "/api/v1.7/obligations/{obligation_id}/periods/{period_id}/payments": {
       "post": {
         "tags": [
@@ -3742,6 +3821,22 @@
               "type": "string",
               "format": "uuid",
               "title": "Period Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
             }
           }
         ],
@@ -3821,6 +3916,22 @@
               "type": "string",
               "format": "uuid",
               "title": "Obligation Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
             }
           }
         ],
@@ -8388,6 +8499,112 @@
         ],
         "title": "ObligationPaymentPreviewRead"
       },
+      "ObligationPaymentPreviewV17Request": {
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Account Id"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              }
+            ],
+            "title": "Amount"
+          }
+        },
+        "type": "object",
+        "required": [
+          "account_id",
+          "amount"
+        ],
+        "title": "ObligationPaymentPreviewV17Request"
+      },
+      "ObligationPaymentPreviewV17Response": {
+        "properties": {
+          "obligation_currency": {
+            "type": "string",
+            "title": "Obligation Currency"
+          },
+          "source_currency": {
+            "type": "string",
+            "title": "Source Currency"
+          },
+          "applied_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Applied Amount"
+          },
+          "source_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Source Amount"
+          },
+          "fx_rate": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fx Rate"
+          },
+          "rate_timestamp": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rate Timestamp"
+          },
+          "quote_expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote Expires At"
+          },
+          "quote_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "obligation_currency",
+          "source_currency",
+          "applied_amount",
+          "source_amount"
+        ],
+        "title": "ObligationPaymentPreviewV17Response"
+      },
       "ObligationPaymentRead": {
         "properties": {
           "id": {
@@ -9029,7 +9246,14 @@
             "title": "Currency"
           },
           "type": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Type"
           },
           "frequency": {
@@ -9053,13 +9277,27 @@
             "title": "Base Amount"
           },
           "start_date": {
-            "type": "string",
-            "format": "date",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Start Date"
           },
           "first_due_date": {
-            "type": "string",
-            "format": "date",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "First Due Date"
           },
           "due_day": {
@@ -9112,7 +9350,14 @@
             "title": "End Count"
           },
           "status": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Status"
           },
           "created_at": {
@@ -9139,18 +9384,14 @@
           "description",
           "category_id",
           "currency",
-          "type",
           "frequency",
           "payment_mode",
           "base_amount",
-          "start_date",
-          "first_due_date",
           "due_day",
           "due_month",
           "interval_count",
           "end_date",
           "end_count",
-          "status",
           "created_at",
           "updated_at",
           "metadata"
