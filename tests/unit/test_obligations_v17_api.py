@@ -1,4 +1,4 @@
-﻿from decimal import Decimal
+from decimal import Decimal
 from unittest.mock import AsyncMock
 
 import pytest
@@ -35,19 +35,20 @@ def mock_db():
     app.dependency_overrides[get_db_session] = lambda: mock_session
     from app.users.dependencies import get_current_user_profile_dep
     from app.users.schemas import UserRead
-    
+
     async def mock_get_current_user():
         return UserRead(
-            id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
-            auth_user_id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
+            id=uuid.UUID(settings.DEV_USER_ID),
+            auth_user_id=uuid.UUID(settings.DEV_USER_ID),
             name="Test User",
             email="test@example.com",
             timezone="America/Bogota",
             currency="COP",
             status="active",
             created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            updated_at=datetime.utcnow(),
         )
+
     app.dependency_overrides[get_current_user_profile_dep] = mock_get_current_user
     yield mock_session
     app.dependency_overrides.clear()
@@ -218,6 +219,7 @@ async def test_create_obligation_minimal(mock_db):
                     "first_due_date": "2026-07-05",
                 },
             )
+            print(response.json())
             assert response.status_code == 201
             data = response.json()
             assert data["name"] == "Test Minimal"
@@ -297,6 +299,7 @@ async def test_create_obligation_validations(mock_db):
                     "first_due_date": "2026-07-05",
                 },
             )
+            print(response.json())
             assert response.status_code == 201
             assert response.json()["amount"] == "0"
 
@@ -514,6 +517,7 @@ async def test_pay_specific_period(mock_db):
                 f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/payments",
                 json={"idempotency_key": "test-req-14", "amount": 500.00, "currency": "COP"},
             )
+            print(response.json())
             assert response.status_code == 201
             data = response.json()
             assert Decimal(data["payment"]["amount"]) == Decimal("500.00")
@@ -528,6 +532,7 @@ async def test_pay_specific_period(mock_db):
                 f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/payments",
                 json={"idempotency_key": "test-req-15", "amount": 1000.00, "currency": "COP"},
             )
+            print(response.json())
             assert response.status_code == 201
             data = response.json()
             assert data["period"]["status"] == "paid"
@@ -698,6 +703,7 @@ async def test_pay_obligation_fifo(mock_db):
                 f"/api/v1.7/obligations/{obs_id}/payments",
                 json={"idempotency_key": "test-req-23", "amount": 500.00, "currency": "COP"},
             )
+            print(response.json())
             assert response.status_code == 201
             data = response.json()
             assert data["strategy"] == "fifo"
@@ -712,6 +718,7 @@ async def test_pay_obligation_fifo(mock_db):
                 f"/api/v1.7/obligations/{obs_id}/payments",
                 json={"idempotency_key": "test-req-24", "amount": 1500.00, "currency": "COP"},
             )
+            print(response.json())
             assert response.status_code == 201
             data = response.json()
             assert len(data["payments"]) == 2
@@ -926,7 +933,7 @@ async def test_pay_specific_period_cross_currency_success(mock_db, monkeypatch):
     obs_id = uuid.uuid4()
     period_id = uuid.uuid4()
     quote_id = uuid.uuid4()
-    user_id = settings.DEV_USER_ID
+    user_id = uuid.UUID(settings.DEV_USER_ID)
 
     mock_obligation = Obligation(
         id=obs_id,
@@ -977,7 +984,7 @@ async def test_pay_specific_period_cross_currency_success(mock_db, monkeypatch):
             return MagicMock(
                 scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=mock_period)))
             )
-        if "from fx_quotes" in stmt_str:
+        if "fx_quote" in stmt_str:
             return MagicMock(
                 scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=mock_quote)))
             )
@@ -1006,6 +1013,7 @@ async def test_pay_specific_period_cross_currency_success(mock_db, monkeypatch):
                 f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/payments", json=payload
             )
 
+            print(response.json())
             assert response.status_code == 201
             data = response.json()
             assert (
@@ -1035,7 +1043,7 @@ async def test_pay_specific_period_cross_currency_without_quote(mock_db, monkeyp
 
     obs_id = uuid.uuid4()
     period_id = uuid.uuid4()
-    user_id = settings.DEV_USER_ID
+    user_id = uuid.UUID(settings.DEV_USER_ID)
 
     mock_obligation = Obligation(
         id=obs_id,
@@ -1180,7 +1188,7 @@ async def test_get_summary_v17(mock_db, monkeypatch):
         user_id="00000000-0000-0000-0000-000000000000",
         name="Obligation 1",
         currency="COP",
-        status="active"
+        status="active",
     )
     period1 = ObligationPeriod(
         id=uuid.uuid4(),
@@ -1189,7 +1197,7 @@ async def test_get_summary_v17(mock_db, monkeypatch):
         amount=Decimal("100.00"),
         paid_amount=Decimal("20.00"),
         status=PeriodStatus.pending_payment.value,
-        due_date=date(2026, 7, 10)
+        due_date=date(2026, 7, 10),
     )
 
     obl2 = Obligation(
@@ -1197,7 +1205,7 @@ async def test_get_summary_v17(mock_db, monkeypatch):
         user_id="00000000-0000-0000-0000-000000000000",
         name="Obligation 2",
         currency="USD",
-        status="active"
+        status="active",
     )
     period2 = ObligationPeriod(
         id=uuid.uuid4(),
@@ -1206,14 +1214,11 @@ async def test_get_summary_v17(mock_db, monkeypatch):
         amount=None,
         paid_amount=Decimal("0.00"),
         status=PeriodStatus.pending_amount_definition.value,
-        due_date=date(2026, 7, 15)
+        due_date=date(2026, 7, 15),
     )
 
     mock_result = MagicMock()
-    mock_result.all.return_value = [
-        (period1, obl1),
-        (period2, obl2)
-    ]
+    mock_result.all.return_value = [(period1, obl1), (period2, obl2)]
     mock_db.execute.return_value = mock_result
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -1223,15 +1228,15 @@ async def test_get_summary_v17(mock_db, monkeypatch):
         assert response.status_code == 200
         data = response.json()
         assert data["month"] == "2026-07"
-        
+
         totals = {t["currency"]: t for t in data["totals_by_currency"]}
         assert "COP" in totals
         assert totals["COP"]["pending_amount"] == "80.00"
         assert totals["COP"]["paid_amount"] == "20.00"
-        
+
         assert "USD" in totals
         assert totals["USD"]["pending_amount"] == "0.00"
-        
+
         assert len(data["requires_action"]) == 1
         action = data["requires_action"][0]
         assert action["currency"] == "USD"
@@ -1259,13 +1264,15 @@ async def test_get_summary_v17_invalid_month(mock_db, monkeypatch):
     from httpx import ASGITransport, AsyncClient
 
     from app.main import app
+
     monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         res = await client.get(
             "/api/v1.7/obligations/summary?month=202607",
-            headers={"Authorization": "Bearer TEST_TOKEN"}
+            headers={"Authorization": "Bearer TEST_TOKEN"},
         )
         assert res.status_code == 422
+
 
 @pytest.mark.asyncio
 async def test_get_intelligence_context_v17(mock_db, monkeypatch):
@@ -1278,10 +1285,25 @@ async def test_get_intelligence_context_v17(mock_db, monkeypatch):
 
     from app.main import app
     from app.obligations.models import Obligation, ObligationPeriod
+
     monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
 
-    obl1 = Obligation(id=uuid.uuid4(), user_id="00000000-0000-0000-0000-000000000000", name="Obs1", currency="COP", status="active")
-    period1 = ObligationPeriod(id=uuid.uuid4(), obligation_id=obl1.id, period_key="2026-07", amount=Decimal("100.00"), paid_amount=Decimal("20.00"), status="overdue", due_date=date(2026, 7, 10))
+    obl1 = Obligation(
+        id=uuid.uuid4(),
+        user_id="00000000-0000-0000-0000-000000000000",
+        name="Obs1",
+        currency="COP",
+        status="active",
+    )
+    period1 = ObligationPeriod(
+        id=uuid.uuid4(),
+        obligation_id=obl1.id,
+        period_key="2026-07",
+        amount=Decimal("100.00"),
+        paid_amount=Decimal("20.00"),
+        status="overdue",
+        due_date=date(2026, 7, 10),
+    )
 
     mock_result = MagicMock()
     mock_result.all.return_value = [(period1, obl1)]
@@ -1290,7 +1312,7 @@ async def test_get_intelligence_context_v17(mock_db, monkeypatch):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         res = await client.get(
             "/api/v1.7/obligations/intelligence-context?month=2026-07",
-            headers={"Authorization": "Bearer TEST_TOKEN"}
+            headers={"Authorization": "Bearer TEST_TOKEN"},
         )
         assert res.status_code == 200
         data = res.json()
@@ -1299,16 +1321,15 @@ async def test_get_intelligence_context_v17(mock_db, monkeypatch):
         assert data["financial_load_by_currency"][0]["currency"] == "COP"
         assert data["financial_load_by_currency"][0]["pending_amount"] == "80.00"
 
+
 @pytest.mark.asyncio
 async def test_get_intelligence_context_v17_feature_flag_off(mock_db, monkeypatch):
     from httpx import ASGITransport, AsyncClient
 
     from app.main import app
+
     monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", False)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        res = await client.get(
-            "/api/v1.7/obligations/intelligence-context?month=2026-07"
-        )
+        res = await client.get("/api/v1.7/obligations/intelligence-context?month=2026-07")
         assert res.status_code in (401, 403)
-
