@@ -1,4 +1,4 @@
-# Backend Current State
+﻿# Backend Current State
 
 This document is the source of truth for the implemented and validated backend state.
 
