@@ -54,6 +54,7 @@ class ObligationPaymentV17Response(BaseModel):
     user_id: UUID
     amount: Decimal
     quote_id: UUID | None = None
+    rate_snapshot_id: UUID | None = None
     idempotency_key: str | None = None
     created_at: datetime
     updated_at: datetime
@@ -128,6 +129,7 @@ class ObligationPeriodPaymentCreateRequest(BaseModel):
     source_amount: Decimal | None = None
     source_currency: str | None = Field(None, min_length=3, max_length=3)
     quote_id: UUID | None = None
+    rate_snapshot_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_currency(self) -> "ObligationPeriodPaymentCreateRequest":
@@ -153,6 +155,7 @@ class ObligationFIFOPaymentCreateRequest(BaseModel):
     source_amount: Decimal | None = None
     source_currency: str | None = Field(None, min_length=3, max_length=3)
     quote_id: UUID | None = None
+    rate_snapshot_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_currency(self) -> "ObligationFIFOPaymentCreateRequest":

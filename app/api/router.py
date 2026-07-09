@@ -32,6 +32,7 @@ from app.core.database import get_db_session
 from app.core.errors import InfrastructureError
 from app.credit.router import router as credit_router
 from app.fx.router import router as fx_router
+from app.fx.router_v17 import router as fx_router_v17
 from app.goals.router import router as goals_router
 from app.intelligence.router import router as intelligence_router
 from app.ledger.router import router as ledger_router
@@ -124,6 +125,7 @@ v1_router.include_router(transfers_router)
 v1_router.include_router(fx_router)
 
 v1_7_router.include_router(obligations_router_v17, prefix="/obligations", tags=["Obligations V1.7"])
+v1_7_router.include_router(fx_router_v17, prefix="/fx", tags=["FX Engine V1.7"])
 
 api_router.include_router(v1_router)
 api_router.include_router(v1_7_router)

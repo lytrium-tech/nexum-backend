@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
 from app.fx.provider import FxRateProvider
-from app.fx.schemas import FXQuoteResponse, FXRatesLatestResponse
-from app.obligations.models import FXQuote
+from app.fx.schemas import FXQuoteResponse, FXRatesLatestResponse, FXRateSnapshotResponse
+from app.obligations.models import FXQuote, ExchangeRate
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,50 @@ class FXService:
             expires_at=expires_at,
             provider=self.provider.__class__.__name__,
             is_stale=False,
+        )
+
+    async def get_rate_snapshot(
+        self, base_currency: str, quote_currency: str
+    ) -> FXRateSnapshotResponse:
+        base_c = base_currency.upper()
+        quote_c = quote_currency.upper()
+
+        if base_c == quote_c:
+            rate = Decimal("1.00000000")
+        else:
+            rate = await self.provider.get_rate(base_c, quote_c)
+            if rate is None:
+                raise ValidationError(
+                    message="FX rate unavailable from provider.", error_code="fx_rate_unavailable"
+                )
+
+        now = datetime.now(UTC)
+        expires_at = now + timedelta(minutes=self.quote_validity_minutes)
+        snapshot_id = uuid.uuid4()
+
+        if self.session:
+            db_rate = ExchangeRate(
+                id=snapshot_id,
+                base_currency=base_c,
+                quote_currency=quote_c,
+                rate=rate,
+                provider=self.provider.__class__.__name__,
+                fetched_at=now,
+                expires_at=expires_at,
+                is_stale=False,
+            )
+            self.session.add(db_rate)
+            await self.session.commit()
+
+        return FXRateSnapshotResponse(
+            id=snapshot_id,
+            from_currency=base_c,
+            to_currency=quote_c,
+            rate=rate,
+            retrieved_at=now,
+            expires_at=expires_at,
+            source=self.provider.__class__.__name__,
+            stale=False,
         )
 
     async def create_quote(

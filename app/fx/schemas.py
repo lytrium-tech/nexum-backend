@@ -31,3 +31,14 @@ class FXQuoteResponse(BaseModel):
     expires_at: datetime
     tolerance_bps: int = 50
     status: str = "active"
+
+
+class FXRateSnapshotResponse(BaseModel):
+    id: str | UUID
+    from_currency: str
+    to_currency: str
+    rate: Decimal | str
+    retrieved_at: datetime
+    expires_at: datetime
+    source: str
+    stale: bool

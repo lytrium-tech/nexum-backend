@@ -130,6 +130,7 @@ class ObligationPayment(Base):
     )
     # V1.7
     quote_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    rate_snapshot_id: Mapped[UUID | None] = mapped_column(nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 

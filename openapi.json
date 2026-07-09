@@ -4229,6 +4229,64 @@
           }
         }
       }
+    },
+    "/api/v1.7/fx/rates/latest": {
+      "get": {
+        "tags": [
+          "FX Engine V1.7"
+        ],
+        "summary": "Get Latest Rate Snapshot",
+        "operationId": "get_latest_rate_snapshot_api_v1_7_fx_rates_latest_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "from_currency",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "USD",
+              "title": "From Currency"
+            }
+          },
+          {
+            "name": "to_currency",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "COP",
+              "title": "To Currency"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FXRateSnapshotResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -6536,6 +6594,72 @@
         ],
         "title": "FXQuoteResponse"
       },
+      "FXRateSnapshotResponse": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string",
+                "format": "uuid"
+              }
+            ],
+            "title": "Id"
+          },
+          "from_currency": {
+            "type": "string",
+            "title": "From Currency"
+          },
+          "to_currency": {
+            "type": "string",
+            "title": "To Currency"
+          },
+          "rate": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Rate"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Retrieved At"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "stale": {
+            "type": "boolean",
+            "title": "Stale"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "from_currency",
+          "to_currency",
+          "rate",
+          "retrieved_at",
+          "expires_at",
+          "source",
+          "stale"
+        ],
+        "title": "FXRateSnapshotResponse"
+      },
       "FXRatesLatestResponse": {
         "properties": {
           "base_currency": {
@@ -8240,6 +8364,18 @@
               }
             ],
             "title": "Quote Id"
+          },
+          "rate_snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rate Snapshot Id"
           }
         },
         "type": "object",
@@ -8780,6 +8916,18 @@
             ],
             "title": "Quote Id"
           },
+          "rate_snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rate Snapshot Id"
+          },
           "idempotency_key": {
             "anyOf": [
               {
@@ -8997,6 +9145,18 @@
               }
             ],
             "title": "Quote Id"
+          },
+          "rate_snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rate Snapshot Id"
           }
         },
         "type": "object",

@@ -329,39 +329,63 @@ class ObligationV17Service:
             source_currency = data.source_currency
 
         if source_currency != obligation.currency:
-            if not data.quote_id:
-                raise HTTPException(status_code=422, detail="quote_required")
-            from app.obligations.models import FXQuote
+            if not data.rate_snapshot_id and not data.quote_id:
+                raise HTTPException(status_code=422, detail="fx_rate_snapshot_required")
 
-            stmt = select(FXQuote).where(FXQuote.id == data.quote_id)
-            quote = (await self.session.execute(stmt)).scalars().first()
-            if not quote or quote.user_id != user_id:
-                raise HTTPException(status_code=404, detail="fx_quote_not_found")
+            if data.rate_snapshot_id:
+                from app.obligations.models import ExchangeRate
+                from decimal import ROUND_HALF_UP
+                
+                stmt = select(ExchangeRate).where(ExchangeRate.id == data.rate_snapshot_id)
+                snapshot = (await self.session.execute(stmt)).scalars().first()
+                if not snapshot:
+                    raise HTTPException(status_code=404, detail="invalid_fx_rate_snapshot")
+                if snapshot.expires_at < datetime.now(UTC):
+                    raise HTTPException(status_code=422, detail="fx_rate_snapshot_expired")
+                if snapshot.base_currency != source_currency or snapshot.quote_currency != obligation.currency:
+                    raise HTTPException(status_code=422, detail="invalid_fx_rate_snapshot")
+                
+                amount = data.amount
+                fx_rate = snapshot.rate
+                source_amount = (amount / fx_rate).quantize(Decimal("0.00"), rounding=ROUND_HALF_UP)
+                source_currency = snapshot.base_currency
+                rate_source = snapshot.provider
+                rate_timestamp = snapshot.fetched_at.replace(tzinfo=None)
+                quote_id = None
+                rate_snapshot_id = snapshot.id
+            else:
+                from app.obligations.models import FXQuote
 
-            if quote.expires_at < datetime.now(UTC):
-                raise HTTPException(status_code=422, detail="fx_quote_expired")
+                stmt = select(FXQuote).where(FXQuote.id == data.quote_id)
+                quote = (await self.session.execute(stmt)).scalars().first()
+                if not quote or quote.user_id != user_id:
+                    raise HTTPException(status_code=404, detail="fx_quote_not_found")
 
-            if quote.from_currency != source_currency or quote.to_currency != obligation.currency:
-                raise HTTPException(status_code=422, detail="invalid_fx_quote")
+                if quote.expires_at < datetime.now(UTC):
+                    raise HTTPException(status_code=422, detail="fx_quote_expired")
 
-            if data.source_amount is not None and quote.source_amount != data.source_amount:
-                raise HTTPException(status_code=422, detail="invalid_fx_quote")
+                if quote.from_currency != source_currency or quote.to_currency != obligation.currency:
+                    raise HTTPException(status_code=422, detail="invalid_fx_quote")
 
-            # Relative tolerance of 0.10% (0.001) or absolute tolerance of 50 COP / 0.01 USD/EUR
-            allowed_diff = max(
-                data.amount * Decimal("0.001"),
-                Decimal("50.00") if obligation.currency == "COP" else Decimal("0.01")
-            )
-            if abs(quote.target_amount - data.amount) > allowed_diff:
-                raise HTTPException(status_code=422, detail="invalid_fx_quote")
+                if data.source_amount is not None and quote.source_amount != data.source_amount:
+                    raise HTTPException(status_code=422, detail="invalid_fx_quote")
 
-            amount = quote.target_amount
-            source_amount = quote.source_amount
-            source_currency = quote.from_currency
-            fx_rate = quote.rate
-            rate_source = quote.provider
-            rate_timestamp = quote.rate_timestamp.replace(tzinfo=None) if quote.rate_timestamp else None
-            quote_id = quote.id
+                # Relative tolerance of 0.10% (0.001) or absolute tolerance of 50 COP / 0.01 USD/EUR
+                allowed_diff = max(
+                    data.amount * Decimal("0.001"),
+                    Decimal("50.00") if obligation.currency == "COP" else Decimal("0.01")
+                )
+                if abs(quote.target_amount - data.amount) > allowed_diff:
+                    raise HTTPException(status_code=422, detail="invalid_fx_quote")
+
+                amount = quote.target_amount
+                source_amount = quote.source_amount
+                source_currency = quote.from_currency
+                fx_rate = quote.rate
+                rate_source = quote.provider
+                rate_timestamp = quote.rate_timestamp.replace(tzinfo=None) if quote.rate_timestamp else None
+                quote_id = quote.id
+                rate_snapshot_id = None
         else:
             amount = data.amount
             source_amount = data.amount
@@ -370,6 +394,7 @@ class ObligationV17Service:
             rate_source = None
             rate_timestamp = None
             quote_id = None
+            rate_snapshot_id = None
 
         paid_amt = period.paid_amount or Decimal("0")
         remaining_amount = period.amount - paid_amt
@@ -393,6 +418,7 @@ class ObligationV17Service:
             metadata_={
                 "obligation_period_id": str(period.id),
                 "fx_quote_id": str(quote_id) if quote_id else None,
+                "rate_snapshot_id": str(rate_snapshot_id) if rate_snapshot_id else None,
                 "source_amount": str(source_amount),
                 "source_currency": source_currency,
                 "fx_rate": str(fx_rate),
@@ -439,6 +465,7 @@ class ObligationV17Service:
             rate_source=rate_source,
             rate_timestamp=rate_timestamp,
             quote_id=quote_id,
+            rate_snapshot_id=rate_snapshot_id,
             idempotency_key=data.idempotency_key,
         )
         self.session.add(payment)
@@ -493,40 +520,63 @@ class ObligationV17Service:
             source_currency = data.source_currency
 
         if source_currency != obligation.currency:
-            if not data.quote_id:
-                raise HTTPException(status_code=422, detail="quote_required")
+            if not data.rate_snapshot_id and not data.quote_id:
+                raise HTTPException(status_code=422, detail="fx_rate_snapshot_required")
 
-            from app.obligations.models import FXQuote
+            if data.rate_snapshot_id:
+                from app.obligations.models import ExchangeRate
+                from decimal import ROUND_HALF_UP
 
-            stmt = select(FXQuote).where(FXQuote.id == data.quote_id)
-            quote = (await self.session.execute(stmt)).scalars().first()
-            if not quote or quote.user_id != user_id:
-                raise HTTPException(status_code=404, detail="fx_quote_not_found")
+                stmt = select(ExchangeRate).where(ExchangeRate.id == data.rate_snapshot_id)
+                snapshot = (await self.session.execute(stmt)).scalars().first()
+                if not snapshot:
+                    raise HTTPException(status_code=404, detail="invalid_fx_rate_snapshot")
+                if snapshot.expires_at < datetime.now(UTC):
+                    raise HTTPException(status_code=422, detail="fx_rate_snapshot_expired")
+                if snapshot.base_currency != source_currency or snapshot.quote_currency != obligation.currency:
+                    raise HTTPException(status_code=422, detail="invalid_fx_rate_snapshot")
+                
+                amount = data.amount
+                fx_rate = snapshot.rate
+                source_amount = (amount / fx_rate).quantize(Decimal("0.00"), rounding=ROUND_HALF_UP)
+                source_currency = snapshot.base_currency
+                rate_source = snapshot.provider
+                rate_timestamp = snapshot.fetched_at.replace(tzinfo=None)
+                quote_id = None
+                rate_snapshot_id = snapshot.id
+            else:
+                from app.obligations.models import FXQuote
 
-            if quote.expires_at < datetime.now(UTC):
-                raise HTTPException(status_code=422, detail="fx_quote_expired")
+                stmt = select(FXQuote).where(FXQuote.id == data.quote_id)
+                quote = (await self.session.execute(stmt)).scalars().first()
+                if not quote or quote.user_id != user_id:
+                    raise HTTPException(status_code=404, detail="fx_quote_not_found")
 
-            if quote.from_currency != source_currency or quote.to_currency != obligation.currency:
-                raise HTTPException(status_code=422, detail="invalid_fx_quote")
+                if quote.expires_at < datetime.now(UTC):
+                    raise HTTPException(status_code=422, detail="fx_quote_expired")
 
-            if data.source_amount is not None and quote.source_amount != data.source_amount:
-                raise HTTPException(status_code=422, detail="invalid_fx_quote")
+                if quote.from_currency != source_currency or quote.to_currency != obligation.currency:
+                    raise HTTPException(status_code=422, detail="invalid_fx_quote")
 
-            # Relative tolerance of 0.10% (0.001) or absolute tolerance of 50 COP / 0.01 USD/EUR
-            allowed_diff = max(
-                data.amount * Decimal("0.001"),
-                Decimal("50.00") if obligation.currency == "COP" else Decimal("0.01")
-            )
-            if abs(quote.target_amount - data.amount) > allowed_diff:
-                raise HTTPException(status_code=422, detail="invalid_fx_quote")
+                if data.source_amount is not None and quote.source_amount != data.source_amount:
+                    raise HTTPException(status_code=422, detail="invalid_fx_quote")
 
-            amount = quote.target_amount
-            source_amount = quote.source_amount
-            source_currency = quote.from_currency
-            fx_rate = quote.rate
-            rate_source = quote.provider
-            rate_timestamp = quote.rate_timestamp.replace(tzinfo=None) if quote.rate_timestamp else None
-            quote_id = quote.id
+                # Relative tolerance of 0.10% (0.001) or absolute tolerance of 50 COP / 0.01 USD/EUR
+                allowed_diff = max(
+                    data.amount * Decimal("0.001"),
+                    Decimal("50.00") if obligation.currency == "COP" else Decimal("0.01")
+                )
+                if abs(quote.target_amount - data.amount) > allowed_diff:
+                    raise HTTPException(status_code=422, detail="invalid_fx_quote")
+
+                amount = quote.target_amount
+                source_amount = quote.source_amount
+                source_currency = quote.from_currency
+                fx_rate = quote.rate
+                rate_source = quote.provider
+                rate_timestamp = quote.rate_timestamp.replace(tzinfo=None) if quote.rate_timestamp else None
+                quote_id = quote.id
+                rate_snapshot_id = None
         else:
             amount = data.amount
             source_amount = data.amount if data.source_amount is None else data.source_amount
@@ -535,6 +585,7 @@ class ObligationV17Service:
             rate_source = None
             rate_timestamp = None
             quote_id = None
+            rate_snapshot_id = None
 
         # Get payable periods: pending_payment, partially_paid
         # Sort by due_date asc, sequence_number asc, created_at asc
@@ -602,6 +653,7 @@ class ObligationV17Service:
             command_id=command_id,
             metadata_={
                 "fx_quote_id": str(quote_id) if quote_id else None,
+                "rate_snapshot_id": str(rate_snapshot_id) if rate_snapshot_id else None,
                 "source_amount": str(source_amount),
                 "source_currency": source_currency,
                 "fx_rate": str(fx_rate),
@@ -664,6 +716,7 @@ class ObligationV17Service:
                 rate_source=rate_source,
                 rate_timestamp=rate_timestamp,
                 quote_id=quote_id,
+                rate_snapshot_id=rate_snapshot_id,
                 idempotency_key=data.idempotency_key,
             )
             self.session.add(payment)

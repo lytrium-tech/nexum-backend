@@ -1102,7 +1102,7 @@ async def test_pay_specific_period_cross_currency_without_quote(mock_db, monkeyp
 
             assert response.status_code == 422
             data = response.json()
-            assert data["detail"] == "quote_required"
+            assert data["detail"] == "fx_rate_snapshot_required"
     finally:
         pass
 
@@ -1570,7 +1570,7 @@ async def test_pay_specific_period_cross_currency_validations(mock_db, monkeypat
             f"/api/v1.7/obligations/{obs_id}/periods/{period_id}/payments", json=payload_no_quote
         )
         assert res.status_code == 422
-        assert res.json()["detail"] == "quote_required"
+        assert res.json()["detail"] == "fx_rate_snapshot_required"
 
         # Case 2: Quote with mismatched amount fails
         payload_mismatched_amount = {
