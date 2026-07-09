@@ -1,4 +1,4 @@
-﻿import uuid
+import uuid
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
@@ -207,7 +207,7 @@ class ObligationV17Service:
         if not period:
             raise HTTPException(status_code=404, detail="period_not_found")
 
-        account = await self.account_repo.get_by_id(data.account_id)
+        account = await self.account_repo.get_by_id(data.source_account_id)
         if not account or account.user_id != user_id:
             raise HTTPException(status_code=404, detail="account_not_found")
 

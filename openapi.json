@@ -3716,7 +3716,7 @@
           "Obligations V1.7"
         ],
         "summary": "Preview a specific period payment (V1.7)",
-        "description": "Simula o previsualiza un pago para un periodo espec\u00c3\u00adfico, retornando el tipo de cambio y los montos exactos requeridos.",
+        "description": "Simula o previsualiza un pago para un periodo espec\u00edfico, retornando el tipo de cambio y los montos exactos requeridos.",
         "operationId": "preview_pay_period_v17_api_v1_7_obligations__obligation_id__periods__period_id__payments_preview_post",
         "security": [
           {
@@ -8501,10 +8501,10 @@
       },
       "ObligationPaymentPreviewV17Request": {
         "properties": {
-          "account_id": {
+          "source_account_id": {
             "type": "string",
             "format": "uuid",
-            "title": "Account Id"
+            "title": "Source Account Id"
           },
           "amount": {
             "anyOf": [
@@ -8522,7 +8522,7 @@
         },
         "type": "object",
         "required": [
-          "account_id",
+          "source_account_id",
           "amount"
         ],
         "title": "ObligationPaymentPreviewV17Request"
@@ -9168,6 +9168,11 @@
             "title": "Is Current",
             "default": false
           },
+          "amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Amount"
+          },
           "amount_due": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -9195,6 +9200,7 @@
           "obligation_id",
           "due_date",
           "status",
+          "amount",
           "amount_due",
           "amount_paid",
           "created_at",

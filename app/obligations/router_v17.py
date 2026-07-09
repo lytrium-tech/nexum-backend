@@ -1,4 +1,5 @@
-﻿from decimal import Decimal
+
+from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -152,7 +153,7 @@ async def get_obligation_v17(
     _: None = Depends(check_v17_feature_flag),
 ):
     """
-    Obtiene una obligaciÃ³n especÃ­fica V1.7.
+    Obtiene una obligación específica V1.7.
     """
     service = ObligationV17Service(session)
     obligation = await service.get_obligation(current_profile.id, obligation_id)
@@ -175,7 +176,7 @@ async def get_obligation_periods_v17(
     _: None = Depends(check_v17_feature_flag),
 ):
     """
-    Lista de periodos de una obligaciÃ³n V1.7.
+    Lista de periodos de una obligación V1.7.
     """
     service = ObligationV17Service(session)
     periods = await service.list_periods_for_obligation(current_profile.id, obligation_id)
@@ -197,7 +198,7 @@ async def get_obligation_periods_v17(
                 due_date=p.due_date,
                 status=p.status,
                 is_current=p.is_current,
-                amount_due=p.amount or Decimal("0"),
+                amount=p.amount or Decimal("0"), amount_due=max(Decimal("0"), (p.amount or Decimal("0")) - (p.paid_amount or Decimal("0"))),
                 amount_paid=p.paid_amount or Decimal("0"),
                 created_at=p.created_at or datetime.utcnow(),
                 updated_at=p.updated_at or datetime.utcnow(),
@@ -239,7 +240,7 @@ async def define_period_amount_v17(
         due_date=period.due_date,
         status=period.status,
         is_current=period.is_current,
-        amount_due=period.amount or Decimal("0"),
+        amount=period.amount or Decimal("0"), amount_due=max(Decimal("0"), (period.amount or Decimal("0")) - (period.paid_amount or Decimal("0"))),
         amount_paid=period.paid_amount or Decimal("0"),
         created_at=period.created_at or datetime.utcnow(),
         updated_at=period.updated_at or datetime.utcnow(),
@@ -260,7 +261,7 @@ async def preview_pay_period_v17(
     session: AsyncSession = Depends(get_db_session),
 ):
     """
-    Simula o previsualiza un pago para un periodo especÃ­fico, retornando el tipo de cambio y los montos exactos requeridos.
+    Simula o previsualiza un pago para un periodo específico, retornando el tipo de cambio y los montos exactos requeridos.
     """
     service = ObligationV17Service(session)
     return await service.pay_preview_specific_period(
@@ -290,7 +291,7 @@ async def create_period_payment_v17(
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
     """
-    Registra un pago especÃ­fico a un periodo en V1.7.
+    Registra un pago específico a un periodo en V1.7.
     """
     if idempotency_key:
         data.idempotency_key = idempotency_key
@@ -319,7 +320,7 @@ async def create_period_payment_v17(
         due_date=period.due_date,
         status=period.status,
         is_current=period.is_current,
-        amount_due=period.amount or Decimal("0"),
+        amount=period.amount or Decimal("0"), amount_due=max(Decimal("0"), (period.amount or Decimal("0")) - (period.paid_amount or Decimal("0"))),
         amount_paid=period.paid_amount or Decimal("0"),
         created_at=period.created_at or datetime.utcnow(),
         updated_at=period.updated_at or datetime.utcnow(),
@@ -381,7 +382,7 @@ async def create_obligation_payment_fifo_v17(
             due_date=p.due_date,
             status=p.status,
             is_current=p.is_current,
-            amount_due=p.amount or Decimal("0"),
+            amount=p.amount or Decimal("0"), amount_due=max(Decimal("0"), (p.amount or Decimal("0")) - (p.paid_amount or Decimal("0"))),
             amount_paid=p.paid_amount or Decimal("0"),
             created_at=p.created_at or datetime.utcnow(),
             updated_at=p.updated_at or datetime.utcnow(),
@@ -389,7 +390,7 @@ async def create_obligation_payment_fifo_v17(
         for p in periods
     ]
 
-    from decimal import Decimal
+    
 
     return ObligationFIFOPaymentResultResponse(
         payments=payment_responses,
@@ -428,7 +429,7 @@ async def skip_obligation_period(
         due_date=period.due_date,
         status=period.status,
         is_current=period.is_current,
-        amount_due=period.amount or Decimal("0"),
+        amount=period.amount or Decimal("0"), amount_due=max(Decimal("0"), (period.amount or Decimal("0")) - (period.paid_amount or Decimal("0"))),
         amount_paid=period.paid_amount or Decimal("0"),
         created_at=period.created_at or datetime.utcnow(),
         updated_at=period.updated_at or datetime.utcnow(),
@@ -463,7 +464,7 @@ async def cancel_obligation_period(
         due_date=period.due_date,
         status=period.status,
         is_current=period.is_current,
-        amount_due=period.amount or Decimal("0"),
+        amount=period.amount or Decimal("0"), amount_due=max(Decimal("0"), (period.amount or Decimal("0")) - (period.paid_amount or Decimal("0"))),
         amount_paid=period.paid_amount or Decimal("0"),
         created_at=period.created_at or datetime.utcnow(),
         updated_at=period.updated_at or datetime.utcnow(),
@@ -498,7 +499,7 @@ async def refresh_overdue_periods(
             due_date=p.due_date,
             status=p.status,
             is_current=p.is_current,
-            amount_due=p.amount or Decimal("0"),
+            amount=p.amount or Decimal("0"), amount_due=max(Decimal("0"), (p.amount or Decimal("0")) - (p.paid_amount or Decimal("0"))),
             amount_paid=p.paid_amount or Decimal("0"),
             created_at=p.created_at or datetime.utcnow(),
             updated_at=p.updated_at or datetime.utcnow(),
@@ -524,6 +525,6 @@ async def get_obligation_payment_v17(
     _: None = Depends(check_v17_feature_flag),
 ):
     """
-    Obtiene un pago especÃ­fico V1.7.
+    Obtiene un pago específico V1.7.
     """
     raise HTTPException(status_code=404, detail="Payment not found")

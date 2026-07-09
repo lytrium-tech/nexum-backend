@@ -1,4 +1,4 @@
-﻿from datetime import date, datetime
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -38,6 +38,7 @@ class ObligationPeriodV17Response(BaseModel):
     due_date: date
     status: PeriodStatus
     is_current: bool = False
+    amount: Decimal
     amount_due: Decimal
     amount_paid: Decimal
     created_at: datetime
@@ -228,7 +229,7 @@ class ObligationsV17IntelligenceContextResponse(BaseModel):
 
 
 class ObligationPaymentPreviewV17Request(BaseModel):
-    account_id: UUID
+    source_account_id: UUID
     amount: Decimal = Field(gt=0)
 
 class ObligationPaymentPreviewV17Response(BaseModel):
