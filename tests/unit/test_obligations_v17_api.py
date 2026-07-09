@@ -221,7 +221,7 @@ async def test_create_obligation_minimal(mock_db):
             assert period.sequence_number == 1
             assert period.period_key == "2026-07"
             assert period.start_date.isoformat() == "2026-07-01"
-            assert period.end_date.isoformat() == "2026-07-05"
+            assert period.end_date.isoformat() == "2026-07-31"
             assert period.due_date.isoformat() == "2026-07-05"
             assert period.amount == Decimal("500.50")
             assert period.status == "pending_payment"

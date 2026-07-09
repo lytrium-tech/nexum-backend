@@ -93,17 +93,18 @@ class ObligationV17Service:
             amount = obligation.base_amount
             status = PeriodStatus.pending_payment.value
 
-        # Use YYYY-MM based on first_due_date as a simple period key
-        period_key = obligation.first_due_date.strftime("%Y-%m")
+        from app.obligations.period_engine import calculate_period_bounds, generate_period_key
+        p_start, p_end, p_due = calculate_period_bounds(obligation, 1)
+        period_key = generate_period_key(obligation.frequency, p_start, 1)
 
         return ObligationPeriod(
             id=uuid.uuid4(),
             obligation_id=obligation.id,
             period_key=period_key,
             sequence_number=1,
-            start_date=obligation.start_date,
-            end_date=obligation.first_due_date,  # Simple documented closure logic
-            due_date=obligation.first_due_date,
+            start_date=p_start,
+            end_date=p_end,
+            due_date=p_due,
             amount=amount,
             currency=obligation.currency,
             paid_amount=0,
@@ -277,7 +278,11 @@ class ObligationV17Service:
         if existing.scalars().first():
             raise HTTPException(status_code=409, detail="idempotency_conflict")
 
-        period = await self.get_period(obligation_id, period_id)
+        stmt = select(ObligationPeriod).where(
+            ObligationPeriod.obligation_id == str(obligation_id),
+            ObligationPeriod.id == str(period_id),
+        ).with_for_update()
+        period = (await self.session.execute(stmt)).scalars().first()
         if not period:
             raise HTTPException(status_code=404, detail="period_not_found")
 
@@ -338,30 +343,6 @@ class ObligationV17Service:
         if amount > remaining_amount:
             raise HTTPException(status_code=422, detail="payment_exceeds_remaining_amount")
 
-        payment = ObligationPayment(
-            id=uuid.uuid4(),
-            obligation_id=obligation.id,
-            obligation_period_id=period.id,
-            user_id=user_id,
-            account_id=data.source_account_id,
-            amount=amount,
-            currency=obligation.currency,
-            source_amount=source_amount,
-            source_currency=source_currency,
-            fx_rate=fx_rate,
-            rate_source=rate_source,
-            rate_timestamp=rate_timestamp,
-            quote_id=quote_id,
-            idempotency_key=data.idempotency_key,
-        )
-        self.session.add(payment)
-
-        period.paid_amount = paid_amt + amount
-        if period.paid_amount < period.amount:
-            period.status = PeriodStatus.partially_paid.value
-        else:
-            period.status = PeriodStatus.paid.value
-
         command_id = uuid.uuid5(
             uuid.NAMESPACE_OID, f"obligations_v1_7:{user_id}:{data.idempotency_key}"
         )
@@ -386,7 +367,18 @@ class ObligationV17Service:
         )
         ledger_result = await self.ledger_service.record_event(event_create)
 
-        if not ledger_result.idempotent and data.source_account_id:
+        if ledger_result.idempotent:
+            await self.session.rollback()
+            stmt = select(ObligationPayment).where(ObligationPayment.idempotency_key == data.idempotency_key)
+            payment = (await self.session.execute(stmt)).scalars().first()
+            if not payment:
+                stmt = select(ObligationPayment).where(ObligationPayment.financial_event_id == ledger_result.event.id)
+                payment = (await self.session.execute(stmt)).scalars().first()
+            stmt = select(ObligationPeriod).where(ObligationPeriod.id == str(period_id))
+            period = (await self.session.execute(stmt)).scalars().first()
+            return payment, period
+
+        if data.source_account_id:
             # Debit the account
             account = await self.account_repo.get_by_id_for_update(data.source_account_id)
             if not account or account.user_id != uuid.UUID(user_id):
@@ -394,6 +386,31 @@ class ObligationV17Service:
             if account.balance < source_amount:
                 raise HTTPException(status_code=400, detail="insufficient_balance")
             await self.account_repo.update_balance(account, -source_amount)
+
+        payment = ObligationPayment(
+            id=uuid.uuid4(),
+            obligation_id=obligation.id,
+            obligation_period_id=period.id,
+            user_id=user_id,
+            account_id=data.source_account_id,
+            financial_event_id=ledger_result.event.id,
+            amount=amount,
+            currency=obligation.currency,
+            source_amount=source_amount,
+            source_currency=source_currency,
+            fx_rate=fx_rate,
+            rate_source=rate_source,
+            rate_timestamp=rate_timestamp,
+            quote_id=quote_id,
+            idempotency_key=data.idempotency_key,
+        )
+        self.session.add(payment)
+
+        period.paid_amount = paid_amt + amount
+        if period.paid_amount < period.amount:
+            period.status = PeriodStatus.partially_paid.value
+        else:
+            period.status = PeriodStatus.paid.value
 
         await self.session.commit()
         await self.session.refresh(period)
@@ -485,6 +502,7 @@ class ObligationV17Service:
                 ObligationPeriod.sequence_number.asc(),
                 ObligationPeriod.created_at.asc(),
             )
+            .with_for_update()
         )
         periods_result = await self.session.execute(stmt)
         periods = periods_result.scalars().all()
@@ -508,43 +526,13 @@ class ObligationV17Service:
             raise HTTPException(status_code=422, detail="payment_exceeds_total_remaining_amount")
 
         remaining_input = amount
-        created_payments = []
-        updated_periods = []
         allocations = []
-
         for p, paid_amt, remaining in period_data:
             if remaining_input <= Decimal("0"):
                 break
-
             payment_slice = min(remaining_input, remaining)
             remaining_input -= payment_slice
-
-            payment = ObligationPayment(
-                id=uuid.uuid4(),
-                obligation_id=obligation.id,
-                obligation_period_id=p.id,
-                user_id=user_id,
-                account_id=data.source_account_id,
-                amount=payment_slice,
-                currency=obligation.currency,
-                source_amount=(payment_slice / fx_rate).quantize(Decimal("0.0000")),  # Rough split
-                source_currency=source_currency,
-                fx_rate=fx_rate,
-                rate_source=rate_source,
-                rate_timestamp=rate_timestamp,
-                quote_id=quote_id,
-                idempotency_key=data.idempotency_key,
-            )
-            self.session.add(payment)
-            created_payments.append(payment)
-
-            p.paid_amount = paid_amt + payment_slice
-            if p.paid_amount < p.amount:
-                p.status = PeriodStatus.partially_paid.value
-            else:
-                p.status = PeriodStatus.paid.value
-            updated_periods.append(p)
-            allocations.append((p, payment_slice))
+            allocations.append((p, paid_amt, payment_slice))
 
         command_id = uuid.uuid5(
             uuid.NAMESPACE_OID, f"obligations_v1_7:{user_id}:{data.idempotency_key}"
@@ -567,13 +555,32 @@ class ObligationV17Service:
                 "fx_rate": str(fx_rate),
                 "allocations": [
                     {"obligation_period_id": str(p.id), "amount": str(slice_amt)}
-                    for p, slice_amt in allocations
+                    for p, _, slice_amt in allocations
                 ],
             },
         )
         ledger_result = await self.ledger_service.record_event(event_create)
 
-        if not ledger_result.idempotent and data.source_account_id:
+        if ledger_result.idempotent:
+            await self.session.rollback()
+            stmt = select(ObligationPayment).where(ObligationPayment.idempotency_key == data.idempotency_key)
+            payments = list((await self.session.execute(stmt)).scalars().all())
+            if not payments:
+                stmt = select(ObligationPayment).where(ObligationPayment.financial_event_id == ledger_result.event.id)
+                payments = list((await self.session.execute(stmt)).scalars().all())
+            
+            period_ids = [str(p.obligation_period_id) for p in payments]
+            if period_ids:
+                stmt = select(ObligationPeriod).where(
+                    ObligationPeriod.obligation_id == str(obligation_id),
+                    ObligationPeriod.id.in_(period_ids)
+                )
+                periods = list((await self.session.execute(stmt)).scalars().all())
+            else:
+                periods = []
+            return payments, periods
+
+        if data.source_account_id:
             # Debit the account
             account = await self.account_repo.get_by_id_for_update(data.source_account_id)
             if not account or account.user_id != uuid.UUID(user_id):
@@ -581,6 +588,37 @@ class ObligationV17Service:
             if account.balance < source_amount:
                 raise HTTPException(status_code=400, detail="insufficient_balance")
             await self.account_repo.update_balance(account, -source_amount)
+
+        created_payments = []
+        updated_periods = []
+
+        for p, paid_amt, payment_slice in allocations:
+            payment = ObligationPayment(
+                id=uuid.uuid4(),
+                obligation_id=obligation.id,
+                obligation_period_id=p.id,
+                user_id=user_id,
+                account_id=data.source_account_id,
+                financial_event_id=ledger_result.event.id,
+                amount=payment_slice,
+                currency=obligation.currency,
+                source_amount=(payment_slice / fx_rate).quantize(Decimal("0.0000")),  # Rough split
+                source_currency=source_currency,
+                fx_rate=fx_rate,
+                rate_source=rate_source,
+                rate_timestamp=rate_timestamp,
+                quote_id=quote_id,
+                idempotency_key=data.idempotency_key,
+            )
+            self.session.add(payment)
+            created_payments.append(payment)
+
+            p.paid_amount = paid_amt + payment_slice
+            if p.paid_amount < p.amount:
+                p.status = PeriodStatus.partially_paid.value
+            else:
+                p.status = PeriodStatus.paid.value
+            updated_periods.append(p)
 
         await self.session.commit()
         for p in updated_periods:
