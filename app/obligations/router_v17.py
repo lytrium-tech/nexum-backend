@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db_session
 from app.core.security import AuthenticatedIdentity
+from app.users.dependencies import CurrentUserProfile
 from app.obligations.schemas_v17 import (
     ApiErrorResponse,
     EmptyStateResponse,
@@ -64,7 +65,7 @@ def _map_obligation(obligation) -> ObligationV17Response:
     description="List all obligations using the V1.7 model.",
 )
 async def list_obligations_v17(
-    identity: AuthenticatedIdentity,
+    current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
     _: None = Depends(check_v17_feature_flag),
 ):
@@ -72,7 +73,7 @@ async def list_obligations_v17(
     Returns a list of V1.7 obligations for the current user.
     """
     service = ObligationV17Service(session)
-    obligations = await service.list_obligations(identity.user_id)
+    obligations = await service.list_obligations(current_profile.id)
     return [_map_obligation(obl) for obl in obligations]
 
 
@@ -85,7 +86,7 @@ async def list_obligations_v17(
 )
 async def create_obligation_v17(
     data: ObligationV17CreateRequest,
-    identity: AuthenticatedIdentity,
+    current_profile: CurrentUserProfile,
     db: AsyncSession = Depends(get_db_session),
     _: None = Depends(check_v17_feature_flag),
 ):
@@ -93,7 +94,7 @@ async def create_obligation_v17(
     Creates an obligation using V1.7 contract.
     """
     service = ObligationV17Service(db)
-    obligation, initial_period = await service.create_obligation(identity.user_id, data)
+    obligation, initial_period = await service.create_obligation(current_profile.id, data)
 
     # Map fields for response
     return _map_obligation(obligation)
@@ -106,7 +107,7 @@ async def create_obligation_v17(
     description="Gets a high-level summary of V1.7 obligations for a specific month.",
 )
 async def get_obligations_summary_v17(
-    identity: AuthenticatedIdentity,
+    current_profile: CurrentUserProfile,
     month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$", description="Month in YYYY-MM format"),
     session: AsyncSession = Depends(get_db_session),
     _: None = Depends(check_v17_feature_flag),
@@ -115,7 +116,7 @@ async def get_obligations_summary_v17(
     Returns a dashboard summary for the specified month (or current month).
     """
     service = ObligationV17Service(session)
-    return await service.get_summary(identity.user_id, month)
+    return await service.get_summary(current_profile.id, month)
 
 
 @router.get(
@@ -125,7 +126,7 @@ async def get_obligations_summary_v17(
     description="Gets a read-only context of V1.7 obligations designed for AI features.",
 )
 async def get_obligations_intelligence_context_v17(
-    identity: AuthenticatedIdentity,
+    current_profile: CurrentUserProfile,
     month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$", description="Month in YYYY-MM format"),
     session: AsyncSession = Depends(get_db_session),
     _: None = Depends(check_v17_feature_flag),
@@ -134,7 +135,7 @@ async def get_obligations_intelligence_context_v17(
     Returns an AI-friendly context summary, reusing the summary endpoint logic.
     """
     service = ObligationV17Service(session)
-    return await service.get_intelligence_context(identity.user_id, month)
+    return await service.get_intelligence_context(current_profile.id, month)
 
 
 @router.get(
@@ -146,7 +147,7 @@ async def get_obligations_intelligence_context_v17(
 )
 async def get_obligation_v17(
     obligation_id: UUID,
-    identity: AuthenticatedIdentity,
+    current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
     _: None = Depends(check_v17_feature_flag),
 ):
@@ -154,7 +155,7 @@ async def get_obligation_v17(
     Obtiene una obligación específica V1.7.
     """
     service = ObligationV17Service(session)
-    obligation = await service.get_obligation(identity.user_id, obligation_id)
+    obligation = await service.get_obligation(current_profile.id, obligation_id)
     if not obligation:
         raise HTTPException(status_code=404, detail="Obligation not found")
     return _map_obligation(obligation)
@@ -169,7 +170,7 @@ async def get_obligation_v17(
 )
 async def get_obligation_periods_v17(
     obligation_id: UUID,
-    identity: AuthenticatedIdentity,
+    current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
     _: None = Depends(check_v17_feature_flag),
 ):
@@ -177,7 +178,7 @@ async def get_obligation_periods_v17(
     Lista de periodos de una obligación V1.7.
     """
     service = ObligationV17Service(session)
-    periods = await service.list_periods_for_obligation(identity.user_id, obligation_id)
+    periods = await service.list_periods_for_obligation(current_profile.id, obligation_id)
 
     if periods is None:
         raise HTTPException(status_code=404, detail="Obligation not found")
@@ -220,7 +221,7 @@ async def define_period_amount_v17(
     obligation_id: UUID,
     period_id: UUID,
     data: ObligationPeriodAmountDefineRequest,
-    identity: AuthenticatedIdentity,
+    current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
     _: None = Depends(check_v17_feature_flag),
 ):
@@ -228,7 +229,7 @@ async def define_period_amount_v17(
     Define el monto para un periodo variable en V1.7.
     """
     service = ObligationV17Service(session)
-    period = await service.define_period_amount(identity.user_id, obligation_id, period_id, data)
+    period = await service.define_period_amount(current_profile.id, obligation_id, period_id, data)
 
     from datetime import datetime
 
@@ -255,7 +256,7 @@ async def preview_pay_period_v17(
     obligation_id: UUID,
     period_id: UUID,
     data: ObligationPaymentPreviewV17Request,
-    identity: AuthenticatedIdentity,
+    current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -263,7 +264,7 @@ async def preview_pay_period_v17(
     """
     service = ObligationV17Service(session)
     return await service.pay_preview_specific_period(
-        identity.user_id, obligation_id, period_id, data
+        current_profile.id, obligation_id, period_id, data
     )
 
 
@@ -283,7 +284,7 @@ async def create_period_payment_v17(
     obligation_id: UUID,
     period_id: UUID,
     data: ObligationPeriodPaymentCreateRequest,
-    identity: AuthenticatedIdentity,
+    current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
     _: None = Depends(check_v17_feature_flag),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
@@ -295,7 +296,7 @@ async def create_period_payment_v17(
         data.idempotency_key = idempotency_key
     service = ObligationV17Service(session)
     payment, period = await service.pay_specific_period(
-        identity.user_id, obligation_id, period_id, data
+        current_profile.id, obligation_id, period_id, data
     )
 
     from datetime import datetime
@@ -343,7 +344,7 @@ async def create_period_payment_v17(
 async def create_obligation_payment_fifo_v17(
     obligation_id: UUID,
     data: ObligationFIFOPaymentCreateRequest,
-    identity: AuthenticatedIdentity,
+    current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
     _: None = Depends(check_v17_feature_flag),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
@@ -354,7 +355,7 @@ async def create_obligation_payment_fifo_v17(
     if idempotency_key:
         data.idempotency_key = idempotency_key
     service = ObligationV17Service(session)
-    payments, periods = await service.pay_obligation_fifo(identity.user_id, obligation_id, data)
+    payments, periods = await service.pay_obligation_fifo(current_profile.id, obligation_id, data)
 
     from datetime import datetime
 
@@ -407,7 +408,7 @@ async def create_obligation_payment_fifo_v17(
 async def skip_obligation_period(
     obligation_id: UUID,
     period_id: UUID,
-    identity: AuthenticatedIdentity,
+    current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -415,7 +416,7 @@ async def skip_obligation_period(
     """
     service = ObligationV17Service(session)
     period = await service.skip_period(
-        user_id=str(identity.user_id),
+        user_id=str(current_profile.id),
         obligation_id=obligation_id,
         period_id=period_id,
     )
@@ -442,7 +443,7 @@ async def skip_obligation_period(
 async def cancel_obligation_period(
     obligation_id: UUID,
     period_id: UUID,
-    identity: AuthenticatedIdentity,
+    current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -450,7 +451,7 @@ async def cancel_obligation_period(
     """
     service = ObligationV17Service(session)
     period = await service.cancel_period(
-        user_id=str(identity.user_id),
+        user_id=str(current_profile.id),
         obligation_id=obligation_id,
         period_id=period_id,
     )
@@ -476,7 +477,7 @@ async def cancel_obligation_period(
 )
 async def refresh_overdue_periods(
     obligation_id: UUID,
-    identity: AuthenticatedIdentity,
+    current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -484,7 +485,7 @@ async def refresh_overdue_periods(
     """
     service = ObligationV17Service(session)
     updated_periods, count = await service.refresh_overdue_periods(
-        user_id=str(identity.user_id),
+        user_id=str(current_profile.id),
         obligation_id=obligation_id,
     )
 

@@ -1,4 +1,4 @@
-import uuid
+﻿import uuid
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
@@ -29,7 +29,7 @@ class ObligationV17Service:
         self.account_repo = AccountRepository(session)
 
     async def create_obligation(
-        self, user_id: str, data: ObligationV17CreateRequest
+        self, user_id: uuid.UUID, data: ObligationV17CreateRequest
     ) -> tuple[Obligation, ObligationPeriod]:
         """
         Creates a minimal V1.7 obligation and its initial period.
@@ -112,7 +112,7 @@ class ObligationV17Service:
             is_current=True,
         )
 
-    async def list_obligations(self, user_id: str) -> list[Obligation]:
+    async def list_obligations(self, user_id: uuid.UUID) -> list[Obligation]:
         """List obligations for a given user."""
         stmt = (
             select(Obligation)
@@ -122,16 +122,16 @@ class ObligationV17Service:
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_obligation(self, user_id: str, obligation_id: uuid.UUID) -> Obligation | None:
+    async def get_obligation(self, user_id: uuid.UUID, obligation_id: uuid.UUID) -> Obligation | None:
         """Get a specific obligation for a user."""
         stmt = select(Obligation).where(
-            Obligation.user_id == user_id, Obligation.id == str(obligation_id)
+            Obligation.user_id == user_id, Obligation.id == obligation_id
         )
         result = await self.session.execute(stmt)
         return result.scalars().first()
 
     async def list_periods_for_obligation(
-        self, user_id: str, obligation_id: uuid.UUID
+        self, user_id: uuid.UUID, obligation_id: uuid.UUID
     ) -> list[ObligationPeriod] | None:
         """List periods for a given obligation. Returns None if obligation not found or not owned by user."""
         obligation = await self.get_obligation(user_id, obligation_id)
@@ -140,7 +140,7 @@ class ObligationV17Service:
 
         stmt = (
             select(ObligationPeriod)
-            .where(ObligationPeriod.obligation_id == str(obligation_id))
+            .where(ObligationPeriod.obligation_id == obligation_id)
             .order_by(ObligationPeriod.sequence_number.asc())
         )
         result = await self.session.execute(stmt)
@@ -151,7 +151,7 @@ class ObligationV17Service:
     ) -> ObligationPeriod | None:
         """Get a specific period."""
         stmt = select(ObligationPeriod).where(
-            ObligationPeriod.obligation_id == str(obligation_id),
+            ObligationPeriod.obligation_id == obligation_id,
             ObligationPeriod.id == str(period_id),
         )
         result = await self.session.execute(stmt)
@@ -159,7 +159,7 @@ class ObligationV17Service:
 
     async def define_period_amount(
         self,
-        user_id: str,
+        user_id: uuid.UUID,
         obligation_id: uuid.UUID,
         period_id: uuid.UUID,
         data: ObligationPeriodAmountDefineRequest,
@@ -192,7 +192,7 @@ class ObligationV17Service:
 
     async def pay_preview_specific_period(
         self,
-        user_id: str,
+        user_id: uuid.UUID,
         obligation_id: uuid.UUID,
         period_id: uuid.UUID,
         data: "ObligationPaymentPreviewV17Request",
@@ -208,7 +208,7 @@ class ObligationV17Service:
             raise HTTPException(status_code=404, detail="period_not_found")
 
         account = await self.account_repo.get_by_id(data.account_id)
-        if not account or account.user_id != uuid.UUID(user_id):
+        if not account or account.user_id != user_id:
             raise HTTPException(status_code=404, detail="account_not_found")
 
         from decimal import Decimal
@@ -235,7 +235,7 @@ class ObligationV17Service:
             # create a quote so the user can use it
             fx_service = FXService(provider=DummyFxProvider(), session=self.session)
             quote = await fx_service.create_quote(
-                user_id=uuid.UUID(user_id),
+                user_id=user_id,
                 source_currency=account.currency,
                 target_currency=obligation.currency,
                 source_amount=source_amount,
@@ -257,7 +257,7 @@ class ObligationV17Service:
 
     async def pay_specific_period(
         self,
-        user_id: str,
+        user_id: uuid.UUID,
         obligation_id: uuid.UUID,
         period_id: uuid.UUID,
         data: ObligationPeriodPaymentCreateRequest,
@@ -271,7 +271,7 @@ class ObligationV17Service:
             raise HTTPException(status_code=422, detail="missing_idempotency_key")
 
         stmt = select(ObligationPayment).where(
-            ObligationPayment.user_id == uuid.UUID(user_id),
+            ObligationPayment.user_id == user_id,
             ObligationPayment.idempotency_key == data.idempotency_key,
         )
         existing = await self.session.execute(stmt)
@@ -279,7 +279,7 @@ class ObligationV17Service:
             raise HTTPException(status_code=409, detail="idempotency_conflict")
 
         stmt = select(ObligationPeriod).where(
-            ObligationPeriod.obligation_id == str(obligation_id),
+            ObligationPeriod.obligation_id == obligation_id,
             ObligationPeriod.id == str(period_id),
         ).with_for_update()
         period = (await self.session.execute(stmt)).scalars().first()
@@ -348,7 +348,7 @@ class ObligationV17Service:
         )
 
         event_create = LedgerEventCreate(
-            user_id=uuid.UUID(user_id),
+            user_id=user_id,
             account_id=data.source_account_id,
             event_type=EventType.OBLIGATION_PAYMENT,
             direction=Direction.OUTFLOW,
@@ -381,7 +381,7 @@ class ObligationV17Service:
         if data.source_account_id:
             # Debit the account
             account = await self.account_repo.get_by_id_for_update(data.source_account_id)
-            if not account or account.user_id != uuid.UUID(user_id):
+            if not account or account.user_id != user_id:
                 raise HTTPException(status_code=404, detail="account_not_found")
             if account.balance < source_amount:
                 raise HTTPException(status_code=400, detail="insufficient_balance")
@@ -420,7 +420,7 @@ class ObligationV17Service:
 
     async def pay_obligation_fifo(
         self,
-        user_id: str,
+        user_id: uuid.UUID,
         obligation_id: uuid.UUID,
         data: "ObligationFIFOPaymentCreateRequest",
     ) -> tuple[list[ObligationPayment], list[ObligationPeriod]]:
@@ -433,7 +433,7 @@ class ObligationV17Service:
             raise HTTPException(status_code=422, detail="missing_idempotency_key")
 
         stmt = select(ObligationPayment).where(
-            ObligationPayment.user_id == uuid.UUID(user_id),
+            ObligationPayment.user_id == user_id,
             ObligationPayment.idempotency_key == data.idempotency_key,
         )
         existing = await self.session.execute(stmt)
@@ -539,7 +539,7 @@ class ObligationV17Service:
         )
 
         event_create = LedgerEventCreate(
-            user_id=uuid.UUID(user_id),
+            user_id=user_id,
             account_id=data.source_account_id,
             event_type=EventType.OBLIGATION_PAYMENT,
             direction=Direction.OUTFLOW,
@@ -572,7 +572,7 @@ class ObligationV17Service:
             period_ids = [str(p.obligation_period_id) for p in payments]
             if period_ids:
                 stmt = select(ObligationPeriod).where(
-                    ObligationPeriod.obligation_id == str(obligation_id),
+                    ObligationPeriod.obligation_id == obligation_id,
                     ObligationPeriod.id.in_(period_ids)
                 )
                 periods = list((await self.session.execute(stmt)).scalars().all())
@@ -583,7 +583,7 @@ class ObligationV17Service:
         if data.source_account_id:
             # Debit the account
             account = await self.account_repo.get_by_id_for_update(data.source_account_id)
-            if not account or account.user_id != uuid.UUID(user_id):
+            if not account or account.user_id != user_id:
                 raise HTTPException(status_code=404, detail="account_not_found")
             if account.balance < source_amount:
                 raise HTTPException(status_code=400, detail="insufficient_balance")
@@ -629,7 +629,7 @@ class ObligationV17Service:
         return created_payments, updated_periods
 
     async def skip_period(
-        self, user_id: str, obligation_id: uuid.UUID, period_id: uuid.UUID
+        self, user_id: uuid.UUID, obligation_id: uuid.UUID, period_id: uuid.UUID
     ) -> ObligationPeriod:
         obligation = await self.get_obligation(user_id, obligation_id)
         if not obligation:
@@ -651,7 +651,7 @@ class ObligationV17Service:
         return period
 
     async def cancel_period(
-        self, user_id: str, obligation_id: uuid.UUID, period_id: uuid.UUID
+        self, user_id: uuid.UUID, obligation_id: uuid.UUID, period_id: uuid.UUID
     ) -> ObligationPeriod:
         obligation = await self.get_obligation(user_id, obligation_id)
         if not obligation:
@@ -681,7 +681,7 @@ class ObligationV17Service:
         return period
 
     async def refresh_overdue_periods(
-        self, user_id: str, obligation_id: uuid.UUID
+        self, user_id: uuid.UUID, obligation_id: uuid.UUID
     ) -> tuple[list[ObligationPeriod], int]:
         obligation = await self.get_obligation(user_id, obligation_id)
         if not obligation:
@@ -717,7 +717,7 @@ class ObligationV17Service:
         return updated_periods, len(updated_periods)
 
     async def get_summary(
-        self, user_id: str, month: str | None = None
+        self, user_id: uuid.UUID, month: str | None = None
     ):
         from datetime import date, datetime
         from decimal import Decimal
@@ -847,7 +847,7 @@ class ObligationV17Service:
         )
 
     async def get_intelligence_context(
-        self, user_id: str, month: str | None = None
+        self, user_id: uuid.UUID, month: str | None = None
     ):
         from datetime import datetime
 

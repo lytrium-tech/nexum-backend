@@ -1,4 +1,4 @@
-from decimal import Decimal
+﻿from decimal import Decimal
 from unittest.mock import AsyncMock
 
 import pytest
@@ -33,6 +33,22 @@ def mock_db():
     mock_session.begin_nested = MagicMock(return_value=cm)
 
     app.dependency_overrides[get_db_session] = lambda: mock_session
+    from app.users.dependencies import get_current_user_profile_dep
+    from app.users.schemas import UserRead
+    
+    async def mock_get_current_user():
+        return UserRead(
+            id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
+            auth_user_id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
+            name="Test User",
+            email="test@example.com",
+            timezone="America/Bogota",
+            currency="COP",
+            status="active",
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+    app.dependency_overrides[get_current_user_profile_dep] = mock_get_current_user
     yield mock_session
     app.dependency_overrides.clear()
 
@@ -1295,3 +1311,4 @@ async def test_get_intelligence_context_v17_feature_flag_off(mock_db, monkeypatc
             "/api/v1.7/obligations/intelligence-context?month=2026-07"
         )
         assert res.status_code in (401, 403)
+
