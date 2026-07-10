@@ -9,9 +9,9 @@ This document is the source of truth for the implemented and validated backend s
 - Tech Stack: FastAPI, SQLAlchemy, Pydantic, PostgreSQL.
 
 ## Completed Features
+- **Backend V1.7 Closure**: Stabilized FIFO payment engine handling multiple periods, cross-currency payments, and dynamic UI state logic. Monthly summary metrics (paid/overdue/cancelled/total) fixed to rely strictly on inclusive `due_date` boundaries. Documented known performance N+1 debt on `refresh_overdue_periods` for V1.8.
 - **Backend V1.7 FX Rate Snapshot**: Refactored `app/obligations/service_v17.py` to rely strictly on `rate_snapshot_id` instead of frontend-provided `source_amount`. Backend recalculates `source_amount` dynamically from the persisted rate snapshot, enabling zero-risk frontend FX previews while enforcing backend source of truth.
 - **Backend V1.7 Obligations Release**: Resolved internal user identity resolution (using internal `users.id` primary key instead of Supabase `auth_id`) across all V1.7 endpoints, handled legacy null status mapping, and corrected the cross-currency payment preview FX provider name import mismatch (using `StaticFxRateProvider` instead of `DummyFxProvider`).
-- **Backend Legacy V1.7 Compatibility Fix**: Updated `ObligationRead` schema to tolerate `NULL` values introduced by V1.7 records (`type`, `start_date`, `first_due_date`, `status`), preventing 500 errors on legacy frontend endpoints.
 - **Backend V1.6.2**: Obligation Payment Preview. `remaining_amount` included directly on `ObligationPeriodRead`. Implemented `POST /api/v1/obligations/periods/{period_id}/pay/preview` for zero-risk real-time FX payment quotes. Fixed cross-currency payload semantics (treating payload.amount as applied_amount). Test data cleaned up.
 - **Backend V1.6.1**: Intelligence Snapshot Fix. Corrected intelligence repository to use ObligationPeriod as the source of truth, eliminating legacy obligations.amount and broken views.
 - **Backend V1.6**: Obligations Core. Implemented ObligationPeriod engine for precise state tracking, partial payments, and dynamic completion cycles.

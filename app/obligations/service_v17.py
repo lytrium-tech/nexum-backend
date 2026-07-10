@@ -928,10 +928,29 @@ class ObligationV17Service:
         if not month:
             month = date.today().strftime("%Y-%m")
 
-        # Auto-refresh all active obligations for the user
+        # Performance Quick Win: 
+        # 1. Bulk update all overdue periods in a single query
+        today = date.today()
+        from sqlalchemy import update
+        stmt_update = (
+            update(ObligationPeriod)
+            .where(
+                ObligationPeriod.status.in_([PeriodStatus.pending_payment.value, PeriodStatus.partially_paid.value]),
+                ObligationPeriod.due_date < today,
+                ObligationPeriod.obligation_id.in_(
+                    select(Obligation.id).where(Obligation.user_id == user_id, Obligation.status == "active")
+                )
+            )
+            .values(status=PeriodStatus.overdue.value)
+        )
+        await self.session.execute(stmt_update)
+        await self.session.commit()
+
+        # 2. Only run the heavy period generation loop for active recurring obligations
         stmt_active = select(Obligation.id).where(
             Obligation.user_id == user_id, 
-            Obligation.status == "active"
+            Obligation.status == "active",
+            Obligation.frequency != "one_time"
         )
         active_obl_ids = (await self.session.execute(stmt_active)).scalars().all()
         for oid in active_obl_ids:
@@ -940,12 +959,18 @@ class ObligationV17Service:
             except Exception:
                 pass # Ignore errors in refresh to avoid breaking summary
 
+        # Determine bounds for the month using due_date
+        year, m = map(int, month.split('-'))
+        from calendar import monthrange
+        first_day = date(year, m, 1)
+        last_day = date(year, m, monthrange(year, m)[1])
+
         stmt = (
             select(ObligationPeriod, Obligation)
             .join(Obligation, ObligationPeriod.obligation_id == Obligation.id)
             .where(Obligation.user_id == user_id)
             .where(
-                (ObligationPeriod.period_key == month)
+                ((ObligationPeriod.due_date >= first_day) & (ObligationPeriod.due_date <= last_day))
                 | (
                     ObligationPeriod.status.in_(
                         [

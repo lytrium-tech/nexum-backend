@@ -153,7 +153,7 @@ async def test_v17_read_endpoints_success(mock_db):
         sequence_number=1,
         start_date=date(2026, 7, 1),
         end_date=date(2026, 7, 31),
-        due_date=date(2026, 7, 31),
+        due_date=date(2030, 1, 1),
         amount=Decimal("100.00"),
         currency="USD",
         paid_amount=0,
@@ -164,7 +164,9 @@ async def test_v17_read_endpoints_success(mock_db):
     def side_effect(stmt):
         mock_result = MagicMock()
         stmt_str = str(stmt).lower()
-        if "obligation_period" in stmt_str:
+        if "due_date <" in stmt_str:
+            mock_result.scalars.return_value.all.return_value = []
+        elif "obligation_period" in stmt_str:
             mock_result.scalars.return_value.all.return_value = [mock_period]
         else:
             mock_result.scalars.return_value.all.return_value = [mock_obligation]
@@ -2121,12 +2123,14 @@ async def test_fifo_payment_idempotent_retry_does_not_duplicate_debit_or_allocat
     from datetime import date
     from decimal import Decimal
     from unittest.mock import MagicMock
+
     from httpx import ASGITransport, AsyncClient
+
     from app.accounts.models import Account
     from app.core.config import settings
     from app.main import app
     from app.obligations.enums_v17 import ObligationStatus, PeriodStatus
-    from app.obligations.models import Obligation, ObligationPeriod, ObligationPayment
+    from app.obligations.models import Obligation, ObligationPayment, ObligationPeriod
 
     monkeypatch.setattr('app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED', True)
 
