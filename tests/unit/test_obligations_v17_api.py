@@ -503,7 +503,10 @@ async def test_pay_specific_period(mock_db):
         if "obligation_payments" in stmt_str:
             mock_result.scalars.return_value.first.return_value = None
         elif "obligation_period" in stmt_str:
-            mock_result.scalars.return_value.first.return_value = mock_period
+            if "<" in stmt_str or "< :" in stmt_str:
+                mock_result.scalars.return_value.first.return_value = None
+            else:
+                mock_result.scalars.return_value.first.return_value = mock_period
         else:
             mock_result.scalars.return_value.first.return_value = mock_obligation
         return mock_result
@@ -607,7 +610,10 @@ async def test_pay_specific_period(mock_db):
                 if "obligation_payments" in stmt_str:
                     mock_result.scalars.return_value.first.return_value = "EXISTING_PAYMENT"
                 elif "obligation_period" in stmt_str:
-                    mock_result.scalars.return_value.first.return_value = mock_period
+                    if "<" in stmt_str or "< :" in stmt_str:
+                        mock_result.scalars.return_value.first.return_value = None
+                    else:
+                        mock_result.scalars.return_value.first.return_value = mock_period
                 else:
                     mock_result.scalars.return_value.first.return_value = mock_obligation
                 return mock_result
@@ -689,7 +695,10 @@ async def test_pay_obligation_fifo(mock_db):
         if "obligation_payments" in stmt_str:
             mock_result.scalars.return_value.first.return_value = None
         elif "obligation_period" in stmt_str:
-            mock_result.scalars.return_value.all.return_value = [mock_period_1, mock_period_2]
+            if "<" in stmt_str or "< :" in stmt_str:
+                mock_result.scalars.return_value.all.return_value = []
+            else:
+                mock_result.scalars.return_value.all.return_value = [mock_period_1, mock_period_2]
         else:
             mock_result.scalars.return_value.first.return_value = mock_obligation
         return mock_result
@@ -747,7 +756,10 @@ async def test_pay_obligation_fifo(mock_db):
                 if "obligation_payments" in stmt_str:
                     mock_result.scalars.return_value.first.return_value = None
                 elif "obligation_period" in stmt_str:
-                    mock_result.scalars.return_value.all.return_value = []
+                    if "<" in stmt_str or "< :" in stmt_str:
+                        mock_result.scalars.return_value.all.return_value = []
+                    else:
+                        mock_result.scalars.return_value.all.return_value = []
                 else:
                     mock_result.scalars.return_value.first.return_value = mock_obligation
                 return mock_result

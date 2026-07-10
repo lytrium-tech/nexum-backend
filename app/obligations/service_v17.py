@@ -333,18 +333,22 @@ class ObligationV17Service:
                 raise HTTPException(status_code=422, detail="fx_rate_snapshot_required")
 
             if data.rate_snapshot_id:
-                from app.obligations.models import ExchangeRate
                 from decimal import ROUND_HALF_UP
-                
+
+                from app.obligations.models import ExchangeRate
+
                 stmt = select(ExchangeRate).where(ExchangeRate.id == data.rate_snapshot_id)
                 snapshot = (await self.session.execute(stmt)).scalars().first()
                 if not snapshot:
                     raise HTTPException(status_code=404, detail="invalid_fx_rate_snapshot")
                 if snapshot.expires_at < datetime.now(UTC):
                     raise HTTPException(status_code=422, detail="fx_rate_snapshot_expired")
-                if snapshot.base_currency != source_currency or snapshot.quote_currency != obligation.currency:
+                if (
+                    snapshot.base_currency != source_currency
+                    or snapshot.quote_currency != obligation.currency
+                ):
                     raise HTTPException(status_code=422, detail="invalid_fx_rate_snapshot")
-                
+
                 amount = data.amount
                 fx_rate = snapshot.rate
                 source_amount = (amount / fx_rate).quantize(Decimal("0.00"), rounding=ROUND_HALF_UP)
@@ -364,7 +368,10 @@ class ObligationV17Service:
                 if quote.expires_at < datetime.now(UTC):
                     raise HTTPException(status_code=422, detail="fx_quote_expired")
 
-                if quote.from_currency != source_currency or quote.to_currency != obligation.currency:
+                if (
+                    quote.from_currency != source_currency
+                    or quote.to_currency != obligation.currency
+                ):
                     raise HTTPException(status_code=422, detail="invalid_fx_quote")
 
                 if data.source_amount is not None and quote.source_amount != data.source_amount:
@@ -373,7 +380,7 @@ class ObligationV17Service:
                 # Relative tolerance of 0.10% (0.001) or absolute tolerance of 50 COP / 0.01 USD/EUR
                 allowed_diff = max(
                     data.amount * Decimal("0.001"),
-                    Decimal("50.00") if obligation.currency == "COP" else Decimal("0.01")
+                    Decimal("50.00") if obligation.currency == "COP" else Decimal("0.01"),
                 )
                 if abs(quote.target_amount - data.amount) > allowed_diff:
                     raise HTTPException(status_code=422, detail="invalid_fx_quote")
@@ -383,7 +390,9 @@ class ObligationV17Service:
                 source_currency = quote.from_currency
                 fx_rate = quote.rate
                 rate_source = quote.provider
-                rate_timestamp = quote.rate_timestamp.replace(tzinfo=None) if quote.rate_timestamp else None
+                rate_timestamp = (
+                    quote.rate_timestamp.replace(tzinfo=None) if quote.rate_timestamp else None
+                )
                 quote_id = quote.id
                 rate_snapshot_id = None
         else:
@@ -480,6 +489,9 @@ class ObligationV17Service:
         await self.session.refresh(period)
         await self.session.refresh(payment)
 
+        # Ensure missing periods are generated
+        await self.refresh_overdue_periods(user_id, obligation_id)
+
         return payment, period
 
     async def pay_obligation_fifo(
@@ -524,8 +536,9 @@ class ObligationV17Service:
                 raise HTTPException(status_code=422, detail="fx_rate_snapshot_required")
 
             if data.rate_snapshot_id:
-                from app.obligations.models import ExchangeRate
                 from decimal import ROUND_HALF_UP
+
+                from app.obligations.models import ExchangeRate
 
                 stmt = select(ExchangeRate).where(ExchangeRate.id == data.rate_snapshot_id)
                 snapshot = (await self.session.execute(stmt)).scalars().first()
@@ -533,9 +546,12 @@ class ObligationV17Service:
                     raise HTTPException(status_code=404, detail="invalid_fx_rate_snapshot")
                 if snapshot.expires_at < datetime.now(UTC):
                     raise HTTPException(status_code=422, detail="fx_rate_snapshot_expired")
-                if snapshot.base_currency != source_currency or snapshot.quote_currency != obligation.currency:
+                if (
+                    snapshot.base_currency != source_currency
+                    or snapshot.quote_currency != obligation.currency
+                ):
                     raise HTTPException(status_code=422, detail="invalid_fx_rate_snapshot")
-                
+
                 amount = data.amount
                 fx_rate = snapshot.rate
                 source_amount = (amount / fx_rate).quantize(Decimal("0.00"), rounding=ROUND_HALF_UP)
@@ -555,7 +571,10 @@ class ObligationV17Service:
                 if quote.expires_at < datetime.now(UTC):
                     raise HTTPException(status_code=422, detail="fx_quote_expired")
 
-                if quote.from_currency != source_currency or quote.to_currency != obligation.currency:
+                if (
+                    quote.from_currency != source_currency
+                    or quote.to_currency != obligation.currency
+                ):
                     raise HTTPException(status_code=422, detail="invalid_fx_quote")
 
                 if data.source_amount is not None and quote.source_amount != data.source_amount:
@@ -564,7 +583,7 @@ class ObligationV17Service:
                 # Relative tolerance of 0.10% (0.001) or absolute tolerance of 50 COP / 0.01 USD/EUR
                 allowed_diff = max(
                     data.amount * Decimal("0.001"),
-                    Decimal("50.00") if obligation.currency == "COP" else Decimal("0.01")
+                    Decimal("50.00") if obligation.currency == "COP" else Decimal("0.01"),
                 )
                 if abs(quote.target_amount - data.amount) > allowed_diff:
                     raise HTTPException(status_code=422, detail="invalid_fx_quote")
@@ -574,7 +593,9 @@ class ObligationV17Service:
                 source_currency = quote.from_currency
                 fx_rate = quote.rate
                 rate_source = quote.provider
-                rate_timestamp = quote.rate_timestamp.replace(tzinfo=None) if quote.rate_timestamp else None
+                rate_timestamp = (
+                    quote.rate_timestamp.replace(tzinfo=None) if quote.rate_timestamp else None
+                )
                 quote_id = quote.id
                 rate_snapshot_id = None
         else:
@@ -736,6 +757,15 @@ class ObligationV17Service:
         for payment in created_payments:
             await self.session.refresh(payment)
 
+        # Ensure missing periods are generated
+        refreshed_periods, _ = await self.refresh_overdue_periods(user_id, obligation_id)
+
+        # Merge refreshed periods into updated_periods if they aren't already there
+        updated_period_ids = {p.id for p in updated_periods}
+        for rp in refreshed_periods:
+            if rp.id not in updated_period_ids:
+                updated_periods.append(rp)
+
         return created_payments, updated_periods
 
     async def skip_period(
@@ -752,12 +782,17 @@ class ObligationV17Service:
         if period.status not in (
             PeriodStatus.pending_amount_definition.value,
             PeriodStatus.pending_payment.value,
+            PeriodStatus.overdue.value,
         ):
             raise HTTPException(status_code=422, detail="period_not_skippable")
 
         period.status = PeriodStatus.skipped.value
         await self.session.commit()
         await self.session.refresh(period)
+
+        # Ensure missing periods are generated
+        await self.refresh_overdue_periods(user_id, obligation_id)
+
         return period
 
     async def cancel_period(
@@ -788,6 +823,10 @@ class ObligationV17Service:
         period.status = PeriodStatus.cancelled.value
         await self.session.commit()
         await self.session.refresh(period)
+
+        # Ensure missing periods are generated
+        await self.refresh_overdue_periods(user_id, obligation_id)
+
         return period
 
     async def refresh_overdue_periods(
@@ -799,8 +838,11 @@ class ObligationV17Service:
 
         from datetime import date
 
+        from app.obligations.period_engine import PeriodEngine
+
         today = date.today()
 
+        # 1. Update existing pending/partially_paid to overdue
         stmt = select(ObligationPeriod).where(
             ObligationPeriod.obligation_id == obligation_id,
             ObligationPeriod.status.in_(
@@ -812,10 +854,10 @@ class ObligationV17Service:
             ObligationPeriod.due_date < today,
         )
         periods_result = await self.session.execute(stmt)
-        periods = periods_result.scalars().all()
+        periods_to_update = periods_result.scalars().all()
 
         updated_periods = []
-        for p in periods:
+        for p in periods_to_update:
             p.status = PeriodStatus.overdue.value
             updated_periods.append(p)
 
@@ -823,6 +865,32 @@ class ObligationV17Service:
             await self.session.commit()
             for p in updated_periods:
                 await self.session.refresh(p)
+
+        # 2. Generate missing periods up to today
+        engine = PeriodEngine(self.session)
+        # We manually sync periods, skipping the internal engine's overdue logic since we just did a better one
+        if obligation.status == "active" and obligation.start_date:
+            current_seq = engine._find_sequence_for_date(obligation, today)
+            max_seq = 1 if obligation.frequency == "one_time" else current_seq + 1
+            if obligation.end_count:
+                max_seq = min(max_seq, obligation.end_count)
+
+            from app.obligations.period_engine import calculate_period_bounds
+
+            for seq in range(current_seq, max_seq + 1):
+                if obligation.end_date:
+                    p_start, _, _ = calculate_period_bounds(obligation, seq)
+                    if p_start > obligation.end_date:
+                        break
+                new_period = await engine._ensure_period_exists(obligation, seq, today)
+                if (
+                    new_period
+                    and new_period.status == "overdue"
+                    and new_period not in updated_periods
+                ):
+                    updated_periods.append(new_period)
+
+            await self.session.commit()
 
         return updated_periods, len(updated_periods)
 
