@@ -22,6 +22,7 @@ from app.obligations.schemas_v17 import (
     ObligationPeriodV17Response,
     ObligationsV17IntelligenceContextResponse,
     ObligationsV17SummaryResponse,
+    ObligationV17OverviewResponse,
     ObligationV17CreateRequest,
     ObligationV17Response,
 )
@@ -57,6 +58,25 @@ def _map_obligation(obligation) -> ObligationV17Response:
         updated_at=obligation.updated_at or datetime.utcnow(),
     )
 
+def _map_obligation_period(period) -> ObligationPeriodV17Response:
+    from datetime import datetime
+    from decimal import Decimal
+    amt = period.amount or Decimal("0")
+    paid = period.paid_amount or Decimal("0")
+    # For pending_amount_definition, amount could be None, but handled as 0 here which is fine since the schema requires a string/decimal
+    return ObligationPeriodV17Response(
+        id=period.id,
+        obligation_id=period.obligation_id,
+        due_date=period.due_date,
+        status=period.status,
+        is_current=period.is_current,
+        amount=amt,
+        amount_due=max(Decimal("0"), amt - paid),
+        amount_paid=paid,
+        created_at=period.created_at or datetime.utcnow(),
+        updated_at=period.updated_at or datetime.utcnow(),
+    )
+
 
 @router.get(
     "",
@@ -76,6 +96,32 @@ async def list_obligations_v17(
     obligations = await service.list_obligations(current_profile.id)
     return [_map_obligation(obl) for obl in obligations]
 
+@router.get(
+    "/overview",
+    response_model=list[ObligationV17OverviewResponse],
+    summary="List Obligations Overview (V1.7)",
+    description="List all obligations with pre-computed action state and relevant periods.",
+)
+async def list_obligations_overview_v17(
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+    _: None = Depends(check_v17_feature_flag),
+):
+    """
+    Returns obligations overview with relevant periods to avoid N+1.
+    """
+    service = ObligationV17Service(session)
+    overview = await service.list_obligations_overview(current_profile.id)
+    
+    # overview contains dicts that match ObligationV17OverviewResponse fields natively
+    # but the period needs _map_obligation_period.
+    result = []
+    for ob_dict in overview:
+        rp = ob_dict.get("relevant_period")
+        ob_dict["relevant_period"] = _map_obligation_period(rp) if rp else None
+        result.append(ob_dict)
+    
+    return result
 
 @router.post(
     "",

@@ -131,6 +131,146 @@ class ObligationV17Service:
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
+    async def list_obligations_overview(self, user_id: uuid.UUID) -> list[dict]:
+        """Returns obligations with their relevant period, action state, and period counts in a single query."""
+        obligations = await self.list_obligations(user_id)
+        if not obligations:
+            return []
+        
+        obligation_ids = [ob.id for ob in obligations]
+        
+        stmt = (
+            select(ObligationPeriod)
+            .where(ObligationPeriod.obligation_id.in_(obligation_ids))
+            .order_by(
+                ObligationPeriod.obligation_id,
+                ObligationPeriod.due_date.asc(),
+                ObligationPeriod.sequence_number.asc(),
+                ObligationPeriod.created_at.asc(),
+            )
+        )
+        periods_result = await self.session.execute(stmt)
+        all_periods = periods_result.scalars().all()
+        
+        from collections import defaultdict
+        periods_by_ob = defaultdict(list)
+        for p in all_periods:
+            periods_by_ob[p.obligation_id].append(p)
+            
+        overview = []
+        for ob in obligations:
+            periods = periods_by_ob.get(ob.id, [])
+            
+            payable_count = 0
+            overdue_count = 0
+            pending_count = 0
+            paid_count = 0
+            cancelled_count = 0
+            skipped_count = 0
+            
+            payable_total = Decimal("0")
+            
+            relevant_period = None
+            requires_amount_definition = False
+            
+            payable_periods = []
+            pending_def_periods = []
+            closed_periods = []
+            
+            for p in periods:
+                status = p.status
+                if status in (PeriodStatus.pending_payment.value, PeriodStatus.partially_paid.value):
+                    pending_count += 1
+                elif status == PeriodStatus.overdue.value:
+                    overdue_count += 1
+                elif status == PeriodStatus.paid.value:
+                    paid_count += 1
+                elif status == PeriodStatus.cancelled.value:
+                    cancelled_count += 1
+                elif status == PeriodStatus.skipped.value:
+                    skipped_count += 1
+                elif status == PeriodStatus.pending_amount_definition.value:
+                    pending_count += 1
+                    
+                is_payable = status in (
+                    PeriodStatus.pending_payment.value,
+                    PeriodStatus.partially_paid.value,
+                    PeriodStatus.overdue.value,
+                )
+                if is_payable:
+                    payable_count += 1
+                    if p.amount is not None:
+                        paid_amt = p.paid_amount or Decimal("0")
+                        amt_due = p.amount - paid_amt
+                        if amt_due > 0:
+                            payable_total += amt_due
+                            payable_periods.append(p)
+                            
+                if status == PeriodStatus.pending_amount_definition.value:
+                    payable_count += 1
+                    pending_def_periods.append(p)
+                    
+                if status in (PeriodStatus.paid.value, PeriodStatus.cancelled.value, PeriodStatus.skipped.value):
+                    closed_periods.append(p)
+            
+            if payable_periods:
+                relevant_period = payable_periods[0]
+            elif pending_def_periods:
+                relevant_period = pending_def_periods[0]
+                requires_amount_definition = True
+            elif closed_periods:
+                relevant_period = closed_periods[-1]
+                
+            can_pay = payable_count > 0 and not requires_amount_definition
+            can_skip = payable_count > 0 or len(pending_def_periods) > 0
+            can_cancel = payable_count > 0 or len(pending_def_periods) > 0
+            
+            action_state = {
+                "can_pay": can_pay,
+                "requires_amount_definition": requires_amount_definition,
+                "can_skip": can_skip,
+                "can_cancel": can_cancel,
+                "has_overdue": overdue_count > 0,
+                "payable_period_count": payable_count,
+                "payable_total_amount": str(payable_total)
+            }
+            
+            period_counts = {
+                "payable": payable_count,
+                "overdue": overdue_count,
+                "pending": pending_count,
+                "paid": paid_count,
+                "cancelled": cancelled_count,
+                "skipped": skipped_count
+            }
+            
+            overview.append({
+                "id": ob.id,
+                "user_id": ob.user_id,
+                "name": ob.name,
+                "description": ob.description,
+                "currency": ob.currency,
+                "frequency": ob.frequency,
+                "start_date": ob.start_date,
+                "end_date": ob.end_date,
+                "end_count": ob.end_count,
+                "day_of_month": ob.day_of_month,
+                "day_of_week": ob.day_of_week,
+                "month_of_year": ob.month_of_year,
+                "custom_interval": ob.custom_interval,
+                "amount": ob.base_amount or Decimal("0"),
+                "amount_type": ob.amount_type,
+                "obligation_type": ob.obligation_type,
+                "status": ob.status,
+                "created_at": ob.created_at,
+                "updated_at": ob.updated_at,
+                "relevant_period": relevant_period,
+                "period_counts": period_counts,
+                "action_state": action_state
+            })
+            
+        return overview
+
     async def get_obligation(
         self, user_id: uuid.UUID, obligation_id: uuid.UUID
     ) -> Obligation | None:
