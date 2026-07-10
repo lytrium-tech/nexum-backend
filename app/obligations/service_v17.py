@@ -914,6 +914,122 @@ class ObligationV17Service:
 
         return updated_periods, len(updated_periods)
 
+    async def refresh_due_periods_for_user(self, user_id: uuid.UUID, commit: bool = True) -> None:
+        """Optimized batch refresh of overdue/missing periods for a user."""
+        from datetime import date
+        from sqlalchemy import update, func
+        from sqlalchemy.exc import IntegrityError
+        from app.obligations.period_engine import PeriodEngine, calculate_period_bounds, generate_period_key
+
+        today = date.today()
+
+        # 1. Bulk update overdue for pending periods
+        stmt_update = (
+            update(ObligationPeriod)
+            .where(
+                ObligationPeriod.status.in_([PeriodStatus.pending_payment.value, PeriodStatus.partially_paid.value]),
+                ObligationPeriod.due_date < today,
+                ObligationPeriod.obligation_id.in_(
+                    select(Obligation.id).where(Obligation.user_id == user_id, Obligation.status == "active")
+                )
+            )
+            .values(status=PeriodStatus.overdue.value)
+        )
+        await self.session.execute(stmt_update)
+
+        # 2. Get active recurring obligations
+        stmt_active = select(Obligation).where(
+            Obligation.user_id == user_id, 
+            Obligation.status == "active",
+            Obligation.frequency != "one_time"
+        )
+        active_obls = (await self.session.execute(stmt_active)).scalars().all()
+
+        if not active_obls:
+            if commit:
+                await self.session.commit()
+            else:
+                await self.session.flush()
+            return
+
+        # 3. Handle Gaps: Fetch ALL existing sequence numbers for these obligations
+        stmt_seqs = select(ObligationPeriod.obligation_id, ObligationPeriod.sequence_number).where(
+            ObligationPeriod.obligation_id.in_([o.id for o in active_obls])
+        )
+        existing_seqs_map = {}
+        for row in (await self.session.execute(stmt_seqs)).all():
+            if row.obligation_id not in existing_seqs_map:
+                existing_seqs_map[row.obligation_id] = set()
+            existing_seqs_map[row.obligation_id].add(row.sequence_number)
+
+        engine = PeriodEngine(self.session)
+        new_periods = []
+
+        # 4. Calculate missing sequences
+        for obligation in active_obls:
+            if not obligation.start_date:
+                continue
+
+            current_seq = engine._find_sequence_for_date(obligation, today)
+            max_seq = current_seq + 1
+            if obligation.end_count:
+                max_seq = min(max_seq, obligation.end_count)
+
+            existing_seqs = existing_seqs_map.get(obligation.id, set())
+
+            for seq in range(1, max_seq + 1):
+                if seq in existing_seqs:
+                    continue
+
+                if obligation.end_date:
+                    p_start, _, _ = calculate_period_bounds(obligation, seq)
+                    if p_start > obligation.end_date:
+                        break
+
+                p_start, p_end, p_due = calculate_period_bounds(obligation, seq)
+                p_key = generate_period_key(obligation.frequency, p_start, seq)
+
+                is_fixed = obligation.payment_mode in ("fixed", "partial_allowed", "fixed_full_payment")
+                amount = obligation.base_amount if is_fixed else None
+                status = "pending_payment" if is_fixed else "pending_amount_definition"
+
+                if status == "pending_payment" and p_due < today:
+                    status = "overdue"
+
+                new_period = ObligationPeriod(
+                    id=uuid.uuid4(),
+                    obligation_id=obligation.id,
+                    period_key=p_key,
+                    sequence_number=seq,
+                    start_date=p_start,
+                    end_date=p_end,
+                    due_date=p_due,
+                    amount=amount,
+                    currency=obligation.currency,
+                    paid_amount=0,
+                    status=status,
+                    # We do not set is_current=True explicitly to avoid duplicates 
+                    # and match PeriodEngine logic
+                )
+                new_periods.append(new_period)
+
+        # 5. Insert safely with concurrency guard
+        if new_periods:
+            try:
+                async with self.session.begin_nested():
+                    self.session.add_all(new_periods)
+                    await self.session.flush()
+            except IntegrityError:
+                # Concurrent request inserted the same periods. Safe to ignore.
+                for p in new_periods:
+                    self.session.expunge(p)
+                pass
+
+        if commit:
+            await self.session.commit()
+        else:
+            await self.session.flush()
+
     async def get_summary(self, user_id: uuid.UUID, month: str | None = None):
         from datetime import date, datetime
         from decimal import Decimal
@@ -928,36 +1044,11 @@ class ObligationV17Service:
         if not month:
             month = date.today().strftime("%Y-%m")
 
-        # Performance Quick Win: 
-        # 1. Bulk update all overdue periods in a single query
-        today = date.today()
-        from sqlalchemy import update
-        stmt_update = (
-            update(ObligationPeriod)
-            .where(
-                ObligationPeriod.status.in_([PeriodStatus.pending_payment.value, PeriodStatus.partially_paid.value]),
-                ObligationPeriod.due_date < today,
-                ObligationPeriod.obligation_id.in_(
-                    select(Obligation.id).where(Obligation.user_id == user_id, Obligation.status == "active")
-                )
-            )
-            .values(status=PeriodStatus.overdue.value)
-        )
-        await self.session.execute(stmt_update)
-        await self.session.commit()
-
-        # 2. Only run the heavy period generation loop for active recurring obligations
-        stmt_active = select(Obligation.id).where(
-            Obligation.user_id == user_id, 
-            Obligation.status == "active",
-            Obligation.frequency != "one_time"
-        )
-        active_obl_ids = (await self.session.execute(stmt_active)).scalars().all()
-        for oid in active_obl_ids:
-            try:
-                await self.refresh_overdue_periods(user_id, oid)
-            except Exception:
-                pass # Ignore errors in refresh to avoid breaking summary
+        # Perform optimized batch refresh
+        try:
+            await self.refresh_due_periods_for_user(user_id, commit=True)
+        except Exception:
+            pass # Ignore errors in refresh to avoid breaking summary
 
         # Determine bounds for the month using due_date
         year, m = map(int, month.split('-'))
