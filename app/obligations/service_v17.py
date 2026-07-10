@@ -133,6 +133,8 @@ class ObligationV17Service:
 
     async def list_obligations_overview(self, user_id: uuid.UUID) -> list[dict]:
         """Returns obligations with their relevant period, action state, and period counts in a single query."""
+        from decimal import Decimal
+        
         obligations = await self.list_obligations(user_id)
         if not obligations:
             return []

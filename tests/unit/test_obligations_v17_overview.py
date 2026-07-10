@@ -145,3 +145,75 @@ async def test_obligations_overview_variable_requires_amount_definition(async_cl
     data = response.json()
     assert data[0]["action_state"]["requires_amount_definition"] is True
     assert data[0]["action_state"]["can_pay"] is False
+
+@pytest.mark.asyncio
+async def test_overview_returns_200_with_obligation_without_periods(async_client, monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.obligations.service_v17 import ObligationV17Service
+    
+    mock_overview = AsyncMock(return_value=[{
+        "id": uuid.uuid4(),
+        "user_id": uuid.uuid4(),
+        "name": "No Periods",
+        "currency": "COP",
+        "frequency": "monthly",
+        "amount": Decimal("0"),
+        "amount_type": "variable",
+        "obligation_type": "recurring",
+        "status": "active",
+        "created_at": datetime.now(UTC),
+        "updated_at": datetime.now(UTC),
+        "relevant_period": None,
+        "period_counts": {
+            "payable": 0, "overdue": 0, "pending": 0,
+            "paid": 0, "cancelled": 0, "skipped": 0
+        },
+        "action_state": {
+            "can_pay": False, "requires_amount_definition": False,
+            "can_skip": False, "can_cancel": False, "has_overdue": False,
+            "payable_period_count": 0, "payable_total_amount": "0"
+        }
+    }])
+    monkeypatch.setattr(ObligationV17Service, "list_obligations_overview", mock_overview)
+    
+    response = await async_client.get("/api/v1.7/obligations/overview")
+    assert response.status_code == 200
+    data = response.json()
+    assert data[0]["relevant_period"] is None
+    assert data[0]["period_counts"]["payable"] == 0
+    assert data[0]["action_state"]["can_pay"] is False
+
+@pytest.mark.asyncio
+async def test_overview_handles_legacy_obligation_missing_optional_fields(async_client, monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.obligations.service_v17 import ObligationV17Service
+    
+    mock_overview = AsyncMock(return_value=[{
+        "id": uuid.uuid4(),
+        "user_id": uuid.uuid4(),
+        "name": "Legacy",
+        "currency": "USD",
+        "frequency": "monthly",
+        "amount": Decimal("0"),
+        "amount_type": None,
+        "obligation_type": "recurring",
+        "status": "active",
+        "created_at": datetime.now(UTC),
+        "updated_at": datetime.now(UTC),
+        "relevant_period": None,
+        "period_counts": {
+            "payable": 0, "overdue": 0, "pending": 0,
+            "paid": 0, "cancelled": 0, "skipped": 0
+        },
+        "action_state": {
+            "can_pay": False, "requires_amount_definition": False,
+            "can_skip": False, "can_cancel": False, "has_overdue": False,
+            "payable_period_count": 0, "payable_total_amount": "0"
+        }
+    }])
+    monkeypatch.setattr(ObligationV17Service, "list_obligations_overview", mock_overview)
+    
+    response = await async_client.get("/api/v1.7/obligations/overview")
+    assert response.status_code == 200
+    data = response.json()
+    assert data[0]["amount_type"] is None
