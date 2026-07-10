@@ -244,3 +244,25 @@ class ObligationPaymentPreviewV17Response(BaseModel):
     rate_timestamp: datetime | None = None
     quote_expires_at: datetime | None = None
     quote_id: UUID | None = None
+
+class ObligationV17ActionState(BaseModel):
+    can_pay: bool
+    requires_amount_definition: bool
+    can_skip: bool
+    can_cancel: bool
+    has_overdue: bool
+    payable_period_count: int
+    payable_total_amount: str
+
+class ObligationV17PeriodCounts(BaseModel):
+    payable: int
+    overdue: int
+    pending: int
+    paid: int
+    cancelled: int
+    skipped: int
+
+class ObligationV17OverviewResponse(ObligationV17Response):
+    relevant_period: ObligationPeriodV17Response | None
+    period_counts: ObligationV17PeriodCounts
+    action_state: ObligationV17ActionState
