@@ -514,6 +514,51 @@ class ObligationV17Service:
 
         return payment, period
 
+    async def pay_obligation_smart(
+        self,
+        user_id: uuid.UUID,
+        obligation_id: uuid.UUID,
+        data: "ObligationFIFOPaymentCreateRequest",
+    ) -> tuple[list[ObligationPayment], list[ObligationPeriod]]:
+        """Smart payment that acts as a single action, checking if oldest is pending amount."""
+        
+        # 1. Refresh periods
+        await self.refresh_overdue_periods(user_id, obligation_id)
+        
+        # 2. Check if oldest unpaid period requires amount definition
+        stmt = (
+            select(ObligationPeriod)
+            .where(
+                ObligationPeriod.obligation_id == obligation_id,
+                ObligationPeriod.status.notin_([
+                    PeriodStatus.paid.value,
+                    PeriodStatus.skipped.value,
+                    PeriodStatus.cancelled.value,
+                ])
+            )
+            .order_by(
+                ObligationPeriod.due_date.asc(),
+                ObligationPeriod.sequence_number.asc(),
+                ObligationPeriod.created_at.asc()
+            )
+            .limit(1)
+        )
+        oldest_unpaid = (await self.session.execute(stmt)).scalars().first()
+        
+        if oldest_unpaid and (
+            oldest_unpaid.status == PeriodStatus.pending_amount_definition.value 
+            or oldest_unpaid.amount is None
+        ):
+            raise HTTPException(
+                status_code=422, 
+                detail="oldest_period_requires_amount_definition"
+            )
+            
+        # 3. Delegate to FIFO payment which natively handles single/multiple periods
+        return await self.pay_obligation_fifo(user_id, obligation_id, data)
+
+
+
     async def pay_obligation_fifo(
         self,
         user_id: uuid.UUID,
@@ -917,9 +962,15 @@ class ObligationV17Service:
     async def refresh_due_periods_for_user(self, user_id: uuid.UUID, commit: bool = True) -> None:
         """Optimized batch refresh of overdue/missing periods for a user."""
         from datetime import date
-        from sqlalchemy import update, func
+
+        from sqlalchemy import update
         from sqlalchemy.exc import IntegrityError
-        from app.obligations.period_engine import PeriodEngine, calculate_period_bounds, generate_period_key
+
+        from app.obligations.period_engine import (
+            PeriodEngine,
+            calculate_period_bounds,
+            generate_period_key,
+        )
 
         today = date.today()
 

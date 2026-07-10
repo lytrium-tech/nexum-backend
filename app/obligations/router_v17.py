@@ -7,8 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db_session
-from app.core.security import AuthenticatedIdentity
-from app.users.dependencies import CurrentUserProfile
 from app.obligations.schemas_v17 import (
     ApiErrorResponse,
     EmptyStateResponse,
@@ -28,6 +26,7 @@ from app.obligations.schemas_v17 import (
     ObligationV17Response,
 )
 from app.obligations.service_v17 import ObligationV17Service
+from app.users.dependencies import CurrentUserProfile
 
 router = APIRouter()
 
@@ -399,6 +398,69 @@ async def create_obligation_payment_fifo_v17(
         remaining_unapplied=Decimal("0"),
         strategy="fifo",
     )
+
+
+@router.post(
+    "/{obligation_id}/payments/smart",
+    response_model=ObligationFIFOPaymentResultResponse,
+    dependencies=[Depends(check_v17_feature_flag)],
+)
+async def pay_obligation_smart(
+    obligation_id: UUID,
+    data: ObligationFIFOPaymentCreateRequest,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    """
+    Unified smart payment endpoint.
+    Automatically applies payment to the oldest payable periods.
+    """
+    if idempotency_key:
+        data.idempotency_key = idempotency_key
+    service = ObligationV17Service(session)
+    payments, periods = await service.pay_obligation_smart(current_profile.id, obligation_id, data)
+
+    from datetime import datetime
+
+    payment_responses = [
+        ObligationPaymentV17Response(
+            id=pay.id,
+            obligation_id=pay.obligation_id,
+            obligation_period_id=pay.obligation_period_id,
+            user_id=pay.user_id,
+            amount=pay.amount,
+            quote_id=pay.quote_id,
+            idempotency_key=pay.idempotency_key,
+            created_at=pay.created_at or datetime.utcnow(),
+            updated_at=pay.created_at or datetime.utcnow(),
+        )
+        for pay in payments
+    ]
+
+    period_responses = [
+        ObligationPeriodV17Response(
+            id=p.id,
+            obligation_id=p.obligation_id,
+            due_date=p.due_date,
+            status=p.status,
+            is_current=p.is_current,
+            amount=p.amount or Decimal("0"), amount_due=max(Decimal("0"), (p.amount or Decimal("0")) - (p.paid_amount or Decimal("0"))),
+            amount_paid=p.paid_amount or Decimal("0"),
+            created_at=p.created_at or datetime.utcnow(),
+            updated_at=p.updated_at or datetime.utcnow(),
+        )
+        for p in periods
+    ]
+
+    return ObligationFIFOPaymentResultResponse(
+        payments=payment_responses,
+        periods=period_responses,
+        total_applied=data.amount,
+        remaining_unapplied=Decimal("0"),
+        strategy="smart",
+    )
+
 
 
 @router.post(
