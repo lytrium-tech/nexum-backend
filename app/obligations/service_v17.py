@@ -587,7 +587,7 @@ class ObligationV17Service:
             quote_id = None
             rate_snapshot_id = None
 
-        # Get payable periods: pending_payment, partially_paid
+        # Get payable periods: pending_payment, partially_paid, overdue
         # Sort by due_date asc, sequence_number asc, created_at asc
         stmt = (
             select(ObligationPeriod)
@@ -597,6 +597,7 @@ class ObligationV17Service:
                     [
                         PeriodStatus.pending_payment.value,
                         PeriodStatus.partially_paid.value,
+                        PeriodStatus.overdue.value,
                     ]
                 ),
             )
