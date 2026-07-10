@@ -510,7 +510,7 @@ class ObligationV17Service:
 
         stmt = select(ObligationPayment).where(
             ObligationPayment.user_id == user_id,
-            ObligationPayment.idempotency_key == data.idempotency_key,
+            ObligationPayment.idempotency_key.like(f"{data.idempotency_key}-%")
         )
         existing = await self.session.execute(stmt)
         if existing.scalars().first():
@@ -739,7 +739,7 @@ class ObligationV17Service:
                 rate_timestamp=rate_timestamp,
                 quote_id=quote_id,
                 rate_snapshot_id=rate_snapshot_id,
-                idempotency_key=data.idempotency_key,
+                idempotency_key=f"{data.idempotency_key}-{p.id}",
             )
             self.session.add(payment)
             created_payments.append(payment)
