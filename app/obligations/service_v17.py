@@ -77,6 +77,13 @@ class ObligationV17Service:
         self.session.add(initial_period)
 
         await self.session.flush()
+        
+        # Auto-refresh to generate overdue periods if start_date is in the past
+        try:
+            await self.refresh_overdue_periods(user_id, new_obligation.id)
+            await self.session.refresh(initial_period)
+        except Exception:
+            pass
 
         return new_obligation, initial_period
 
@@ -142,6 +149,12 @@ class ObligationV17Service:
         if not obligation:
             return None
 
+        # Auto-refresh before listing periods
+        try:
+            await self.refresh_overdue_periods(user_id, obligation_id)
+        except Exception:
+            pass
+
         stmt = (
             select(ObligationPeriod)
             .where(ObligationPeriod.obligation_id == obligation_id)
@@ -191,6 +204,13 @@ class ObligationV17Service:
 
         await self.session.commit()
         await self.session.refresh(period)
+
+        # Auto-refresh after defining amount
+        try:
+            await self.refresh_overdue_periods(user_id, obligation_id)
+            await self.session.refresh(period)
+        except Exception:
+            pass
 
         return period
 
@@ -907,6 +927,18 @@ class ObligationV17Service:
 
         if not month:
             month = date.today().strftime("%Y-%m")
+
+        # Auto-refresh all active obligations for the user
+        stmt_active = select(Obligation.id).where(
+            Obligation.user_id == user_id, 
+            Obligation.status == "active"
+        )
+        active_obl_ids = (await self.session.execute(stmt_active)).scalars().all()
+        for oid in active_obl_ids:
+            try:
+                await self.refresh_overdue_periods(user_id, oid)
+            except Exception:
+                pass # Ignore errors in refresh to avoid breaking summary
 
         stmt = (
             select(ObligationPeriod, Obligation)
