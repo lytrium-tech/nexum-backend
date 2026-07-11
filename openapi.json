@@ -3356,6 +3356,37 @@
         ]
       }
     },
+    "/api/v1.7/obligations/overview": {
+      "get": {
+        "tags": [
+          "Obligations V1.7"
+        ],
+        "summary": "List Obligations Overview (V1.7)",
+        "description": "List all obligations with pre-computed action state and relevant periods.",
+        "operationId": "list_obligations_overview_v17_api_v1_7_obligations_overview_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ObligationV17OverviewResponse"
+                  },
+                  "type": "array",
+                  "title": "Response List Obligations Overview V17 Api V1 7 Obligations Overview Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1.7/obligations/summary": {
       "get": {
         "tags": [
@@ -3995,6 +4026,81 @@
               }
             },
             "description": "Unprocessable Content"
+          }
+        }
+      }
+    },
+    "/api/v1.7/obligations/{obligation_id}/payments/smart": {
+      "post": {
+        "tags": [
+          "Obligations V1.7"
+        ],
+        "summary": "Pay Obligation Smart",
+        "description": "Unified smart payment endpoint.\nAutomatically applies payment to the oldest payable periods.",
+        "operationId": "pay_obligation_smart_api_v1_7_obligations__obligation_id__payments_smart_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "obligation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Obligation Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObligationFIFOPaymentCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObligationFIFOPaymentResultResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -9582,6 +9688,49 @@
         ],
         "title": "ObligationType"
       },
+      "ObligationV17ActionState": {
+        "properties": {
+          "can_pay": {
+            "type": "boolean",
+            "title": "Can Pay"
+          },
+          "requires_amount_definition": {
+            "type": "boolean",
+            "title": "Requires Amount Definition"
+          },
+          "can_skip": {
+            "type": "boolean",
+            "title": "Can Skip"
+          },
+          "can_cancel": {
+            "type": "boolean",
+            "title": "Can Cancel"
+          },
+          "has_overdue": {
+            "type": "boolean",
+            "title": "Has Overdue"
+          },
+          "payable_period_count": {
+            "type": "integer",
+            "title": "Payable Period Count"
+          },
+          "payable_total_amount": {
+            "type": "string",
+            "title": "Payable Total Amount"
+          }
+        },
+        "type": "object",
+        "required": [
+          "can_pay",
+          "requires_amount_definition",
+          "can_skip",
+          "can_cancel",
+          "has_overdue",
+          "payable_period_count",
+          "payable_total_amount"
+        ],
+        "title": "ObligationV17ActionState"
+      },
       "ObligationV17CreateRequest": {
         "properties": {
           "name": {
@@ -9677,6 +9826,144 @@
           "first_due_date"
         ],
         "title": "ObligationV17CreateRequest"
+      },
+      "ObligationV17OverviewResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Amount"
+          },
+          "amount_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AmountType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "frequency": {
+            "$ref": "#/components/schemas/Frequency"
+          },
+          "obligation_type": {
+            "$ref": "#/components/schemas/ObligationType"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ObligationStatus"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "relevant_period": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ObligationPeriodV17Response"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "period_counts": {
+            "$ref": "#/components/schemas/ObligationV17PeriodCounts"
+          },
+          "action_state": {
+            "$ref": "#/components/schemas/ObligationV17ActionState"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "name",
+          "amount",
+          "currency",
+          "frequency",
+          "obligation_type",
+          "status",
+          "created_at",
+          "updated_at",
+          "relevant_period",
+          "period_counts",
+          "action_state"
+        ],
+        "title": "ObligationV17OverviewResponse"
+      },
+      "ObligationV17PeriodCounts": {
+        "properties": {
+          "payable": {
+            "type": "integer",
+            "title": "Payable"
+          },
+          "overdue": {
+            "type": "integer",
+            "title": "Overdue"
+          },
+          "pending": {
+            "type": "integer",
+            "title": "Pending"
+          },
+          "paid": {
+            "type": "integer",
+            "title": "Paid"
+          },
+          "cancelled": {
+            "type": "integer",
+            "title": "Cancelled"
+          },
+          "skipped": {
+            "type": "integer",
+            "title": "Skipped"
+          }
+        },
+        "type": "object",
+        "required": [
+          "payable",
+          "overdue",
+          "pending",
+          "paid",
+          "cancelled",
+          "skipped"
+        ],
+        "title": "ObligationV17PeriodCounts"
       },
       "ObligationV17Response": {
         "properties": {
