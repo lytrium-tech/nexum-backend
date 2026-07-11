@@ -100,3 +100,59 @@ async def test_smart_payment_rejects_pending_amount_definition(async_client, mon
     
     assert response.status_code == 422
     assert response.json()["detail"] == "oldest_period_requires_amount_definition"
+
+@pytest.mark.asyncio
+async def test_smart_payment_single_future_pending_period_is_payable(async_client, monkeypatch):
+    from datetime import date
+    from unittest.mock import AsyncMock
+
+    from app.obligations.models import ObligationPayment, ObligationPeriod
+    from app.obligations.service_v17 import ObligationV17Service
+    
+    mock_pay = AsyncMock(return_value=(
+        [ObligationPayment(
+            id=uuid.uuid4(),
+            obligation_id=uuid.uuid4(),
+            obligation_period_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
+            amount=Decimal("40000"),
+            currency="COP",
+            source_amount=Decimal("12.11"),
+            source_currency="USD",
+            fx_rate=Decimal("3303.05")
+        )], 
+        [ObligationPeriod(
+            id=uuid.uuid4(), 
+            obligation_id=uuid.uuid4(),
+            status="paid", 
+            amount=Decimal("40000"), 
+            paid_amount=Decimal("40000"),
+            due_date=date(2027, 1, 5),
+            is_current=False
+        )]
+    ))
+    monkeypatch.setattr(ObligationV17Service, "pay_obligation_smart", mock_pay)
+    
+    obligation_id = uuid.uuid4()
+    payload = {"amount": 40000, "rate_snapshot_id": str(uuid.uuid4())}
+    response = await async_client.post(f"/api/v1.7/obligations/{obligation_id}/payments/smart", json=payload)
+    
+    assert response.status_code == 200
+    assert len(response.json()["payments"]) == 1
+
+@pytest.mark.asyncio
+async def test_smart_payment_does_not_return_period_not_payable_when_period_is_pending_with_amount_due(async_client, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.obligations.models import ObligationPayment, ObligationPeriod
+    from app.obligations.service_v17 import ObligationV17Service
+    
+    mock_pay = AsyncMock(return_value=([], []))
+    monkeypatch.setattr(ObligationV17Service, "pay_obligation_smart", mock_pay)
+    
+    obligation_id = uuid.uuid4()
+    payload = {"amount": 100}
+    response = await async_client.post(f"/api/v1.7/obligations/{obligation_id}/payments/smart", json=payload)
+    
+    assert response.status_code == 200
+    assert "detail" not in response.json() or response.json().get("detail") != "period_not_payable"
