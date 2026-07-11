@@ -1,3 +1,5 @@
+> **HISTORICAL NOTICE:** Este documento conserva diseos, planes o reportes histricos. No debe ser considerado la fuente de verdad actual. Para la documentacin t?cnica cannica, consulte [docs/project/](../project/00-backend-overview.md).
+
 # Nexum Core Obligations V1.7 — Phase 1 Contract Design & FX
 
 ## 1. Objetivo del contrato
@@ -313,3 +315,4 @@ Para garantizar la trazabilidad de todos los pagos y sus efectos en el Ledger V1
 - **Empty States:** Listas devuelven `[]` con metadata detallando `empty_reason` (ej. `"no_obligations"`). Periodos pendientes de monto reportan deuda nula o cero en el dashboard para evitar deuda fantasma.
 - **Backend Truth:** Backend calcula el dinero final siempre. El cliente es una capa pasiva de visualización.
 - **Compatibility:** Todo el contrato en `/api/v1.7` es aditivo. No modifica `/api/v1` ni corrompe respuestas legacy del frontend V1.5. Las bases de datos se adaptarán mediante anulaciones `NOT NULL` transitorias para garantizar interoperabilidad dual.
+

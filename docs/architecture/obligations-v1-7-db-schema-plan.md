@@ -1,3 +1,5 @@
+> **HISTORICAL NOTICE:** Este documento conserva diseos, planes o reportes histricos. No debe ser considerado la fuente de verdad actual. Para la documentacin t?cnica cannica, consulte [docs/project/](../project/00-backend-overview.md).
+
 # Nexum Core Obligations V1.7 — Phase 2.0 DB Schema Plan
 
 ## 1. Objective
@@ -128,3 +130,4 @@ Una vez implementado V1.7 y validado detrás del Feature Flag:
 2. Sintetizar `obligation_periods` a partir de `obligations` legacy activas para arrancar el motor de periodos.
 3. Consolidar estados en los pagos históricos si se requieren.
 4. Tras un QA total, ejecutar migración final (Fase 9) para establecer `ALTER COLUMN base_amount SET NOT NULL` sobre las nuevas columnas, limpiando la deuda técnica de V1.5. Ningún `NOT NULL` se aplicará en la Fase 2 actual.
+

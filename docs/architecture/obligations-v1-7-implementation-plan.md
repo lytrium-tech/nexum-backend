@@ -1,3 +1,5 @@
+> **HISTORICAL NOTICE:** Este documento conserva diseos, planes o reportes histricos. No debe ser considerado la fuente de verdad actual. Para la documentacin t?cnica cannica, consulte [docs/project/](../project/00-backend-overview.md).
+
 # Nexum Core Obligations V1.7 — Safe Implementation Plan
 
 ## 1. Objective
@@ -183,3 +185,4 @@ Tabla Opcional Futura: fx_quotes
 
 ## 9. Rollback Strategy
 La reversibilidad será gestionada en tiempo de ejecución ("Runtime Reversibility"). Todos los despliegues de V1.7 estarán segregados por versionado de API (`v1.7`) o condicionados por un Feature Flag estructural. Si se detectan anomalías en producción durante la Fase 8, el Feature Flag se apagará sin necesidad de realizar reversiones de código en Git ni de retroceder la estructura de la base de datos, garantizando la recuperación instantánea de la funcionalidad de V1.5. Como las bases de datos no sufrieron mutaciones destructivas, el ORM V1.5 insertará datos nativamente de inmediato sin conflictos.
+

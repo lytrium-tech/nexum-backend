@@ -1,3 +1,5 @@
+> **HISTORICAL NOTICE:** Este documento conserva diseos, planes o reportes histricos. No debe ser considerado la fuente de verdad actual. Para la documentacin t?cnica cannica, consulte [docs/project/](../project/00-backend-overview.md).
+
 # Backend V1.5 — Production Patch Deploy Report
 
 ## 1. Executive Summary
@@ -48,3 +50,4 @@ None.
 ## 11. Final Status
 Backend V1.5 production patches deployed.
 Ready for Frontend V1.5 Runtime QA.
+

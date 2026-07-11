@@ -1,3 +1,5 @@
+> **HISTORICAL NOTICE:** Este documento conserva diseos, planes o reportes histricos. No debe ser considerado la fuente de verdad actual. Para la documentacin t?cnica cannica, consulte [docs/project/](../project/00-backend-overview.md).
+
 # Nexum Core Obligations V1.7 — Phase 2.2 DB Migration Infrastructure Plan
 
 ## 1. Executive Summary
@@ -87,3 +89,4 @@ La Fase 2 de base de datos solo se considerará superada y habilitará el inicio
 ## 9. Next Step Proposed
 **Phase 2.3 — Disposable DB Setup & Migration Validation**
 Se recomienda iniciar esta subfase donde se inicializará efectivamente la base de prueba Docker, se configurará `alembic.ini`, se refactorizará el draft `alembic_v17_phase2_draft.py` en una revisión nativa conectada al árbol, y se correrá la prueba de fuego de upgrade y testing contra V1.5.
+

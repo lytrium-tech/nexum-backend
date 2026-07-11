@@ -1,3 +1,5 @@
+> **HISTORICAL NOTICE:** Este documento conserva diseos, planes o reportes histricos. No debe ser considerado la fuente de verdad actual. Para la documentacin t?cnica cannica, consulte [docs/project/](../project/00-backend-overview.md).
+
 # Nexum Core Obligations V1.7 — Safe Rebuild Architecture
 
 ## 1. Objective
@@ -79,3 +81,4 @@ Rediseñar e implementar la versión V1.7 de Core Obligations de manera incremen
 8. Tests de usuarios nuevos y usuarios con datos obligatorios.
 9. Intelligence/dashboard deben auditarse como consumidores indirectos.
 10. Legacy V1.5 debe seguir funcionando hasta que V1.7 pase QA real.
+
