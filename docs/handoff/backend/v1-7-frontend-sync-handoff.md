@@ -1,62 +1,55 @@
-# Nexum V1.7 — Frontend Sync Handoff
+# Nexum V1.7 / V1.8 (Funcional) — Frontend Sync Handoff
+
+> **HISTORICAL NOTICE:** Este documento conserva instrucciones históricas de sincronización, pero ha sido actualizado para reflejar los contratos finales de `FX Snapshot` y `Smart Payment`. Para el contrato técnico oficial, consulte [10-frontend-handoff-contracts.md](../../project/10-frontend-handoff-contracts.md).
 
 ## 1. Contexto Operativo Real
 
-El objetivo de esta fase es sincronizar el frontend local con las nuevas capacidades del backend V1.7. **No existe un deploy de frontend en producción**, ni se utiliza Vercel. El dominio público actualmente no sirve una aplicación frontend.
+El objetivo de esta fase es sincronizar el frontend local con las nuevas capacidades del backend V1.7 y la iteración funcional V1.8. **No existe un deploy de frontend en producción**, ni se utiliza Vercel. El dominio público actualmente no sirve una aplicación frontend.
 
 ### Estado del Backend (Producción / VPS)
-* **Despliegue:** El backend V1.7 está **completamente desplegado** y corriendo en el VPS de producción.
+* **Despliegue Independiente:** El backend es desplegable independientemente del frontend.
 * **API Pública:** `https://api.nexum.lytrium.tech`
-* **Base de Datos:** Migrada a `v1_7_phase2_1 (head)`.
-* **Feature Flag en VPS:** `NEXUM_OBLIGATIONS_V17_ENABLED=false`
-* **Salud:** El servicio está healthy y respondiendo correctamente.
+* **Feature Flag:** `NEXUM_OBLIGATIONS_V17_ENABLED` (temporalmente protege las rutas con `403` si está apagado).
 
 ### Estado del Frontend (Local)
-* **Ubicación:** Entorno puramente local.
-* **Ejecución:** Se levanta usando `pnpm dev`.
+* **Ejecución:** Se levanta usando `pnpm dev` en local, apuntando a la API de producción.
 * **Deploy:** **PROHIBIDO**. No hacer deploy, no configurar Vercel, no tocar producción.
 
 ---
 
-## 2. Novedades en Backend V1.7
+## 2. Novedades y Contratos (V1.7 / V1.8)
 
-El backend expone ahora funcionalidades de Obligations V1.7:
-* Soporte para manejo de FX (Foreign Exchange).
-* Persistencia de FX Quotes.
-* Integración con Ledger y Financial Events.
-* Endpoints específicos para resumen y contexto de obligaciones.
-* Hardening de la idempotencia en transacciones.
+El backend expone funcionalidades maduras de Obligations y FX:
 
-### Endpoints Relevantes
+### FX Rate Snapshot y Pagos
+* El frontend **actual** ya no requiere ni debe calcular el `source_amount`.
+* El frontend **no usa** `quote_id` en el flujo principal.
+* **Flujo esperado:** El frontend consume `/api/v1.7/fx/rates/latest` para obtener un `rate_snapshot_id`, y lo adjunta al payload de pago.
+* **Cross-currency (USD/COP):** Requiere `rate_snapshot_id`. El backend calcula la deducción exacta de la cuenta de fondeo.
+* **Same-currency:** No requiere snapshot.
+* **Compatibilidad Legacy:** El backend aún soporta *opcionalmente* `source_amount` y `quote_id` por retro-compatibilidad, pero no deben usarse en el nuevo flujo.
 
-El frontend debe estar preparado para consumir los siguientes nuevos endpoints:
-
-* `GET /api/v1.7/obligations/summary`
-* `GET /api/v1.7/obligations/intelligence-context`
-
-**Nota Crítica de Auth y Flags:**
-Dado que el flag del backend (`NEXUM_OBLIGATIONS_V17_ENABLED`) está temporalmente en `false` en producción, las llamadas a estos endpoints pueden devolver un `403 Feature Disabled` (o comportamiento equivalente). Si falta token de autenticación, devolverán `401 Unauthorized`. El frontend debe manejar estos estados de forma elegante sin romper la UI.
+### Smart Payment, FIFO y Overview
+Bajo las mismas rutas `/api/v1.7`, el backend ahora soporta:
+* **Smart One-Button Payment:** Delegación completa de pagos sin elegir período específico (`/api/v1.7/obligations/{id}/payments/smart`).
+* **FIFO Automático:** El backend distribuye el dinero cronológicamente, incluso en períodos vencidos (slices idempotentes).
+* **Overview:** Endpoint consolidado `/api/v1.7/obligations/overview`.
 
 ---
 
 ## 3. Configuración Local del Frontend
 
-El frontend debe apuntar a la API de producción e implementar feature flags locales para aislar V1.7.
+El frontend debe apuntar a la API de producción e implementar feature flags locales para aislar V1.7/V1.8.
 
 ### Variables de Entorno Locales (`.env.local`)
-
 1. **API Base URL:**
    ```env
    NEXT_PUBLIC_API_BASE_URL=https://api.nexum.lytrium.tech
    ```
-   *Esta URL apunta al VPS donde ya reside el backend V1.7.*
-
-2. **Feature Flag V1.7:**
+2. **Feature Flag Local:**
    ```env
-   NEXT_PUBLIC_NEXUM_OBLIGATIONS_V17_ENABLED=false
+   NEXT_PUBLIC_NEXUM_OBLIGATIONS_V17_ENABLED=true
    ```
-   * **`false`**: Oculta completamente la UI/cards de V1.7. Mantiene la experiencia intacta para V1.5.
-   * **`true`**: Activa la UI de V1.7 para pruebas exclusivas en entorno local.
 
 ---
 
@@ -66,37 +59,15 @@ El frontend debe apuntar a la API de producción e implementar feature flags loc
 * Correr exclusivamente de forma local (`pnpm dev`).
 * Consumir los datos desde `https://api.nexum.lytrium.tech`.
 * **Representar información:** El backend calcula, el frontend dibuja.
-* Mantener la experiencia de V1.5 totalmente estable.
-* Aislar toda la implementación nueva (V1.7) detrás de `NEXT_PUBLIC_NEXUM_OBLIGATIONS_V17_ENABLED`.
-* Manejar `403` y `401` de forma grácil para endpoints V1.7, renderizando *Empty States* o *Error States* sin colapsar la aplicación.
+* Consumir y enviar el `rate_snapshot_id`.
+* Manejar `403` y `401` de forma grácil.
 
 ### El Frontend NO DEBE:
 * Hacer deploy (ni local ni en pipelines).
-* Configurar, invocar o requerir tokens de Vercel.
-* Tocar, mutar, o alterar la configuración del Backend / VPS.
-* Cambiar contratos de la API o alterar la BD.
-* Realizar cálculos financieros en el cliente.
-* Sumar cantidades en monedas mixtas sin conversión dictada por backend.
-* Asumir que `nexum.lytrium.tech` sirve el frontend.
+* Realizar cálculos financieros o deducir conversiones sin consultar el backend.
+* Enviar `source_amount` forzado al backend.
+* Llamar a DólarAPI directamente (todo pasa por el backend).
 
 ---
+*Documento actualizado y alineado con el estado canónico de backend.*
 
-## 5. Plan de Pruebas Locales (Validación)
-
-El equipo/agente frontend debe validar localmente los siguientes puntos:
-
-1. **Build y Linter:** 
-   * Ejecutar `pnpm install`, `pnpm lint`, `pnpm build` localmente y verificar que todo pasa sin errores críticos.
-2. **Arranque:** 
-   * Iniciar la app con `pnpm dev`.
-3. **Flujo V1.5 (Flag OFF):** 
-   * Con `NEXT_PUBLIC_NEXUM_OBLIGATIONS_V17_ENABLED=false`, validar que la tarjeta de V1.7 está oculta.
-   * Confirmar que el Dashboard y flujos actuales siguen funcionando.
-   * Verificar que no existan llamadas indeseadas a `/api/v1.7/` en la pestaña Network.
-4. **Flujo V1.7 (Flag ON):** 
-   * Cambiar flag a `true` en `.env.local` y reiniciar `pnpm dev`.
-   * Verificar que la UI de V1.7 aparece.
-   * Validar el correcto manejo de errores si la API responde `403` o `401`.
-
-**Conclusión:** 
-"Backend V1.7 ya está listo en VPS. Haz sync del frontend local con backend V1.7 consumiendo su API pública. No hagas deploy. No uses Vercel. La prueba se hace puramente en local con `pnpm dev`."

@@ -1,45 +1,61 @@
 # Backend Current State
 
-This document is the source of truth for the implemented and validated backend state.
+## Repository State
+- **Branch:** main
+- **Repository HEAD:** `367ebdc`
+- **OpenAPI:** Versionado y alineado con este estado.
+- **Última suite verificada:** 293 passed, 3 skipped, 0 failed.
+  *(Este valor corresponde a la última validación documental en el commit 367ebdc y puede cambiar con commits posteriores).*
 
-## Global Context
-- Phase: Backend V1.5 Credit Card Advanced Model.
-- Database: Supabase PostgreSQL.
-- Architecture: Event-Sourced Ledger with advanced credit card cycle state engine.
-- Tech Stack: FastAPI, SQLAlchemy, Pydantic, PostgreSQL.
+## Repository vs Production
+- **Repository Current State:** Reflejado en este documento y en `origin/main` (`367ebdc`).
+- **Last Verified Production State:** La producción (VPS) no ha sido re-verificada durante esta fase documental. El último deploy conocido corresponde al commit `fcd47c0` (FX Rate Snapshot), pero `Production runtime was not re-verified during this documentation phase.`
 
-## Completed Features
-- **Backend V1.7 Closure**: Stabilized FIFO payment engine handling multiple periods, cross-currency payments, and dynamic UI state logic. Monthly summary metrics (paid/overdue/cancelled/total) fixed to rely strictly on inclusive `due_date` boundaries. Documented known performance N+1 debt on `refresh_overdue_periods` for V1.8.
-- **Backend V1.7 FX Rate Snapshot**: Refactored `app/obligations/service_v17.py` to rely strictly on `rate_snapshot_id` instead of frontend-provided `source_amount`. Backend recalculates `source_amount` dynamically from the persisted rate snapshot, enabling zero-risk frontend FX previews while enforcing backend source of truth.
-- **Backend V1.7 Obligations Release**: Resolved internal user identity resolution (using internal `users.id` primary key instead of Supabase `auth_id`) across all V1.7 endpoints, handled legacy null status mapping, and corrected the cross-currency payment preview FX provider name import mismatch (using `StaticFxRateProvider` instead of `DummyFxProvider`).
-- **Backend V1.6.2**: Obligation Payment Preview. `remaining_amount` included directly on `ObligationPeriodRead`. Implemented `POST /api/v1/obligations/periods/{period_id}/pay/preview` for zero-risk real-time FX payment quotes. Fixed cross-currency payload semantics (treating payload.amount as applied_amount). Test data cleaned up.
-- **Backend V1.6.1**: Intelligence Snapshot Fix. Corrected intelligence repository to use ObligationPeriod as the source of truth, eliminating legacy obligations.amount and broken views.
-- **Backend V1.6**: Obligations Core. Implemented ObligationPeriod engine for precise state tracking, partial payments, and dynamic completion cycles.
-- **Backend V1.5**: Ready for final handoff. Implemented Credit Card Advanced Model (Persisted Statements, Payment Waterfall, Early Payments). Enforced goal/obligation time semantics and cross-currency multi-account flows.
-- **Backend V1.4**: Multi-Currency Trust & Estimated FX. Enforced `currency` in all creation schemas and removed COP fallback. Implemented `estimated_totals` using Dolar API Colombia for USD->COP visualization layer.
-- **Backend V1.3**: Alpha Blocker Fixes. Implemented `covered` period status, enforced multi-currency global totals zeroing to prevent unsafe sums, fixed ledger currency assignments, and restored `include_archived` querying for accounts and obligations.
-- **Backend V1.2**: Stabilized Alpha with Period Semantics for Snapshot, Goals, Obligations, Credit Cards and Conversations NLU safety.
+## Backend Purpose
+- Backend financiero de Nexum.
+- Construido con FastAPI, SQLAlchemy, Pydantic, y PostgreSQL (Supabase).
+- El backend es la única fuente de verdad financiera.
 
-## API Contracts
-- Exposed fully via `openapi.json` and mirrored to `../docs/contracts/openapi.json`.
-- Key entities: `users`, `accounts`, `categories`, `financial_events`, `goals`, `obligations`, `credit_cards`, `credit_card_statements`, `credit_card_installments`.
-- Read operations are resolved through Views and Models.
-- Write operations are exclusively via structured command services.
+## Core Principle
+- **Backend calculates.** El backend es responsable de todas las matemáticas y lógica de negocio.
+- **Frontend represents and previews.** El frontend muestra la información y estima valores visuales temporales.
+- **LLM explains.** El LLM explica pero no calcula dinero ni autoriza transacciones.
 
-## Financial Truth
-Backend explicitly owns financial calculations:
-- Frontend must not deduce `free_money`, `committed_outflows`, `available_credit`, `payment_required`, `remaining_required_this_period`, or `totals_by_currency`.
-- "Backend calculates. Frontend represents. LLM explains."
-- Multi-currency representation utilizes `totals_by_currency` for financial truth and `estimated_totals` strictly for unified visualization. Ledger remains untampered in original currencies.
-- Credit Card payment execution is strictly governed by the backend's Payment Allocation Waterfall.
+## Active Subsystems
+- Accounts and ledger.
+- Credit cards V1.5.
+- Goals.
+- Obligations period engine.
+- FIFO and Smart Payment.
+- FX Engine and FX Rate Snapshot.
+- Summary and intelligence context.
+- Authentication and authorization.
 
-## Subsystems Status
-- **Credit**: Advanced V1.5 Model active. Explicit statements, frozen snapshots, early installment payments, fees/taxes/insurance charges, and multi-tier payment allocation waterfall.
-- **Goals**: Time-aware cross-currency contributions.
-- **Obligations**: V1.6 Core active. Time-aware dynamic deductions, period-based engine, and partial payments.
-- **Intelligence**: Snapshot and Conversational engine. V1.6.1 snapshot uses ObligationPeriod as source of truth.
-- **Ledger/Cash**: Cross-currency transfers and strict multi-currency balances.
+## Obligations Current State
+- **Obligations Core:** Estabilizado operando sobre rutas `/api/v1.7`.
+- **Características operativas:**
+  - Gestión integral de períodos (Fixed y Variable).
+  - Estados de lifecycle (pending, overdue, paid, skipped, cancelled).
+  - Pagos parciales.
+  - Asignación de pagos mediante FIFO (incluyendo períodos vencidos y slices idempotentes).
+  - Smart one-button payment (delegación al backend para determinar distribución).
+  - Generación automática de períodos tras acciones de lifecycle.
+  - Batch auto-refresh.
+  - Endpoint de Overview unificado y alineado con ORM.
+  - Summary e Intelligence context.
 
-## Pending for V2
-- Complex banking engine for credit cards (Compound Interest).
-- Advanced AI financial advisor/scenario engine.
+## FX Current State
+- **Endpoints:** Proveedor de snapshot de tasas mediante `/api/v1.7/fx/rates/latest`.
+- **Snapshot Engine:**
+  - Los snapshots (`rate_snapshot_id`) son persistidos y validables en base de datos.
+  - El backend calcula el `source_amount` final con base en el snapshot.
+  - El frontend actual (en desarrollo local) envía el `rate_snapshot_id`.
+  - Soporte bidireccional de moneda: USD → COP y COP → USD (usando tasa inversa).
+  - Operaciones `same-currency` asumen tasa 1 y no requieren snapshot.
+  - DólarAPI es consumido *únicamente* desde el backend (o proveedor estático en desarrollo/testing).
+
+## Important Compatibility Notes
+- `quote_id` y `source_amount` todavía existen como campos opcionales en los esquemas por compatibilidad legacy.
+- El flujo principal actual utiliza `rate_snapshot_id`. No obstante, `quote_id` no ha sido eliminado completamente del contrato.
+- El preview legacy todavía existe y es soportado por el backend para clientes antiguos.
+- El feature flag `NEXUM_OBLIGATIONS_V17_ENABLED` todavía existe como deuda técnica temporal protegiendo rutas V1.7 con `403`. No se deben crear nuevos flags de versión.
