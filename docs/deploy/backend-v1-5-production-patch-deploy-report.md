@@ -1,4 +1,4 @@
-> **HISTORICAL NOTICE:** Este documento conserva diseos, planes o reportes histricos. No debe ser considerado la fuente de verdad actual. Para la documentacin t?cnica cannica, consulte [docs/project/](../project/00-backend-overview.md).
+> **HISTORICAL NOTICE:** Este documento conserva diseños, planes o reportes históricos. No debe ser considerado la fuente de verdad actual. Para la documentación técnica canónica, consulte [docs/project/](../project/00-backend-overview.md).
 
 # Backend V1.5 — Production Patch Deploy Report
 
