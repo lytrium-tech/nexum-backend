@@ -274,7 +274,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AccountRead"
+                  "$ref": "#/components/schemas/AccountDetailRead"
                 }
               }
             }
@@ -353,6 +353,7 @@
         ],
         "summary": "Delete Account",
         "operationId": "delete_account_api_v1_accounts__account_id__delete",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -371,8 +372,140 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": "Successful Response"
+          "422": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/accounts/{account_id}/movements": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "List Account Movements",
+        "operationId": "list_account_movements_api_v1_accounts__account_id__movements_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Account Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date From"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date To"
+            }
+          },
+          {
+            "name": "event_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Type"
+            }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Direction"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerEventsResponse"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -387,13 +520,70 @@
         }
       }
     },
-    "/api/v1/accounts/{account_id}/balance-adjustments": {
+    "/api/v1/accounts/{account_id}/summary": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Get Account Period Summary",
+        "operationId": "get_account_period_summary_api_v1_accounts__account_id__summary_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Account Id"
+            }
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Month"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountPeriodSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/accounts/{account_id}/adjustments": {
       "post": {
         "tags": [
           "accounts"
         ],
         "summary": "Create Balance Adjustment",
-        "operationId": "create_balance_adjustment_api_v1_accounts__account_id__balance_adjustments_post",
+        "operationId": "create_balance_adjustment_api_v1_accounts__account_id__adjustments_post",
         "security": [
           {
             "HTTPBearer": []
@@ -421,6 +611,102 @@
             }
           }
         },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/accounts/{account_id}/archive": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Archive Account",
+        "operationId": "archive_account_api_v1_accounts__account_id__archive_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Account Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/accounts/{account_id}/restore": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Restore Account",
+        "operationId": "restore_account_api_v1_accounts__account_id__restore_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Account Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -4471,6 +4757,159 @@
         ],
         "title": "AccountCreate"
       },
+      "AccountDetailRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "type": {
+            "$ref": "#/components/schemas/AccountType"
+          },
+          "balance": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Balance"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "has_movements": {
+            "type": "boolean",
+            "title": "Has Movements",
+            "default": false
+          },
+          "movement_count": {
+            "type": "integer",
+            "title": "Movement Count",
+            "default": 0
+          },
+          "last_movement_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Movement At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "name",
+          "type",
+          "balance",
+          "currency",
+          "is_active",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AccountDetailRead"
+      },
+      "AccountPeriodSummary": {
+        "properties": {
+          "total_inflows": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Inflows"
+          },
+          "total_outflows": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Outflows"
+          },
+          "net_flow": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Net Flow"
+          },
+          "transfer_inflows": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Transfer Inflows"
+          },
+          "transfer_outflows": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Transfer Outflows"
+          },
+          "movement_count": {
+            "type": "integer",
+            "title": "Movement Count"
+          },
+          "period_start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period Start"
+          },
+          "period_end": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period End"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total_inflows",
+          "total_outflows",
+          "net_flow",
+          "transfer_inflows",
+          "transfer_outflows",
+          "movement_count",
+          "period_start",
+          "period_end",
+          "currency"
+        ],
+        "title": "AccountPeriodSummary"
+      },
       "AccountRead": {
         "properties": {
           "id": {
@@ -4502,6 +4941,16 @@
           "is_active": {
             "type": "boolean",
             "title": "Is Active"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
           }
         },
         "type": "object",
@@ -4512,7 +4961,9 @@
           "type",
           "balance",
           "currency",
-          "is_active"
+          "is_active",
+          "created_at",
+          "updated_at"
         ],
         "title": "AccountRead"
       },
@@ -4586,18 +5037,18 @@
             ],
             "title": "Name"
           },
-          "is_active": {
+          "type": {
             "anyOf": [
               {
-                "type": "boolean"
+                "$ref": "#/components/schemas/AccountType"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Is Active"
+            ]
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "title": "AccountUpdate"
       },
@@ -4624,51 +5075,38 @@
       },
       "BalanceAdjustmentCreate": {
         "properties": {
-          "amount": {
+          "target_balance": {
             "anyOf": [
               {
                 "type": "number",
-                "exclusiveMinimum": 0.0
+                "minimum": 0.0
               },
               {
                 "type": "string",
                 "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
               }
             ],
-            "title": "Amount",
-            "description": "Cantidad a ajustar (siempre positiva)"
+            "title": "Target Balance",
+            "description": "Saldo real deseado (positivo o cero)"
           },
-          "direction": {
+          "reason": {
             "type": "string",
-            "enum": [
-              "increase",
-              "decrease"
-            ],
-            "title": "Direction",
-            "description": "Si aumenta o disminuye el balance"
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Reason"
           },
-          "type": {
-            "$ref": "#/components/schemas/EventType",
-            "description": "opening_balance o balance_adjustment"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 255
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
+          "idempotency_key": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Idempotency Key",
+            "description": "Clave de idempotencia \u00fanica para el ajuste"
           }
         },
         "type": "object",
         "required": [
-          "amount",
-          "direction",
-          "type"
+          "target_balance",
+          "reason",
+          "idempotency_key"
         ],
         "title": "BalanceAdjustmentCreate"
       },
@@ -6575,24 +7013,6 @@
           "system"
         ],
         "title": "EventSource"
-      },
-      "EventType": {
-        "type": "string",
-        "enum": [
-          "income",
-          "expense",
-          "goal_contribution",
-          "obligation_payment",
-          "credit_card_purchase",
-          "credit_card_payment",
-          "manual_adjustment",
-          "transfer_out",
-          "transfer_in",
-          "opening_balance",
-          "balance_adjustment"
-        ],
-        "title": "EventType",
-        "description": "Cat\u00e1logo central de eventos financieros de Nexum.\nNo define impactos financieros directamente, solo categoriza el evento."
       },
       "FXQuoteRequest": {
         "properties": {
