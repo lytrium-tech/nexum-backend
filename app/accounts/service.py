@@ -1,4 +1,7 @@
 from uuid import UUID
+from datetime import datetime, date
+import calendar
+from decimal import Decimal
 
 from app.accounts.exceptions import AccountDuplicateError, AccountForbiddenError
 from app.accounts.models import Account
@@ -6,7 +9,9 @@ from app.accounts.repository import AccountRepository
 from app.accounts.schemas import (
     AccountCreate,
     AccountRead,
+    AccountDetailRead,
     AccountSummary,
+    AccountPeriodSummary,
     AccountUpdate,
     BalanceAdjustmentCreate,
 )
@@ -14,7 +19,7 @@ from app.core.errors import NotFoundError
 from app.core.utils import clean_presentation_name, normalize_name
 from app.ledger.enums import Direction, EventType
 from app.ledger.repository import LedgerRepository
-from app.ledger.schemas import LedgerEventCreate
+from app.ledger.schemas import LedgerEventCreate, LedgerEventsResponse, LedgerPaginationInfo, LedgerEventDetail
 
 
 class AccountService:
@@ -30,11 +35,24 @@ class AccountService:
         )
         return [AccountRead.model_validate(a) for a in accounts]
 
-    async def get_account(self, auth_user_id: UUID, account_id: UUID) -> AccountRead:
-        account = await self._get_account_or_404(account_id)
+    async def get_account(self, auth_user_id: UUID, account_id: UUID) -> AccountDetailRead:
+        account = await self._get_account_or_404(account_id, include_inactive=True)
         if account.user_id != auth_user_id:
             raise AccountForbiddenError()
-        return AccountRead.model_validate(account)
+        
+        has_movements = False
+        movement_count = 0
+        last_movement_at = None
+        
+        if self.ledger_repo:
+            events, total = await self.ledger_repo.list_events(user_id=auth_user_id, account_id=account_id, limit=1)
+            movement_count = total
+            if total > 0:
+                has_movements = True
+                last_movement_at = events[0].occurred_at
+                
+        read_dict = AccountRead.model_validate(account).model_dump()
+        return AccountDetailRead(**read_dict, has_movements=has_movements, movement_count=movement_count, last_movement_at=last_movement_at)
 
     async def create_account(self, auth_user_id: UUID, payload: AccountCreate) -> AccountRead:
         import uuid
@@ -93,62 +111,62 @@ class AccountService:
                 if exists:
                     raise AccountDuplicateError()
             account.name = clean_presentation_name(payload.name)
+            
+        if payload.type is not None:
+            account.type = payload.type.value
 
-        if payload.is_active is not None:
-            account.is_active = payload.is_active
+        await self.repository.session.flush()
+        return AccountRead.model_validate(account)
+        
+    async def archive_account(self, auth_user_id: UUID, account_id: UUID) -> AccountRead:
+        account = await self._get_account_or_404(account_id, include_inactive=True)
+        if account.user_id != auth_user_id:
+            raise AccountForbiddenError()
+        account.is_active = False
+        await self.repository.session.flush()
+        return AccountRead.model_validate(account)
 
+    async def restore_account(self, auth_user_id: UUID, account_id: UUID) -> AccountRead:
+        account = await self._get_account_or_404(account_id, include_inactive=True)
+        if account.user_id != auth_user_id:
+            raise AccountForbiddenError()
+        account.is_active = True
         await self.repository.session.flush()
         return AccountRead.model_validate(account)
 
     async def delete_account(self, auth_user_id: UUID, account_id: UUID) -> None:
-        from sqlalchemy.exc import IntegrityError
-
-        account = await self._get_account_or_404(account_id)
-        if account.user_id != auth_user_id:
-            raise AccountForbiddenError()
-
-        try:
-            await self.repository.session.delete(account)
-            await self.repository.session.flush()
-        except IntegrityError:
-            await self.repository.session.rollback()
-            raise ValueError(
-                "No se puede eliminar la cuenta porque tiene historial o dependencias financieras. Por favor, archívela."
-            )
+        raise ValueError("La eliminación de cuentas no está soportada. Por favor archive la cuenta.")
 
     async def create_balance_adjustment(
         self, auth_user_id: UUID, account_id: UUID, payload: "BalanceAdjustmentCreate"
     ) -> AccountRead:
-        import uuid
-
         account = await self.repository.get_by_id_for_update(account_id)
         if not account:
             raise NotFoundError(message="Cuenta no encontrada.")
         if account.user_id != auth_user_id:
             raise AccountForbiddenError()
 
-        if payload.type not in (EventType.OPENING_BALANCE, EventType.BALANCE_ADJUSTMENT):
-            raise ValueError("El tipo debe ser opening_balance o balance_adjustment.")
+        diff = payload.target_balance - account.balance
+        if diff == 0:
+            return AccountRead.model_validate(account)
 
-        ledger_dir = Direction.INFLOW if payload.direction == "increase" else Direction.OUTFLOW
+        ledger_dir = Direction.INFLOW if diff > 0 else Direction.OUTFLOW
+        amount = abs(diff)
 
-        if payload.direction == "increase":
-            account.balance += payload.amount
-        else:
-            account.balance -= payload.amount
+        account.balance = payload.target_balance
 
         if self.ledger_repo:
             event_create = LedgerEventCreate(
                 user_id=auth_user_id,
                 account_id=account.id,
                 category_id=None,
-                event_type=payload.type,
+                event_type=EventType.MANUAL_ADJUSTMENT,
                 direction=ledger_dir,
-                amount=payload.amount,
+                amount=amount,
                 currency=account.currency,
-                description=payload.description or "Ajuste de balance",
+                description=payload.reason or "Ajuste de saldo manual",
                 source="api",
-                command_id=uuid.uuid4(),
+                command_id=payload.idempotency_key,
                 source_message_id=None,
                 raw_message=None,
                 metadata={},
@@ -161,13 +179,12 @@ class AccountService:
     async def _get_account_or_404(self, account_id: UUID, include_inactive: bool = False) -> Account:
         account = await self.repository.get_by_id(account_id, include_inactive=include_inactive)
         if not account:
-            raise NotFoundError()
+            raise NotFoundError(message="Cuenta no encontrada.")
         return account
 
     async def get_summary(self, auth_user_id: UUID) -> AccountSummary:
         from collections import defaultdict
-        from decimal import Decimal
-
+        
         accounts = await self.repository.list_by_user_all(auth_user_id)
         totals = defaultdict(Decimal)
         for a in accounts:
@@ -178,4 +195,110 @@ class AccountService:
             totals_by_currency=dict(totals),
             accounts_count=len(accounts),
             active_accounts_count=sum(1 for a in accounts if a.is_active),
+        )
+
+    async def get_account_period_summary(
+        self, auth_user_id: UUID, account_id: UUID, month: str
+    ) -> AccountPeriodSummary:
+        account = await self._get_account_or_404(account_id, include_inactive=True)
+        if account.user_id != auth_user_id:
+            raise AccountForbiddenError()
+
+        # Parse month YYYY-MM
+        try:
+            year, month_num = map(int, month.split("-"))
+            _, last_day = calendar.monthrange(year, month_num)
+            date_from = datetime(year, month_num, 1)
+            date_to = datetime(year, month_num, last_day, 23, 59, 59, 999999)
+        except ValueError:
+            raise ValueError("Formato de mes inválido. Use YYYY-MM")
+
+        total_inflows = Decimal("0")
+        total_outflows = Decimal("0")
+        transfer_inflows = Decimal("0")
+        transfer_outflows = Decimal("0")
+        net_flow = Decimal("0")
+        
+        if not self.ledger_repo:
+            return AccountPeriodSummary(
+                total_inflows=total_inflows,
+                total_outflows=total_outflows,
+                net_flow=net_flow,
+                transfer_inflows=transfer_inflows,
+                transfer_outflows=transfer_outflows,
+                movement_count=0,
+                period_start=date_from,
+                period_end=date_to,
+                currency=account.currency
+            )
+
+        events, total_count = await self.ledger_repo.list_events(
+            user_id=auth_user_id,
+            account_id=account_id,
+            date_from=date_from,
+            date_to=date_to,
+            limit=1000000,
+        )
+
+        for e in events:
+            if e.event_type == EventType.TRANSFER_IN.value:
+                transfer_inflows += e.amount
+            elif e.event_type == EventType.TRANSFER_OUT.value:
+                transfer_outflows += e.amount
+            else:
+                if e.direction == Direction.INFLOW.value:
+                    total_inflows += e.amount
+                    net_flow += e.amount
+                elif e.direction == Direction.OUTFLOW.value:
+                    total_outflows += e.amount
+                    net_flow -= e.amount
+
+        return AccountPeriodSummary(
+            total_inflows=total_inflows,
+            total_outflows=total_outflows,
+            net_flow=net_flow,
+            transfer_inflows=transfer_inflows,
+            transfer_outflows=transfer_outflows,
+            movement_count=total_count,
+            period_start=date_from,
+            period_end=date_to,
+            currency=account.currency
+        )
+
+    async def list_account_movements(
+        self,
+        auth_user_id: UUID,
+        account_id: UUID,
+        limit: int = 50,
+        offset: int = 0,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        event_type: str | None = None,
+        direction: str | None = None,
+    ) -> LedgerEventsResponse:
+        account = await self._get_account_or_404(account_id, include_inactive=True)
+        if account.user_id != auth_user_id:
+            raise AccountForbiddenError()
+
+        if not self.ledger_repo:
+            return LedgerEventsResponse(
+                items=[],
+                pagination=LedgerPaginationInfo(limit=limit, offset=offset, total=0)
+            )
+
+        events, total = await self.ledger_repo.list_events(
+            user_id=auth_user_id,
+            account_id=account_id,
+            date_from=date_from,
+            date_to=date_to,
+            event_type=event_type,
+            direction=direction,
+            limit=limit,
+            offset=offset,
+        )
+
+        details = [LedgerEventDetail.model_validate(e) for e in events]
+        return LedgerEventsResponse(
+            items=details,
+            pagination=LedgerPaginationInfo(limit=limit, offset=offset, total=total)
         )

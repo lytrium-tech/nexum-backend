@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
@@ -19,8 +20,8 @@ class AccountCreate(BaseModel):
 
 class AccountUpdate(BaseModel):
     name: str | None = Field(None, min_length=1)
-    is_active: bool | None = None
-    # balance explícitamente no incluido
+    type: AccountType | None = None
+    model_config = ConfigDict(extra="forbid")
 
 
 class AccountRead(BaseModel):
@@ -31,20 +32,37 @@ class AccountRead(BaseModel):
     balance: Decimal
     currency: str
     is_active: bool
+    created_at: datetime
+    updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
 
+class AccountDetailRead(AccountRead):
+    has_movements: bool = False
+    movement_count: int = 0
+    last_movement_at: datetime | None = None
+
 class AccountSummary(BaseModel):
+    # Summary global (legado o global)
     totals_by_currency: dict[str, Decimal]
     accounts_count: int
     active_accounts_count: int
 
 
+class AccountPeriodSummary(BaseModel):
+    # Summary de un periodo para una sola cuenta
+    total_inflows: Decimal
+    total_outflows: Decimal
+    net_flow: Decimal
+    transfer_inflows: Decimal
+    transfer_outflows: Decimal
+    movement_count: int
+    period_start: datetime | None
+    period_end: datetime | None
+    currency: str
+
 class BalanceAdjustmentCreate(BaseModel):
-    amount: Decimal = Field(..., gt=0, description="Cantidad a ajustar (siempre positiva)")
-    direction: Literal["increase", "decrease"] = Field(
-        description="Si aumenta o disminuye el balance"
-    )
-    type: EventType = Field(description="opening_balance o balance_adjustment")
-    description: str | None = Field(None, max_length=255)
+    target_balance: Decimal = Field(..., ge=0, description="Saldo real deseado (positivo o cero)")
+    reason: str = Field(..., min_length=1, max_length=255)
+    idempotency_key: UUID = Field(..., description="Clave de idempotencia única para el ajuste")
