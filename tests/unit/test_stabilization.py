@@ -48,12 +48,14 @@ async def test_reactivate_account_success():
         type="bank",
         balance=Decimal("0.0"),
         currency="USD",
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC)
     )
     m.name = "Test"
     repo_mock.get_by_id.return_value = m
 
     svc = AccountService(repo_mock, AsyncMock())
-    await svc.update_account(user_id, uuid4(), AccountUpdate(is_active=True))
+    await svc.restore_account(user_id, uuid4())
     repo_mock.get_by_id.assert_called_with(ANY, include_inactive=True)
 
 
@@ -65,7 +67,7 @@ async def test_reactivate_account_not_found():
 
     svc = AccountService(repo_mock, AsyncMock())
     with pytest.raises(NotFoundError):
-        await svc.update_account(uuid4(), uuid4(), AccountUpdate(is_active=True))
+        await svc.restore_account(uuid4(), uuid4())
 
 
 @pytest.mark.asyncio
