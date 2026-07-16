@@ -4,7 +4,7 @@ from app.accounts.repository import AccountRepository
 from app.cash.exceptions import InsufficientFundsError
 from app.cash.schemas import CashExpenseCreate, CashIncomeCreate, CashOperationResult
 from app.categories.repository import CategoryRepository
-from app.core.errors import ForbiddenError, NotFoundError
+from app.core.errors import ForbiddenError, InfrastructureError, NotFoundError, ValidationError
 from app.core.uow import UnitOfWork
 from app.ledger.enums import Direction, EventType
 from app.ledger.repository import LedgerRepository
@@ -24,14 +24,35 @@ class CashService:
         self.account_repo = account_repo
         self.category_repo = category_repo
 
-    async def _validate_category(self, category_id: UUID | None, user_id: UUID) -> None:
-        if not category_id:
-            return
-        category = await self.category_repo.get_by_id(category_id)
-        if not category:
-            raise NotFoundError(message="Categoría no encontrada.")
-        if category.user_id is not None and category.user_id != user_id:
-            raise ForbiddenError(message="No tienes permisos sobre esta categoría privada.")
+    async def _resolve_category_id(
+        self, category_id: UUID | None, user_id: UUID, fallback_stable_key: str, expected_type: str
+    ) -> UUID:
+        if category_id:
+            category = await self.category_repo.get_by_id(category_id)
+            if not category:
+                raise NotFoundError(message="Categoría no encontrada.")
+            if category.user_id is not None and category.user_id != user_id:
+                raise ForbiddenError(message="No tienes permisos sobre esta categoría privada.")
+            if not category.is_active:
+                raise ValidationError(message="No se puede usar una categoría archivada.")
+            if category.type != expected_type:
+                raise ValidationError(message=f"La categoría debe ser de tipo {expected_type}.")
+            return category_id
+
+        fallback = await self.category_repo.get_by_stable_key(fallback_stable_key)
+        if not fallback:
+            raise InfrastructureError(
+                message=f"Falta categoría global requerida: {fallback_stable_key}"
+            )
+        if fallback.user_id is not None:
+            raise InfrastructureError(message=f"Fallback {fallback_stable_key} no es global.")
+        if not fallback.is_active:
+            raise InfrastructureError(message=f"Fallback {fallback_stable_key} está inactiva.")
+        if fallback.type != expected_type:
+            raise InfrastructureError(
+                message=f"Fallback {fallback_stable_key} tiene tipo incorrecto."
+            )
+        return fallback.id
 
     async def create_income(
         self, user_id: UUID, payload: CashIncomeCreate, command_id: UUID
@@ -45,13 +66,15 @@ class CashService:
             if account.user_id != user_id:
                 raise ForbiddenError(message="No tienes permisos sobre esta cuenta.")
 
-            await self._validate_category(payload.category_id, user_id)
+            category_id = await self._resolve_category_id(
+                payload.category_id, user_id, "income_uncategorized", "income"
+            )
 
             # 2. Crear evento en Ledger
             event_create = LedgerEventCreate(
                 user_id=user_id,
                 account_id=payload.account_id,
-                category_id=payload.category_id,
+                category_id=category_id,
                 event_type=EventType.INCOME,
                 direction=Direction.INFLOW,
                 amount=payload.amount,
@@ -99,13 +122,15 @@ class CashService:
             if account.user_id != user_id:
                 raise ForbiddenError(message="No tienes permisos sobre esta cuenta.")
 
-            await self._validate_category(payload.category_id, user_id)
+            category_id = await self._resolve_category_id(
+                payload.category_id, user_id, "expense_uncategorized", "expense"
+            )
 
             # 2. Crear evento en Ledger
             event_create = LedgerEventCreate(
                 user_id=user_id,
                 account_id=payload.account_id,
-                category_id=payload.category_id,
+                category_id=category_id,
                 event_type=EventType.EXPENSE,
                 direction=Direction.OUTFLOW,
                 amount=payload.amount,

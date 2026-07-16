@@ -29,6 +29,11 @@ class CategoryRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_stable_key(self, stable_key: str) -> Category | None:
+        stmt = select(Category).where(Category.stable_key == stable_key)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def check_name_exists(
         self, user_id: UUID, normalized_name: str, type_: str | None = None
     ) -> bool:

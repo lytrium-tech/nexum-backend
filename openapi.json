@@ -906,6 +906,7 @@
         ],
         "summary": "Delete Category",
         "operationId": "delete_category_api_v1_categories__category_id__delete",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -926,6 +927,102 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/categories/{category_id}/archive": {
+      "post": {
+        "tags": [
+          "categories"
+        ],
+        "summary": "Archive Category",
+        "operationId": "archive_category_api_v1_categories__category_id__archive_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "category_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Category Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CategoryRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/categories/{category_id}/restore": {
+      "post": {
+        "tags": [
+          "categories"
+        ],
+        "summary": "Restore Category",
+        "operationId": "restore_category_api_v1_categories__category_id__restore_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "category_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Category Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CategoryRead"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -5316,9 +5413,22 @@
             "title": "Name"
           },
           "type": {
-            "$ref": "#/components/schemas/CategoryType"
+            "$ref": "#/components/schemas/ConfigurableCategoryType"
+          },
+          "icon_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z0-9_]{1,50}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icon Key"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "name",
@@ -5367,6 +5477,28 @@
           "is_active": {
             "type": "boolean",
             "title": "Is Active"
+          },
+          "icon_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icon Key"
+          },
+          "stable_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stable Key"
           }
         },
         "type": "object",
@@ -5425,6 +5557,18 @@
             ],
             "title": "Name"
           },
+          "icon_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z0-9_]{1,50}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icon Key"
+          },
           "is_active": {
             "anyOf": [
               {
@@ -5434,11 +5578,21 @@
                 "type": "null"
               }
             ],
-            "title": "Is Active"
+            "title": "Is Active",
+            "description": "Legacy compatibility. Prefer /archive or /restore."
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "title": "CategoryUpdate"
+      },
+      "ConfigurableCategoryType": {
+        "type": "string",
+        "enum": [
+          "income",
+          "expense"
+        ],
+        "title": "ConfigurableCategoryType"
       },
       "ConversationalRequest": {
         "properties": {

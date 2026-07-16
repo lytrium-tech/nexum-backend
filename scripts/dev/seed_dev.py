@@ -42,13 +42,9 @@ async def seed():
             await conn.execute(query, {"id": dev_user_id, "email": dev_email})
             logger.info("Usuario de desarrollo asegurado en public.users.")
 
-            query_cat = text("""
-                INSERT INTO public.categories (id, user_id, name, type, is_active)
-                VALUES ('00000000-0000-0000-0000-000000000000'::UUID, NULL, 'sin_clasificar', 'expense', true)
-                ON CONFLICT DO NOTHING
-            """)
-            await conn.execute(query_cat)
-            logger.info("Categoria global sin_clasificar asegurada.")
+            logger.info(
+                "El seeding de categorías globales ahora es delegado a Alembic (v1_7_phase2/categories_v1_phase1)."
+            )
     except Exception as e:
         logger.error(f"Fallo al sembrar datos: {e}")
     finally:

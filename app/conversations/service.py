@@ -443,22 +443,6 @@ class ConversationsService:
                     except EntityNotFoundError:
                         pass
 
-                if "category_id" not in resolved_data:
-                    from app.conversations.entity_resolver import normalize_string
-
-                    fallback = next(
-                        (
-                            c
-                            for c in categories
-                            if normalize_string(c.name) == "sinclasificar"
-                            or normalize_string(c.name) == "sin clasificar"
-                        ),
-                        None,
-                    )
-                    if fallback:
-                        resolved_data["category_id"] = str(fallback.id)
-                        resolved_data["_category_name"] = fallback.name
-
                 if entities.description:
                     resolved_data["description"] = entities.description
 
@@ -925,9 +909,13 @@ class ConversationsService:
                 user_id, uuid.UUID(data["goal_id"]), dto, str(command_id)
             )
         elif intent == "create_obligation":
-            raise NotImplementedError("Obligation creation is temporarily disabled for V1.6 refactoring.")
+            raise NotImplementedError(
+                "Obligation creation is temporarily disabled for V1.6 refactoring."
+            )
         elif intent == "create_obligation_payment":
-            raise NotImplementedError("Obligation payments are temporarily disabled for V1.6 refactoring.")
+            raise NotImplementedError(
+                "Obligation payments are temporarily disabled for V1.6 refactoring."
+            )
         elif intent == "create_credit_card_payment":
             dto = CreditCardPaymentCreate(
                 amount=Decimal(str(data["amount"])),

@@ -72,7 +72,7 @@ async def test_delete_global_category_forbidden(service, mock_repo):
 async def test_delete_private_category_success(service, mock_repo):
     user_id = uuid.uuid4()
     cat_id = uuid.uuid4()
-    cat = Category(id=cat_id, user_id=user_id, is_active=True)
+    cat = Category(id=cat_id, user_id=user_id, is_active=True, name="dummy", type="income")
     mock_repo.get_by_id.return_value = cat
 
     await service.delete_category(user_id, cat_id)

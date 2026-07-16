@@ -103,8 +103,8 @@ async def main():
         # Bob tries to edit Alice's category
         r = await client.patch(f"/categories/{cat_a['id']}", headers=h_b, json={"name": "Hacked"})
         assert r.status_code in [403, 404], "Bob pudo editar categoria de Alice"
-        # Bob tries to edit global sin_clasificar
-        global_cat = next(c for c in cats if c["name"] == "sin_clasificar")
+        # Bob tries to edit global expense_uncategorized
+        global_cat = next(c for c in cats if c.get("stable_key") == "expense_uncategorized")
         r = await client.patch(
             f"/categories/{global_cat['id']}", headers=h_b, json={"name": "Hacked global"}
         )

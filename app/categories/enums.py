@@ -9,3 +9,8 @@ class CategoryType(StrEnum):
     GOAL = "goal"
     TRANSFER = "transfer"
     SYSTEM = "system"
+
+
+class ConfigurableCategoryType(StrEnum):
+    INCOME = "income"
+    EXPENSE = "expense"

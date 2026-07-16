@@ -58,7 +58,7 @@ async def update_category(
         return result
 
 
-@router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT, deprecated=True)
 async def delete_category(
     category_id: UUID,
     current_profile: CurrentUserProfile,
@@ -69,3 +69,31 @@ async def delete_category(
         service = get_category_service(session)
         user_id = current_profile.id
         await service.delete_category(user_id, category_id)
+
+
+@router.post("/{category_id}/archive", response_model=CategoryRead)
+async def archive_category(
+    category_id: UUID,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+) -> CategoryRead:
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = get_category_service(session)
+        user_id = current_profile.id
+        result = await service.archive_category(user_id, category_id)
+        return result
+
+
+@router.post("/{category_id}/restore", response_model=CategoryRead)
+async def restore_category(
+    category_id: UUID,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+) -> CategoryRead:
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = get_category_service(session)
+        user_id = current_profile.id
+        result = await service.restore_category(user_id, category_id)
+        return result
