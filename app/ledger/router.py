@@ -12,6 +12,8 @@ from app.ledger.schemas import (
     LedgerPaginationInfo,
     LedgerSummaryResponse,
     LedgerTimelineResponse,
+    ReclassificationRequest,
+    ReclassificationResponse,
 )
 from app.ledger.service import LedgerService
 from app.users.dependencies import CurrentUserProfile
@@ -112,3 +114,27 @@ async def get_timeline(
     """
     groups = await service.get_timeline(user.id, date_from, date_to)
     return {"groups": groups}
+
+
+@router.post(
+    "/events/{event_id}/reclassify",
+    response_model=ReclassificationResponse,
+    responses={
+        401: {"description": "Authentication required"},
+        403: {"description": "Forbidden"},
+        404: {"description": "Event or Category not found"},
+        409: {"description": "Conflict or Idempotency Key reused"},
+        422: {"description": "Validation Error"},
+    },
+)
+async def reclassify_event(
+    event_id: UUID,
+    request: ReclassificationRequest,
+    user: CurrentUserProfile,
+    service: LedgerService = Depends(get_ledger_service),
+):
+    """
+    Reclasifica analíticamente la categoría de un evento financiero existente.
+    Operación idempotente (mediante idempotency_key).
+    """
+    return await service.reclassify_event(user.id, event_id, request)

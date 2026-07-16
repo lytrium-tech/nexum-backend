@@ -19,6 +19,7 @@ from sqlalchemy import (
     Index,
     Numeric,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
@@ -111,4 +112,63 @@ class FinancialEvent(Base):
             unique=True,
             postgresql_where="command_id IS NOT NULL",
         ),
+    )
+
+
+class FinancialEventReclassification(Base):
+    """
+    Registro inmutable de auditoría para la reclasificación analítica de eventos financieros.
+    """
+
+    __tablename__ = "financial_event_reclassifications"
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.gen_random_uuid(),
+    )
+    financial_event_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("financial_events.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    previous_category_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("categories.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    new_category_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("categories.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    reclassified_by: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default="manual")
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    command_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "source = ANY (ARRAY['manual', 'rule', 'ai', 'system'])",
+            name="reclassifications_source_check",
+        ),
+        CheckConstraint(
+            "previous_category_id IS DISTINCT FROM new_category_id",
+            name="reclassifications_different_categories_check",
+        ),
+        Index(
+            "idx_financial_event_reclassifications_event_created",
+            "financial_event_id",
+            "created_at",
+        ),
+        UniqueConstraint("command_id", name="uq_financial_event_reclassifications_command_id"),
     )

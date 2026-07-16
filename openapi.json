@@ -3117,6 +3117,70 @@
         }
       }
     },
+    "/api/v1/ledger/events/{event_id}/reclassify": {
+      "post": {
+        "tags": [
+          "ledger"
+        ],
+        "summary": "Reclassify Event",
+        "description": "Reclasifica anal\u00edticamente la categor\u00eda de un evento financiero existente.\nOperaci\u00f3n idempotente (mediante idempotency_key).",
+        "operationId": "reclassify_event_api_v1_ledger_events__event_id__reclassify_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Event Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReclassificationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReclassificationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Event or Category not found"
+          },
+          "409": {
+            "description": "Conflict or Idempotency Key reused"
+          },
+          "422": {
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
     "/api/v1/intelligence/snapshot": {
       "get": {
         "tags": [
@@ -10916,6 +10980,119 @@
           "cancelled"
         ],
         "title": "PeriodStatus"
+      },
+      "ReclassificationRequest": {
+        "properties": {
+          "new_category_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "New Category Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Idempotency Key"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "new_category_id",
+          "idempotency_key"
+        ],
+        "title": "ReclassificationRequest"
+      },
+      "ReclassificationResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "reclassification_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Reclassification Id"
+          },
+          "event_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Event Id"
+          },
+          "previous_category_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Category Id"
+          },
+          "new_category_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Category Id"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Idempotency Key"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "reclassification_id",
+          "event_id",
+          "previous_category_id",
+          "new_category_id",
+          "idempotency_key",
+          "source",
+          "reason",
+          "created_at"
+        ],
+        "title": "ReclassificationResponse"
       },
       "SnapshotCash": {
         "properties": {

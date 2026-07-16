@@ -18,8 +18,9 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.categories.models import Category
 from app.core.errors import ForbiddenError, InfrastructureError
-from app.ledger.models import FinancialEvent
+from app.ledger.models import FinancialEvent, FinancialEventReclassification
 from app.ledger.schemas import LedgerEventCreate, LedgerEventRead, LedgerEventResult
 
 
@@ -71,6 +72,36 @@ class LedgerRepository:
         stmt = select(FinancialEvent).where(FinancialEvent.command_id == command_id)
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_event_for_update(self, event_id: UUID, user_id: UUID) -> FinancialEvent | None:
+        """Obtiene un evento bloqueándolo para actualización."""
+        stmt = (
+            select(FinancialEvent)
+            .where(FinancialEvent.id == event_id, FinancialEvent.user_id == user_id)
+            .with_for_update()
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_category_for_update(self, category_id: UUID) -> Category | None:
+        """Obtiene una categoría bloqueándola para actualización."""
+        stmt = select(Category).where(Category.id == category_id).with_for_update()
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_reclassification_by_command_id(
+        self, command_id: UUID
+    ) -> FinancialEventReclassification | None:
+        """Obtiene una reclasificación previa por command_id para idempotencia."""
+        stmt = select(FinancialEventReclassification).where(
+            FinancialEventReclassification.command_id == command_id
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    def create_reclassification(self, reclassification: FinancialEventReclassification) -> None:
+        """Agrega un registro de reclasificación a la sesión."""
+        self.session.add(reclassification)
 
     async def insert_event(self, event_data: LedgerEventCreate) -> LedgerEventResult:
         """

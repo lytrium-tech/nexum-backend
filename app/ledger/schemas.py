@@ -164,3 +164,23 @@ class LedgerTimelineGroup(BaseModel):
 
 class LedgerTimelineResponse(BaseModel):
     groups: list[LedgerTimelineGroup]
+
+
+class ReclassificationRequest(BaseModel):
+    new_category_id: UUID
+    reason: str | None = Field(default=None, max_length=500)
+    idempotency_key: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ReclassificationResponse(BaseModel):
+    status: str
+    reclassification_id: UUID
+    event_id: UUID
+    previous_category_id: UUID | None
+    new_category_id: UUID | None
+    idempotency_key: UUID
+    source: str
+    reason: str | None
+    created_at: datetime
