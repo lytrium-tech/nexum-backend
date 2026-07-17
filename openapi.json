@@ -3483,7 +3483,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/TransferCreate"
+                "$ref": "#/components/schemas/TransferRequest"
               }
             }
           }
@@ -3498,6 +3498,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Autenticaci\u00f3n requerida"
+          },
+          "404": {
+            "description": "Cuenta no encontrada o inaccesible"
+          },
+          "409": {
+            "description": "Conflicto financiero o idempotente"
           },
           "422": {
             "description": "Validation Error",
@@ -3562,6 +3571,9 @@
               }
             }
           },
+          "401": {
+            "description": "Autenticaci\u00f3n requerida"
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -3609,6 +3621,12 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Autenticaci\u00f3n requerida"
+          },
+          "404": {
+            "description": "Transferencia no encontrada"
           },
           "422": {
             "description": "Validation Error",
@@ -11364,7 +11382,7 @@
         ],
         "title": "SnapshotTruth"
       },
-      "TransferCreate": {
+      "TransferRequest": {
         "properties": {
           "source_account_id": {
             "type": "string",
@@ -11384,36 +11402,10 @@
               },
               {
                 "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,2}0*$"
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)"
               }
             ],
             "title": "Amount"
-          },
-          "currency": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 3,
-                "minLength": 3
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Currency"
-          },
-          "target_currency": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 3,
-                "minLength": 3
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Target Currency"
           },
           "description": {
             "anyOf": [
@@ -11427,62 +11419,23 @@
             ],
             "title": "Description"
           },
-          "occurred_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Occurred At"
-          },
           "command_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Command Id"
-          },
-          "source_message_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Message Id"
-          },
-          "raw_message": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Raw Message"
+            "type": "string",
+            "format": "uuid",
+            "title": "Command Id",
+            "description": "Clave de idempotencia obligatoria"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "source_account_id",
           "destination_account_id",
-          "amount"
+          "amount",
+          "command_id"
         ],
-        "title": "TransferCreate",
-        "description": "Payload para crear transferencia."
+        "title": "TransferRequest",
+        "description": "Contrato HTTP p\u00fablico para crear una transferencia V1 de la misma moneda."
       },
       "TransferResult": {
         "properties": {
@@ -11583,6 +11536,11 @@
           "status": {
             "type": "string",
             "title": "Status"
+          },
+          "is_idempotent": {
+            "type": "boolean",
+            "title": "Is Idempotent",
+            "default": false
           },
           "ledger_events": {
             "anyOf": [

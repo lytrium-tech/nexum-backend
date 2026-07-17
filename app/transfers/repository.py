@@ -26,11 +26,15 @@ class TransfersRepository:
                 await self.session.flush()
         except IntegrityError as exc:
             error_msg = str(exc.orig)
-            constraint_name = getattr(exc.orig, "constraint_name", None)
+            diag = getattr(exc.orig, "diag", None)
+            constraint_name = getattr(exc.orig, "constraint_name", None) or getattr(
+                diag, "constraint_name", None
+            )
 
             is_idempotency = (
                 constraint_name in ("transfers_command_id_key", "transfers_command_id_idx")
                 or "transfers_command_id_key" in error_msg
+                or "transfers_command_id_idx" in error_msg
             )
 
             if is_idempotency:
@@ -40,7 +44,8 @@ class TransfersRepository:
                     return existing
 
             raise ConflictError(
-                message="Error de integridad al registrar transferencia", details=error_msg
+                message="La transferencia entra en conflicto con el estado actual.",
+                error_code="transfer_integrity_conflict",
             )
 
         await self.session.refresh(transfer, ["source_account", "destination_account"])
@@ -81,7 +86,7 @@ class TransfersRepository:
                 selectinload(Transfer.source_account), selectinload(Transfer.destination_account)
             )
             .where(Transfer.user_id == user_id)
-            .order_by(Transfer.created_at.desc())
+            .order_by(Transfer.created_at.desc(), Transfer.id.desc())
         )
 
         # Paginate

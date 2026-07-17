@@ -42,16 +42,17 @@ class AccountRepository:
         await self.session.flush()
         return account
 
-    async def get_by_id_for_update(self, account_id: UUID) -> Account | None:
+    async def get_by_id_for_update(
+        self, account_id: UUID, *, include_inactive: bool = False
+    ) -> Account | None:
         """
         Bloquea la cuenta con SELECT FOR UPDATE para evitar condiciones de carrera.
         Debe ejecutarse dentro de un UnitOfWork (transacción activa).
         """
-        stmt = (
-            select(Account)
-            .where(Account.id == account_id, Account.is_active.is_(True))
-            .with_for_update()
-        )
+        stmt = select(Account).where(Account.id == account_id)
+        if not include_inactive:
+            stmt = stmt.where(Account.is_active.is_(True))
+        stmt = stmt.with_for_update()
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
