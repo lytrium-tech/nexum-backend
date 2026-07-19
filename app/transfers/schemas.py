@@ -25,6 +25,9 @@ class TransferRequest(BaseModel):
         allow_inf_nan=False,
     )
     description: str | None = Field(None, max_length=255)
+    rate_snapshot_id: UUID | None = Field(
+        None, description="Requerido si origen y destino tienen monedas distintas"
+    )
     command_id: UUID = Field(..., description="Clave de idempotencia obligatoria")
 
     model_config = ConfigDict(extra="forbid")
@@ -61,6 +64,7 @@ class TransferResult(BaseModel):
     fx_rate: Decimal | None = None
     rate_source: str | None = None
     rate_timestamp: datetime | None = None
+    rate_snapshot_id: UUID | None = None
     is_estimated: bool = False
     description: str | None
     status: str

@@ -57,9 +57,12 @@ class Transfer(Base):
 
     target_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
     target_currency: Mapped[str | None] = mapped_column(Text, nullable=True)
-    fx_rate: Mapped[Decimal | None] = mapped_column(Numeric(14, 6), nullable=True)
+    fx_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
     rate_source: Mapped[str | None] = mapped_column(Text, nullable=True)
     rate_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rate_snapshot_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("exchange_rates.id", ondelete="RESTRICT"), nullable=True
+    )
     is_estimated: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
 
     description: Mapped[str | None] = mapped_column(Text, nullable=True)

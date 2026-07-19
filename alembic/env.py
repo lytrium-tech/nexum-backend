@@ -1,16 +1,32 @@
+import asyncio
+import os
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
+from sqlalchemy import engine_from_config, pool
+from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
-import os
+
+
+def _normalize_database_url(url: str) -> str:
+    """Use the PostgreSQL driver installed by this project for online migrations."""
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    return url
+
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
 
-database_url = os.getenv("DATABASE_URL", "postgresql://nexum_test:nexum_password@localhost:5433/nexum_test_db")
+database_url = _normalize_database_url(
+    os.getenv(
+        "DATABASE_URL",
+        "postgresql://nexum_test:nexum_password@localhost:5433/nexum_test_db",
+    )
+)
 config.set_main_option("sqlalchemy.url", database_url)
 
 # Interpret the config file for Python logging.
@@ -54,17 +70,13 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-import asyncio
-from sqlalchemy.ext.asyncio import async_engine_from_config
-
-def do_run_migrations(connection):
-    context.configure(
-        connection=connection, target_metadata=target_metadata
-    )
+def do_run_migrations(connection) -> None:
+    context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
         context.run_migrations()
 
-async def run_async_migrations():
+
+async def run_async_migrations() -> None:
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
@@ -75,6 +87,7 @@ async def run_async_migrations():
         await connection.run_sync(do_run_migrations)
 
     await connectable.dispose()
+
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode.
@@ -95,6 +108,7 @@ def run_migrations_online() -> None:
 
         with connectable.connect() as connection:
             do_run_migrations(connection)
+
 
 if context.is_offline_mode():
     run_migrations_offline()

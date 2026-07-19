@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.errors import ConflictError, NotFoundError
+from app.obligations.models import ExchangeRate
 from app.transfers.models import Transfer
 
 
@@ -50,6 +51,11 @@ class TransfersRepository:
 
         await self.session.refresh(transfer, ["source_account", "destination_account"])
         return transfer
+
+    async def get_rate_snapshot_for_update(self, snapshot_id: UUID) -> ExchangeRate | None:
+        stmt = select(ExchangeRate).where(ExchangeRate.id == snapshot_id).with_for_update()
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def get_by_command_id(self, command_id: UUID) -> Transfer | None:
         stmt = (

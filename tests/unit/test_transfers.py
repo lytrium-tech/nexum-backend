@@ -77,6 +77,7 @@ def make_transfer(
     description: str | None = None,
     source_message_id: uuid.UUID | None = None,
     raw_message: str | None = None,
+    rate_snapshot_id: uuid.UUID | None = None,
     created_at: datetime = NOW,
     status: str = "completed",
 ) -> Transfer:
@@ -92,6 +93,7 @@ def make_transfer(
         fx_rate=None,
         rate_source=None,
         rate_timestamp=None,
+        rate_snapshot_id=rate_snapshot_id,
         is_estimated=False,
         description=description,
         command_id=command_id,
@@ -276,7 +278,7 @@ async def test_cross_currency_is_rejected_without_fx(
     destination = make_account(user_id=user_id, currency=destination_currency)
     configure_new_transfer(transfers_repo, account_repo, source, destination)
 
-    with pytest.raises(ValidationError, match="monedas diferentes") as exc:
+    with pytest.raises(ValidationError, match="fx_rate_snapshot_required") as exc:
         await service.create_transfer(
             user_id,
             TransferCreate(
@@ -287,7 +289,7 @@ async def test_cross_currency_is_rejected_without_fx(
             ),
         )
 
-    assert exc.value.error_code == "cross_currency_transfer_not_supported"
+    assert exc.value.error_code == "fx_rate_snapshot_required"
     transfers_repo.create_transfer.assert_not_awaited()
     account_repo.update_balance.assert_not_awaited()
 
@@ -515,6 +517,7 @@ async def test_fast_path_exact_retry_has_no_locks_or_writes(
         ("description", "different"),
         ("raw_message", "different"),
         ("source_message_id", uuid.UUID(int=42)),
+        ("rate_snapshot_id", uuid.UUID(int=43)),
         ("status", "pending"),
         ("created_at", NOW + timedelta(seconds=1)),
     ],
@@ -691,6 +694,56 @@ async def test_ledger_failure_triggers_uow_rollback() -> None:
 
 
 @pytest.mark.parametrize(
+    "failure_stage",
+    ["transfer", "transfer_out", "transfer_in", "source_balance", "destination_balance"],
+)
+@pytest.mark.asyncio
+async def test_each_financial_write_failure_rolls_back_transaction(failure_stage: str) -> None:
+    session = AsyncMock(spec=AsyncSession)
+    uow = UnitOfWork(session)
+    transfers_repo = AsyncMock(spec=TransfersRepository)
+    ledger_repo = AsyncMock(spec=LedgerRepository)
+    account_repo = AsyncMock(spec=AccountRepository)
+    service = TransfersService(uow, transfers_repo, ledger_repo, account_repo)
+    user_id = uuid.uuid4()
+    source = make_account(user_id=user_id)
+    destination = make_account(user_id=user_id)
+    configure_new_transfer(transfers_repo, account_repo, source, destination)
+    ledger_repo.insert_event.side_effect = lambda _event: make_ledger_result()
+
+    if failure_stage == "transfer":
+        transfers_repo.create_transfer.side_effect = RuntimeError("transfer failed")
+    elif failure_stage == "transfer_out":
+        ledger_repo.insert_event.side_effect = RuntimeError("transfer_out failed")
+    elif failure_stage == "transfer_in":
+        ledger_repo.insert_event.side_effect = [
+            make_ledger_result(),
+            RuntimeError("transfer_in failed"),
+        ]
+    elif failure_stage == "source_balance":
+        account_repo.update_balance.side_effect = RuntimeError("source balance failed")
+    else:
+        account_repo.update_balance.side_effect = [
+            None,
+            RuntimeError("destination balance failed"),
+        ]
+
+    with pytest.raises(RuntimeError, match="failed"):
+        await service.create_transfer(
+            user_id,
+            TransferCreate(
+                source_account_id=source.id,
+                destination_account_id=destination.id,
+                amount="1.00",
+                command_id=uuid.uuid4(),
+            ),
+        )
+
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
     "value",
     ["0", "-1", "0.001", "NaN", "Infinity", "-Infinity", "1000000000000.00"],
 )
@@ -724,6 +777,7 @@ def test_public_request_forbids_internal_and_unknown_fields() -> None:
     for field in (
         "user_id",
         "currency",
+        "source_currency",
         "target_currency",
         "target_amount",
         "fx_rate",
@@ -936,12 +990,17 @@ async def test_http_post_contract_and_status(
     "field",
     [
         "currency",
+        "source_currency",
         "target_currency",
+        "target_amount",
         "occurred_at",
         "source_message_id",
         "raw_message",
         "status",
         "fx_rate",
+        "rate_source",
+        "rate_timestamp",
+        "is_estimated",
         "user_id",
     ],
 )
@@ -1033,6 +1092,7 @@ def test_runtime_openapi_transfer_contract() -> None:
         "destination_account_id",
         "amount",
         "description",
+        "rate_snapshot_id",
         "command_id",
     }
     assert set(request_schema["required"]) == {

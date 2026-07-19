@@ -11419,6 +11419,19 @@
             ],
             "title": "Description"
           },
+          "rate_snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rate Snapshot Id",
+            "description": "Requerido si origen y destino tienen monedas distintas"
+          },
           "command_id": {
             "type": "string",
             "format": "uuid",
@@ -11516,6 +11529,18 @@
               }
             ],
             "title": "Rate Timestamp"
+          },
+          "rate_snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rate Snapshot Id"
           },
           "is_estimated": {
             "type": "boolean",

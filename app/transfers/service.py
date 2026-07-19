@@ -3,6 +3,8 @@ app/transfers/service.py
 ========================
 """
 
+from datetime import UTC, datetime
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from uuid import UUID
 
 from app.accounts.repository import AccountRepository
@@ -15,6 +17,9 @@ from app.ledger.schemas import LedgerEventCreate
 from app.transfers.models import Transfer
 from app.transfers.repository import TransfersRepository
 from app.transfers.schemas import LedgerEventsRef, TransferCreate, TransferResult
+
+MONEY_QUANTUM = Decimal("0.01")
+MAX_MONEY = Decimal("999999999999.99")
 
 
 class TransfersService:
@@ -89,12 +94,6 @@ class TransfersService:
                     error_code="destination_account_inactive",
                 )
 
-            if source_acc.currency != dest_acc.currency:
-                raise ValidationError(
-                    message="Las transferencias entre monedas diferentes no están soportadas actualmente.",
-                    error_code="cross_currency_transfer_not_supported",
-                )
-
             source_amount = payload.amount
             if source_acc.balance is None or dest_acc.balance is None:
                 raise ConflictError(
@@ -104,9 +103,72 @@ class TransfersService:
             if source_acc.balance < source_amount:
                 raise InsufficientFundsError(message="Fondos insuficientes en la cuenta de origen.")
 
-            # Misma moneda
-            currency = source_acc.currency
-            target_amount = source_amount
+            if source_acc.currency != dest_acc.currency:
+                if not payload.rate_snapshot_id:
+                    raise ValidationError(
+                        message="fx_rate_snapshot_required",
+                        error_code="fx_rate_snapshot_required",
+                    )
+                snapshot = await self.transfers_repo.get_rate_snapshot_for_update(
+                    payload.rate_snapshot_id
+                )
+                if not snapshot:
+                    raise NotFoundError(
+                        message="invalid_fx_rate_snapshot",
+                        error_code="invalid_fx_rate_snapshot",
+                    )
+                if snapshot.expires_at <= datetime.now(UTC):
+                    raise ValidationError(
+                        message="fx_rate_snapshot_expired",
+                        error_code="fx_rate_snapshot_expired",
+                    )
+                if (
+                    snapshot.base_currency != source_acc.currency
+                    or snapshot.quote_currency != dest_acc.currency
+                ):
+                    raise ValidationError(
+                        message="currency_pair_mismatch",
+                        error_code="currency_pair_mismatch",
+                    )
+                if snapshot.is_stale is not False:
+                    raise ValidationError(
+                        message="El snapshot FX no se encuentra vigente.",
+                        error_code="fx_rate_snapshot_stale",
+                    )
+                if not snapshot.provider or not snapshot.provider.strip():
+                    raise ValidationError(
+                        message="El snapshot FX no tiene una fuente válida.",
+                        error_code="invalid_fx_rate_snapshot",
+                    )
+                if not snapshot.rate.is_finite() or snapshot.rate <= 0:
+                    raise ValidationError(
+                        message="invalid_fx_rate",
+                        error_code="invalid_fx_rate",
+                    )
+
+                currency = source_acc.currency
+                target_currency = dest_acc.currency
+                fx_rate = snapshot.rate
+                target_amount = self._calculate_target_amount(source_amount, fx_rate)
+
+                rate_source = snapshot.provider
+                rate_timestamp = snapshot.fetched_at
+                rate_snapshot_id = snapshot.id
+                is_estimated = False
+            else:
+                if payload.rate_snapshot_id:
+                    raise ValidationError(
+                        message="Una transferencia en la misma moneda no acepta snapshot FX.",
+                        error_code="fx_rate_snapshot_not_allowed",
+                    )
+                currency = source_acc.currency
+                target_currency = currency
+                target_amount = source_amount
+                fx_rate = None
+                rate_source = None
+                rate_timestamp = None
+                rate_snapshot_id = None
+                is_estimated = False
 
             transfer = Transfer(
                 user_id=user_id,
@@ -115,11 +177,12 @@ class TransfersService:
                 amount=source_amount,
                 currency=currency,
                 target_amount=target_amount,
-                target_currency=currency,
-                fx_rate=None,
-                rate_source=None,
-                rate_timestamp=None,
-                is_estimated=False,
+                target_currency=target_currency,
+                fx_rate=fx_rate,
+                rate_source=rate_source,
+                rate_timestamp=rate_timestamp,
+                rate_snapshot_id=rate_snapshot_id,
+                is_estimated=is_estimated,
                 description=payload.description,
                 command_id=payload.command_id,
                 source_message_id=payload.source_message_id,
@@ -167,7 +230,7 @@ class TransfersService:
                 event_type=EventType.TRANSFER_IN,
                 direction=Direction.INFLOW,
                 amount=target_amount,
-                currency=currency,
+                currency=target_currency,
                 description=payload.description,
                 source="backend",
                 command_id=None,
@@ -191,6 +254,30 @@ class TransfersService:
             return res
 
     @staticmethod
+    def _calculate_target_amount(source_amount: Decimal, fx_rate: Decimal) -> Decimal:
+        try:
+            target_amount = (source_amount * fx_rate).quantize(
+                MONEY_QUANTUM, rounding=ROUND_HALF_UP
+            )
+        except InvalidOperation as exc:
+            raise ValidationError(
+                message="El resultado de la conversión excede la precisión soportada.",
+                error_code="cross_currency_overflow",
+            ) from exc
+
+        if not target_amount.is_finite() or target_amount > MAX_MONEY:
+            raise ValidationError(
+                message="El resultado de la conversión excede el máximo soportado.",
+                error_code="cross_currency_overflow",
+            )
+        if target_amount <= 0:
+            raise ValidationError(
+                message="El monto convertido es menor que la unidad monetaria soportada.",
+                error_code="cross_currency_underflow",
+            )
+        return target_amount
+
+    @staticmethod
     def _matches_command(existing: Transfer, user_id: UUID, payload: TransferCreate) -> bool:
         occurred_at_matches = (
             payload.occurred_at is None or existing.created_at == payload.occurred_at
@@ -202,6 +289,7 @@ class TransfersService:
             and existing.amount == payload.amount
             and existing.description == payload.description
             and existing.source_message_id == payload.source_message_id
+            and existing.rate_snapshot_id == payload.rate_snapshot_id
             and existing.raw_message == payload.raw_message
             and existing.status == "completed"
             and occurred_at_matches
