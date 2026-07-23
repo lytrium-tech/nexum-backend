@@ -125,6 +125,9 @@ async def test_get_snapshot_success(intelligence_service, mock_intelligence_repo
         )
         mock_goal_repo_class.return_value.list_active = AsyncMock(return_value=[])
         mock_goal_repo_class.return_value.get_period_contributions = AsyncMock(return_value={})
+        mock_goal_repo_class.return_value.calculate_reserved_by_user_currency = AsyncMock(
+            return_value={}
+        )
         result = await intelligence_service.get_snapshot(user_id)
 
     assert isinstance(result, IntelligenceSnapshotRead)
@@ -172,6 +175,9 @@ async def test_get_snapshot_empty_user(intelligence_service, mock_intelligence_r
         )
         mock_goal_repo_class.return_value.list_active = AsyncMock(return_value=[])
         mock_goal_repo_class.return_value.get_period_contributions = AsyncMock(return_value={})
+        mock_goal_repo_class.return_value.calculate_reserved_by_user_currency = AsyncMock(
+            return_value={}
+        )
         result = await intelligence_service.get_snapshot(user_id)
 
     assert isinstance(result, IntelligenceSnapshotRead)
@@ -226,6 +232,9 @@ async def test_get_snapshot_transfers_do_not_change_cashflow(
         )
         mock_goal_repo_class.return_value.list_active = AsyncMock(return_value=[])
         mock_goal_repo_class.return_value.get_period_contributions = AsyncMock(return_value={})
+        mock_goal_repo_class.return_value.calculate_reserved_by_user_currency = AsyncMock(
+            return_value={}
+        )
         result = await intelligence_service.get_snapshot(user_id)
 
     assert result.cashflow.income == Decimal("1000.00")
@@ -384,6 +393,9 @@ async def test_committed_outflows_excludes_paid_obligations(
         )
         mock_goal_repo_class.return_value.list_active = AsyncMock(return_value=[])
         mock_goal_repo_class.return_value.get_period_contributions = AsyncMock(return_value={})
+        mock_goal_repo_class.return_value.calculate_reserved_by_user_currency = AsyncMock(
+            return_value={}
+        )
 
         result = await intelligence_service.get_snapshot(user_id)
 
@@ -440,6 +452,9 @@ async def test_get_snapshot_with_fx_provider(mock_intelligence_repo):
         )
         mock_goal_repo_class.return_value.list_active = AsyncMock(return_value=[])
         mock_goal_repo_class.return_value.get_period_contributions = AsyncMock(return_value={})
+        mock_goal_repo_class.return_value.calculate_reserved_by_user_currency = AsyncMock(
+            return_value={}
+        )
 
         result = await service.get_snapshot(user_id)
 

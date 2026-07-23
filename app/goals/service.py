@@ -1,17 +1,17 @@
+import hashlib
+import json
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
+
+from sqlalchemy.exc import IntegrityError
 
 from app.accounts.exceptions import AccountForbiddenError
 from app.accounts.repository import AccountRepository
 from app.cash.exceptions import InsufficientFundsError
-from app.core.currency import (
-    FXProviderError,
-    UnsupportedCurrencyError,
-    get_fx_rate,
-    round_to_minimum_unit,
-)
-from app.core.errors import ForbiddenError, FXProviderUnavailableError, NotFoundError
+from app.core.errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from app.core.utils import clean_presentation_name, normalize_name
+from app.goals.enums import GoalTransactionType
 from app.goals.exceptions import (
     GoalAmountExceededError,
     GoalCompletedError,
@@ -20,13 +20,15 @@ from app.goals.exceptions import (
     GoalNotActiveError,
     GoalTargetAmountError,
 )
-from app.goals.models import Goal, GoalContribution
+from app.goals.models import Goal, GoalTransaction
 from app.goals.repository import GoalRepository
 from app.goals.schemas import (
     GoalContributionCreate,
     GoalContributionResult,
     GoalCreate,
     GoalRead,
+    GoalTransactionRead,
+    GoalTransactionsResponse,
     GoalUpdate,
 )
 from app.ledger.enums import Direction, EventType
@@ -45,18 +47,27 @@ class GoalService:
         self.account_repo = account_repo
         self.ledger_repo = ledger_repo
 
-    def _current_period(self) -> str:
-        from datetime import datetime
+    def _current_period_dates(self) -> tuple[datetime, datetime]:
         from zoneinfo import ZoneInfo
 
         tz = ZoneInfo("America/Bogota")
         now = datetime.now(tz)
-        return f"{now.year}-{now.month:02d}"
+        start_date = datetime(now.year, now.month, 1, tzinfo=tz)
+
+        # Calculate start of next month for exclusive boundary
+        if now.month == 12:
+            end_date = datetime(now.year + 1, 1, 1, tzinfo=tz)
+        else:
+            end_date = datetime(now.year, now.month + 1, 1, tzinfo=tz)
+
+        return start_date, end_date
 
     async def list_goals(self, auth_user_id: UUID) -> list[GoalRead]:
         goals = await self.repository.list_active(auth_user_id)
-        period = self._current_period()
-        contributions = await self.repository.get_period_contributions(auth_user_id, period)
+        start_date, end_date = self._current_period_dates()
+        contributions = await self.repository.get_period_contributions(
+            auth_user_id, start_date, end_date
+        )
 
         results = []
         for g in goals:
@@ -70,8 +81,10 @@ class GoalService:
         if goal.user_id != auth_user_id:
             raise GoalForbiddenError()
 
-        period = self._current_period()
-        contributions = await self.repository.get_period_contributions(auth_user_id, period)
+        start_date, end_date = self._current_period_dates()
+        contributions = await self.repository.get_period_contributions(
+            auth_user_id, start_date, end_date
+        )
 
         gr = GoalRead.model_validate(goal)
         gr.contributed_this_period = contributions.get(goal.id, Decimal("0.00"))
@@ -131,8 +144,10 @@ class GoalService:
 
         await self.repository.session.flush()
 
-        period = self._current_period()
-        contributions = await self.repository.get_period_contributions(auth_user_id, period)
+        start_date, end_date = self._current_period_dates()
+        contributions = await self.repository.get_period_contributions(
+            auth_user_id, start_date, end_date
+        )
         gr = GoalRead.model_validate(goal)
         gr.contributed_this_period = contributions.get(goal.id, Decimal("0.00"))
         return gr
@@ -142,9 +157,201 @@ class GoalService:
         if goal.user_id != auth_user_id:
             raise GoalForbiddenError()
 
+        progress = await self.repository.calculate_progress_by_goal(
+            goal_id,
+            auth_user_id,
+        )
+        if progress > 0:
+            raise ConflictError(message="No se puede archivar una meta con fondos reservados.")
+
         goal.is_active = False
         goal.status = "cancelled"
         await self.repository.session.flush()
+
+    @staticmethod
+    def _canonical_decimal(value: Decimal) -> str:
+        return format(value.normalize(), "f")
+
+    def _generate_fingerprint(
+        self,
+        user_id: UUID,
+        goal_id: UUID,
+        account_id: UUID,
+        transaction_type: str,
+        source_amount: Decimal,
+        source_currency: str,
+        applied_amount: Decimal,
+        goal_currency: str,
+    ) -> str:
+        payload = {
+            "account_id": str(account_id),
+            "applied_amount": self._canonical_decimal(applied_amount),
+            "goal_currency": goal_currency.upper(),
+            "goal_id": str(goal_id),
+            "source_amount": self._canonical_decimal(source_amount),
+            "source_currency": source_currency.upper(),
+            "transaction_type": transaction_type,
+            "user_id": str(user_id),
+        }
+        canon_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canon_json.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _resolve_command_id(
+        payload_command_id: UUID | None,
+        idempotency_key: str | None,
+    ) -> UUID | None:
+        header_command_id: UUID | None = None
+        if idempotency_key is not None:
+            try:
+                header_command_id = UUID(idempotency_key)
+            except (ValueError, AttributeError) as exc:
+                raise ValidationError(
+                    message="El Idempotency-Key debe ser un UUID válido."
+                ) from exc
+
+        if (
+            payload_command_id is not None
+            and header_command_id is not None
+            and payload_command_id != header_command_id
+        ):
+            raise ValidationError(
+                message=("El command_id del payload no coincide con el Idempotency-Key header.")
+            )
+
+        return payload_command_id or header_command_id
+
+    @staticmethod
+    def _is_command_unique_violation(exc: IntegrityError) -> bool:
+        current: object | None = exc.orig
+        visited: set[int] = set()
+        while current is not None and id(current) not in visited:
+            visited.add(id(current))
+            constraint_name = getattr(current, "constraint_name", None)
+            diag = getattr(current, "diag", None)
+            if (
+                constraint_name == "uq_gtx_command_id"
+                or getattr(diag, "constraint_name", None) == "uq_gtx_command_id"
+            ):
+                return True
+            current = getattr(current, "__cause__", None) or getattr(
+                current,
+                "__context__",
+                None,
+            )
+        return "uq_gtx_command_id" in str(exc.orig)
+
+    async def _replay_contribution(
+        self,
+        *,
+        auth_user_id: UUID,
+        goal_id: UUID,
+        payload: GoalContributionCreate,
+        command_id: UUID,
+        transaction: GoalTransaction,
+    ) -> GoalContributionResult:
+        if (
+            transaction.user_id != auth_user_id
+            or transaction.goal_id != goal_id
+            or transaction.account_id != payload.account_id
+        ):
+            raise ConflictError(message="El Idempotency-Key ya fue utilizado por otra operación.")
+
+        if (
+            payload.currency is not None
+            and payload.currency.upper() != transaction.source_currency.upper()
+        ):
+            raise ConflictError(
+                message="Conflicto de idempotencia: el payload difiere del original."
+            )
+
+        fingerprint = self._generate_fingerprint(
+            auth_user_id,
+            goal_id,
+            payload.account_id,
+            GoalTransactionType.allocation.value,
+            payload.amount,
+            transaction.source_currency,
+            payload.amount,
+            transaction.goal_currency,
+        )
+        if transaction.command_fingerprint != fingerprint:
+            raise ConflictError(
+                message="Conflicto de idempotencia: el payload difiere del original."
+            )
+
+        event = await self.ledger_repo.get_by_command_id(command_id)
+        event_metadata = (event.metadata_ or {}) if event is not None else {}
+        if (
+            event is None
+            or event.id != transaction.event_id
+            or event.user_id != auth_user_id
+            or event.account_id != transaction.account_id
+            or event.event_type != EventType.GOAL_CONTRIBUTION.value
+            or event.direction != Direction.NEUTRAL.value
+            or event.amount != transaction.source_amount
+            or event.currency.upper() != transaction.source_currency.upper()
+            or event_metadata.get("goal_id") != str(goal_id)
+        ):
+            raise ConflictError(
+                message="El registro idempotente no coincide con su evento financiero."
+            )
+
+        snapshot = transaction.metadata_json or {}
+        required_snapshot_fields = {
+            "goal_current_amount",
+            "goal_remaining_amount",
+            "goal_status",
+            "account_balance",
+            "goal_reserved_amount",
+            "available_balance",
+            "progress_percentage",
+        }
+        if not required_snapshot_fields.issubset(snapshot):
+            raise ConflictError(
+                message="El registro idempotente no contiene una respuesta histórica completa."
+            )
+
+        return GoalContributionResult(
+            transaction_id=transaction.id,
+            event_id=transaction.event_id,
+            goal_id=transaction.goal_id,
+            account_id=transaction.account_id,
+            source_amount=transaction.source_amount,
+            source_currency=transaction.source_currency,
+            applied_amount=transaction.applied_amount,
+            goal_currency=transaction.goal_currency,
+            goal_current_amount=Decimal(snapshot["goal_current_amount"]),
+            goal_remaining_amount=Decimal(snapshot["goal_remaining_amount"]),
+            goal_status=snapshot["goal_status"],
+            account_balance=Decimal(snapshot["account_balance"]),
+            goal_reserved_amount=Decimal(snapshot["goal_reserved_amount"]),
+            available_balance=Decimal(snapshot["available_balance"]),
+            progress_percentage=Decimal(snapshot["progress_percentage"]),
+            idempotent=True,
+            created_at=transaction.created_at,
+        )
+
+    async def _find_idempotent_contribution(
+        self,
+        *,
+        auth_user_id: UUID,
+        goal_id: UUID,
+        payload: GoalContributionCreate,
+        command_id: UUID | None,
+    ) -> GoalContributionResult | None:
+        if command_id is None:
+            return None
+        transaction = await self.repository.get_transaction_by_command_id(command_id)
+        if transaction is None:
+            return None
+        return await self._replay_contribution(
+            auth_user_id=auth_user_id,
+            goal_id=goal_id,
+            payload=payload,
+            command_id=command_id,
+            transaction=transaction,
+        )
 
     async def create_contribution(
         self,
@@ -153,153 +360,245 @@ class GoalService:
         payload: GoalContributionCreate,
         idempotency_key: str | None,
     ) -> GoalContributionResult:
+        command_id = self._resolve_command_id(
+            payload.command_id,
+            idempotency_key,
+        )
+
+        replay = await self._find_idempotent_contribution(
+            auth_user_id=auth_user_id,
+            goal_id=goal_id,
+            payload=payload,
+            command_id=command_id,
+        )
+        if replay is not None:
+            return replay
+
+        account = await self.account_repo.get_by_id_for_update(
+            payload.account_id,
+            include_inactive=True,
+        )
+        if not account:
+            raise NotFoundError(message="Cuenta no encontrada.")
 
         goal = await self.repository.get_by_id_for_update(goal_id)
         if not goal:
             raise NotFoundError(message="Meta no encontrada.")
 
+        # A concurrent winner may have committed while either lock was awaited.
+        replay = await self._find_idempotent_contribution(
+            auth_user_id=auth_user_id,
+            goal_id=goal_id,
+            payload=payload,
+            command_id=command_id,
+        )
+        if replay is not None:
+            return replay
+
+        if account.user_id != auth_user_id:
+            raise AccountForbiddenError()
         if goal.user_id != auth_user_id:
             raise GoalForbiddenError()
 
+        if not account.is_active:
+            raise ForbiddenError(message="Cuenta inactiva.")
         if not goal.is_active:
             raise GoalNotActiveError()
-
         if goal.status == "completed":
             raise GoalCompletedError()
+        if goal.status != "active":
+            raise GoalNotActiveError()
 
-        account = await self.account_repo.get_by_id_for_update(payload.account_id)
-        if not account:
-            raise NotFoundError(message="Cuenta no encontrada.")
-
-        if account.user_id is not None and account.user_id != auth_user_id:
-            raise AccountForbiddenError()
-
-        source_currency = payload.currency or account.currency
-        goal_currency = goal.currency or "COP"
-
-        if account.currency != source_currency:
-            raise ForbiddenError(
-                message="El currency no coincide con la moneda de la cuenta origen."
+        source_currency = account.currency.upper()
+        goal_currency = goal.currency.upper()
+        if source_currency != goal_currency:
+            raise ValidationError(
+                message="La moneda de la cuenta no coincide con la moneda de la meta."
             )
-
-        try:
-            fx_info = await get_fx_rate(source_currency, goal_currency)
-        except UnsupportedCurrencyError as e:
-            raise ForbiddenError(message=str(e))
-        except FXProviderError:
-            raise FXProviderUnavailableError()
-
-        fx_rate = fx_info["fx_rate"]
-        rate_source = fx_info["rate_source"]
-        rate_timestamp = fx_info["rate_timestamp"]
-        is_estimated = source_currency != goal_currency
+        if payload.currency is not None and payload.currency.upper() != source_currency:
+            raise ValidationError(message="La moneda legacy del payload no coincide con la cuenta.")
 
         source_amount = payload.amount
-        if source_currency == goal_currency:
-            applied_amount = source_amount
-        else:
-            applied_amount = round_to_minimum_unit(source_amount * fx_rate, goal_currency)
+        applied_amount = source_amount
 
-        if applied_amount > (goal.target_amount - goal.current_amount):
+        remaining = goal.target_amount - goal.current_amount
+        if applied_amount > remaining:
             raise GoalAmountExceededError()
 
-        if account.balance < source_amount:
+        if account.balance is None:
+            raise ForbiddenError(message="La cuenta no tiene saldo configurado.")
+        goal_reserved = await self.repository.calculate_reserved_by_account(
+            account.id,
+            auth_user_id,
+        )
+        if goal_reserved < 0:
+            raise ConflictError(message="La reserva acumulada de la cuenta es inconsistente.")
+        available_balance = account.balance - goal_reserved
+        if available_balance < 0:
             raise InsufficientFundsError()
+        if source_amount > available_balance:
+            raise InsufficientFundsError()
+
+        new_current_amount = goal.current_amount + applied_amount
+        new_remaining = goal.target_amount - new_current_amount
+        new_status = "completed" if new_remaining == 0 else "active"
+        new_reserved = goal_reserved + source_amount
+        new_available = account.balance - new_reserved
+        progress = min(
+            round(
+                (new_current_amount / goal.target_amount) * Decimal("100"),
+                2,
+            ),
+            Decimal("100"),
+        )
+        response_snapshot = {
+            "goal_current_amount": str(new_current_amount),
+            "goal_remaining_amount": str(new_remaining),
+            "goal_status": new_status,
+            "account_balance": str(account.balance),
+            "goal_reserved_amount": str(new_reserved),
+            "available_balance": str(new_available),
+            "progress_percentage": str(progress),
+        }
 
         event_create = LedgerEventCreate(
             user_id=auth_user_id,
             account_id=account.id,
             event_type=EventType.GOAL_CONTRIBUTION,
-            direction=Direction.OUTFLOW,
+            direction=Direction.NEUTRAL,
             amount=source_amount,
             currency=source_currency,
+            description=payload.description,
             source_message_id=payload.source_message_id,
             raw_message=payload.raw_message,
-            metadata={"goal_id": str(goal.id)},
+            metadata={
+                "goal_id": str(goal.id),
+                "transaction_type": GoalTransactionType.allocation.value,
+            },
+            command_id=command_id,
+        )
+        fingerprint = self._generate_fingerprint(
+            auth_user_id,
+            goal_id,
+            payload.account_id,
+            GoalTransactionType.allocation.value,
+            source_amount,
+            source_currency,
+            applied_amount,
+            goal_currency,
         )
 
-        if idempotency_key:
-            try:
-                event_create.command_id = UUID(idempotency_key)
-            except ValueError:
-                pass
+        try:
+            async with self.repository.session.begin_nested():
+                result = await self.ledger_repo.insert_event(event_create)
+                if result.idempotent:
+                    replay = await self._find_idempotent_contribution(
+                        auth_user_id=auth_user_id,
+                        goal_id=goal_id,
+                        payload=payload,
+                        command_id=command_id,
+                    )
+                    if replay is not None:
+                        return replay
+                    raise ConflictError(
+                        message=("El Idempotency-Key ya pertenece a otra operación financiera.")
+                    )
 
-        result = await self.ledger_repo.insert_event(event_create)
-        event = result.event
+                event = result.event
+                transaction = GoalTransaction(
+                    user_id=auth_user_id,
+                    goal_id=goal.id,
+                    account_id=account.id,
+                    event_id=event.id,
+                    transaction_type=GoalTransactionType.allocation,
+                    source_amount=source_amount,
+                    source_currency=source_currency,
+                    applied_amount=applied_amount,
+                    goal_currency=goal_currency,
+                    command_id=command_id,
+                    command_fingerprint=fingerprint if command_id else None,
+                    metadata_json=response_snapshot,
+                )
+                await self.repository.create_transaction(transaction)
 
-        if goal.target_amount > 0:
-            progress = min(
-                round((goal.current_amount / goal.target_amount) * Decimal("100"), 2),
-                Decimal("100"),
+                goal.current_amount = new_current_amount
+                goal.status = new_status
+                await self.repository.session.flush()
+
+        except IntegrityError as e:
+            if command_id is None or not self._is_command_unique_violation(e):
+                raise
+            replay = await self._find_idempotent_contribution(
+                auth_user_id=auth_user_id,
+                goal_id=goal_id,
+                payload=payload,
+                command_id=command_id,
             )
-        else:
-            progress = Decimal("0")
-
-        if result.idempotent:
-            # Idempotent retry
-            return GoalContributionResult(
-                contribution_id=None,
-                event_id=event.id if event else None,
-                amount=source_amount,
-                currency=source_currency,
-                applied_amount=applied_amount,
-                goal_currency=goal_currency,
-                fx_rate=fx_rate,
-                rate_source=rate_source,
-                rate_timestamp=rate_timestamp,
-                is_estimated=is_estimated,
-                balance_after=account.balance,
-                goal_current_amount=goal.current_amount,
-                progress_percentage=progress,
-                status="idempotent_retry",
-            )
-
-        # New contribution
-        await self.account_repo.update_balance(account, -source_amount)
-
-        contribution = GoalContribution(
-            user_id=auth_user_id,
-            goal_id=goal.id,
-            event_id=event.id,
-            account_id=account.id,
-            amount=source_amount,
-            currency=source_currency,
-            applied_amount=applied_amount,
-            goal_currency=goal_currency,
-            fx_rate=fx_rate,
-            rate_source=rate_source,
-            rate_timestamp=rate_timestamp,
-            is_estimated=is_estimated,
-            period=event.period,
-        )
-        await self.repository.create_contribution(contribution)
-
-        goal.current_amount += applied_amount
-
-        if goal.current_amount >= goal.target_amount:
-            goal.status = "completed"
-            goal.current_amount = goal.target_amount  # Ensure we don't exceed logically
-
-        # Recalculate progress for new amount
-        if goal.target_amount > 0:
-            new_progress = min(
-                round((goal.current_amount / goal.target_amount) * Decimal("100"), 2),
-                Decimal("100"),
-            )
-        else:
-            new_progress = Decimal("0")
-
-        await self.repository.session.flush()
-        await self.repository.session.refresh(goal)
+            if replay is None:
+                raise
+            return replay
 
         return GoalContributionResult(
-            contribution_id=contribution.id,
+            transaction_id=transaction.id,
             event_id=event.id,
-            amount=payload.amount,
-            balance_after=account.balance,
+            goal_id=goal.id,
+            account_id=account.id,
+            source_amount=source_amount,
+            source_currency=source_currency,
+            applied_amount=applied_amount,
+            goal_currency=goal_currency,
             goal_current_amount=goal.current_amount,
-            progress_percentage=new_progress,
-            status="success",
+            goal_remaining_amount=new_remaining,
+            goal_status=goal.status,
+            account_balance=account.balance,
+            goal_reserved_amount=new_reserved,
+            available_balance=new_available,
+            progress_percentage=progress,
+            idempotent=False,
+            created_at=transaction.created_at,
+        )
+
+    async def list_goal_transactions(
+        self, auth_user_id: UUID, goal_id: UUID, limit: int = 50, offset: int = 0
+    ) -> "GoalTransactionsResponse":
+        goal = await self._get_goal_or_404(goal_id)
+        if goal.user_id != auth_user_id:
+            raise GoalForbiddenError()
+
+        rows, total = await self.repository.list_transactions_by_goal(
+            goal_id, auth_user_id, limit, offset
+        )
+
+        read_items = []
+        for transaction, event_description in rows:
+            transaction_type = GoalTransactionType(transaction.transaction_type)
+            t = transaction
+            origin = "legacy" if getattr(t, "legacy_contribution_id", None) else "native"
+            description = None
+            if origin == "native" and isinstance(event_description, str):
+                sanitized = " ".join(event_description.split())
+                description = sanitized[:255] or None
+            read_items.append(
+                GoalTransactionRead(
+                    id=t.id,
+                    transaction_type=transaction_type,
+                    account_id=t.account_id,
+                    source_amount=t.source_amount,
+                    source_currency=t.source_currency,
+                    applied_amount=t.applied_amount,
+                    goal_currency=t.goal_currency,
+                    event_id=t.event_id,
+                    description=description,
+                    created_at=t.created_at,
+                    origin=origin,
+                )
+            )
+
+        return GoalTransactionsResponse(
+            items=read_items,
+            total=total,
+            limit=limit,
+            offset=offset,
         )
 
     async def _get_goal_or_404(self, goal_id: UUID) -> Goal:

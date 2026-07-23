@@ -1,31 +1,47 @@
-from uuid import UUID
-from datetime import datetime, date
 import calendar
+from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
+from uuid import UUID
 
 from app.accounts.exceptions import AccountDuplicateError, AccountForbiddenError
 from app.accounts.models import Account
 from app.accounts.repository import AccountRepository
 from app.accounts.schemas import (
+    AccountAvailabilityRead,
     AccountCreate,
-    AccountRead,
     AccountDetailRead,
-    AccountSummary,
     AccountPeriodSummary,
+    AccountRead,
+    AccountSummary,
     AccountUpdate,
     BalanceAdjustmentCreate,
 )
-from app.core.errors import NotFoundError
+from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.utils import clean_presentation_name, normalize_name
 from app.ledger.enums import Direction, EventType
 from app.ledger.repository import LedgerRepository
-from app.ledger.schemas import LedgerEventCreate, LedgerEventsResponse, LedgerPaginationInfo, LedgerEventDetail
+from app.ledger.schemas import (
+    LedgerEventCreate,
+    LedgerEventDetail,
+    LedgerEventsResponse,
+    LedgerPaginationInfo,
+)
+
+if TYPE_CHECKING:
+    from app.goals.repository import GoalRepository
 
 
 class AccountService:
-    def __init__(self, repository: AccountRepository, ledger_repo: LedgerRepository | None = None):
+    def __init__(
+        self,
+        repository: AccountRepository,
+        ledger_repo: LedgerRepository | None = None,
+        goal_repository: "GoalRepository | None" = None,
+    ):
         self.repository = repository
         self.ledger_repo = ledger_repo
+        self.goal_repository = goal_repository
 
     async def list_accounts(
         self, auth_user_id: UUID, include_archived: bool = False
@@ -39,20 +55,27 @@ class AccountService:
         account = await self._get_account_or_404(account_id, include_inactive=True)
         if account.user_id != auth_user_id:
             raise AccountForbiddenError()
-        
+
         has_movements = False
         movement_count = 0
         last_movement_at = None
-        
+
         if self.ledger_repo:
-            events, total = await self.ledger_repo.list_events(user_id=auth_user_id, account_id=account_id, limit=1)
+            events, total = await self.ledger_repo.list_events(
+                user_id=auth_user_id, account_id=account_id, limit=1
+            )
             movement_count = total
             if total > 0:
                 has_movements = True
                 last_movement_at = events[0].occurred_at
-                
+
         read_dict = AccountRead.model_validate(account).model_dump()
-        return AccountDetailRead(**read_dict, has_movements=has_movements, movement_count=movement_count, last_movement_at=last_movement_at)
+        return AccountDetailRead(
+            **read_dict,
+            has_movements=has_movements,
+            movement_count=movement_count,
+            last_movement_at=last_movement_at,
+        )
 
     async def create_account(self, auth_user_id: UUID, payload: AccountCreate) -> AccountRead:
         import uuid
@@ -111,13 +134,13 @@ class AccountService:
                 if exists:
                     raise AccountDuplicateError()
             account.name = clean_presentation_name(payload.name)
-            
+
         if payload.type is not None:
             account.type = payload.type.value
 
         await self.repository.session.flush()
         return AccountRead.model_validate(account)
-        
+
     async def archive_account(self, auth_user_id: UUID, account_id: UUID) -> AccountRead:
         account = await self._get_account_or_404(account_id, include_inactive=True)
         if account.user_id != auth_user_id:
@@ -135,7 +158,9 @@ class AccountService:
         return AccountRead.model_validate(account)
 
     async def delete_account(self, auth_user_id: UUID, account_id: UUID) -> None:
-        raise ValueError("La eliminación de cuentas no está soportada. Por favor archive la cuenta.")
+        raise ValueError(
+            "La eliminación de cuentas no está soportada. Por favor archive la cuenta."
+        )
 
     async def create_balance_adjustment(
         self, auth_user_id: UUID, account_id: UUID, payload: "BalanceAdjustmentCreate"
@@ -176,7 +201,9 @@ class AccountService:
         await self.repository.session.flush()
         return AccountRead.model_validate(account)
 
-    async def _get_account_or_404(self, account_id: UUID, include_inactive: bool = False) -> Account:
+    async def _get_account_or_404(
+        self, account_id: UUID, include_inactive: bool = False
+    ) -> Account:
         account = await self.repository.get_by_id(account_id, include_inactive=include_inactive)
         if not account:
             raise NotFoundError(message="Cuenta no encontrada.")
@@ -184,7 +211,7 @@ class AccountService:
 
     async def get_summary(self, auth_user_id: UUID) -> AccountSummary:
         from collections import defaultdict
-        
+
         accounts = await self.repository.list_by_user_all(auth_user_id)
         totals = defaultdict(Decimal)
         for a in accounts:
@@ -218,7 +245,7 @@ class AccountService:
         transfer_inflows = Decimal("0")
         transfer_outflows = Decimal("0")
         net_flow = Decimal("0")
-        
+
         if not self.ledger_repo:
             return AccountPeriodSummary(
                 total_inflows=total_inflows,
@@ -229,7 +256,7 @@ class AccountService:
                 movement_count=0,
                 period_start=date_from,
                 period_end=date_to,
-                currency=account.currency
+                currency=account.currency,
             )
 
         events, total_count = await self.ledger_repo.list_events(
@@ -262,7 +289,7 @@ class AccountService:
             movement_count=total_count,
             period_start=date_from,
             period_end=date_to,
-            currency=account.currency
+            currency=account.currency,
         )
 
     async def list_account_movements(
@@ -282,8 +309,7 @@ class AccountService:
 
         if not self.ledger_repo:
             return LedgerEventsResponse(
-                items=[],
-                pagination=LedgerPaginationInfo(limit=limit, offset=offset, total=0)
+                items=[], pagination=LedgerPaginationInfo(limit=limit, offset=offset, total=0)
             )
 
         events, total = await self.ledger_repo.list_events(
@@ -299,6 +325,49 @@ class AccountService:
 
         details = [LedgerEventDetail.model_validate(e) for e in events]
         return LedgerEventsResponse(
-            items=details,
-            pagination=LedgerPaginationInfo(limit=limit, offset=offset, total=total)
+            items=details, pagination=LedgerPaginationInfo(limit=limit, offset=offset, total=total)
+        )
+
+    async def get_account_availability(
+        self,
+        auth_user_id: UUID,
+        account_id: UUID,
+    ) -> AccountAvailabilityRead:
+        account = await self.repository.get_by_id(account_id, include_inactive=True)
+        if not account:
+            raise NotFoundError(message="Cuenta no encontrada.")
+        if account.user_id != auth_user_id:
+            raise NotFoundError(message="Cuenta no encontrada.")
+        if not account.is_active:
+            raise ValidationError(message="La cuenta no est\u00e1 activa.")
+        if account.balance is None:
+            raise ValidationError(message="La cuenta no tiene un balance v\u00e1lido.")
+
+        goal_repository = self.goal_repository
+        if goal_repository is None:
+            # Preserve existing constructor consumers while reusing the same
+            # session and transaction boundary.
+            from app.goals.repository import GoalRepository
+
+            goal_repository = GoalRepository(self.repository.session)
+
+        reserved_amount = await goal_repository.calculate_reserved_by_account(
+            account_id,
+            auth_user_id,
+        )
+        if reserved_amount < 0:
+            raise ConflictError(message="La reserva acumulada de la cuenta es inconsistente.")
+
+        available_balance = account.balance - reserved_amount
+        if available_balance < 0:
+            raise ConflictError(
+                message="Las reservas de metas exceden el balance bruto de la cuenta."
+            )
+
+        return AccountAvailabilityRead(
+            account_id=account.id,
+            currency=account.currency,
+            balance=account.balance,
+            goal_reserved_amount=reserved_amount,
+            available_balance=available_balance,
         )

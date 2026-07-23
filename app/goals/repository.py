@@ -1,11 +1,16 @@
+from collections import defaultdict
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.accounts.models import Account
 from app.core.utils import normalize_name
-from app.goals.models import Goal, GoalContribution
+from app.goals.enums import GoalTransactionType
+from app.goals.models import Goal, GoalContribution, GoalTransaction
+from app.ledger.models import FinancialEvent
 
 
 class GoalRepository:
@@ -40,17 +45,68 @@ class GoalRepository:
                 return True
         return False
 
-    async def get_period_contributions(self, user_id: UUID, period: str) -> dict[UUID, Decimal]:
-        from sqlalchemy import func
+    async def get_period_contributions(
+        self,
+        user_id: UUID,
+        start_datetime: datetime,
+        end_datetime_exclusive: datetime,
+    ) -> dict[UUID, Decimal]:
+        if start_datetime.utcoffset() is None or end_datetime_exclusive.utcoffset() is None:
+            raise ValueError("Los límites temporales deben incluir zona horaria.")
+        if start_datetime >= end_datetime_exclusive:
+            raise ValueError("El fin exclusivo debe ser posterior al inicio.")
 
-        stmt = (
+        # GoalTransaction is authoritative. During a pre-migration rolling
+        # window, legacy rows without a corresponding import remain visible.
+        signed_applied_amount = case(
+            (
+                GoalTransaction.transaction_type == GoalTransactionType.allocation,
+                GoalTransaction.applied_amount,
+            ),
+            (
+                GoalTransaction.transaction_type == GoalTransactionType.release,
+                -GoalTransaction.applied_amount,
+            ),
+            else_=Decimal("0"),
+        )
+        gt_stmt = (
+            select(GoalTransaction.goal_id, func.sum(signed_applied_amount))
+            .where(GoalTransaction.user_id == user_id)
+            .where(GoalTransaction.created_at >= start_datetime)
+            .where(GoalTransaction.created_at < end_datetime_exclusive)
+            .where(
+                GoalTransaction.transaction_type.in_(
+                    (
+                        GoalTransactionType.allocation,
+                        GoalTransactionType.release,
+                    )
+                )
+            )
+            .group_by(GoalTransaction.goal_id)
+        )
+
+        legacy_migrated_ids = select(GoalTransaction.legacy_contribution_id).where(
+            GoalTransaction.legacy_contribution_id.isnot(None)
+        )
+        gc_stmt = (
             select(GoalContribution.goal_id, func.sum(GoalContribution.amount))
             .where(GoalContribution.user_id == user_id)
-            .where(GoalContribution.period == period)
+            .where(GoalContribution.created_at >= start_datetime)
+            .where(GoalContribution.created_at < end_datetime_exclusive)
+            .where(GoalContribution.id.not_in(legacy_migrated_ids))
             .group_by(GoalContribution.goal_id)
         )
-        result = await self.session.execute(stmt)
-        return {row[0]: Decimal(str(row[1] or 0)) for row in result.all()}
+
+        gt_result = await self.session.execute(gt_stmt)
+        gc_result = await self.session.execute(gc_stmt)
+
+        totals = defaultdict(Decimal)
+        for row in gt_result.all():
+            totals[row[0]] += Decimal(str(row[1] or 0))
+        for row in gc_result.all():
+            totals[row[0]] += Decimal(str(row[1] or 0))
+
+        return dict(totals)
 
     async def create(self, goal: Goal) -> Goal:
         self.session.add(goal)
@@ -61,3 +117,136 @@ class GoalRepository:
         self.session.add(contribution)
         await self.session.flush()
         return contribution
+
+    async def create_transaction(self, transaction: GoalTransaction) -> GoalTransaction:
+        self.session.add(transaction)
+        await self.session.flush()
+        return transaction
+
+    async def get_transaction_by_id(self, tx_id: UUID) -> GoalTransaction | None:
+        result = await self.session.execute(
+            select(GoalTransaction).where(GoalTransaction.id == tx_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_transaction_by_command_id(self, command_id: UUID) -> GoalTransaction | None:
+        result = await self.session.execute(
+            select(GoalTransaction).where(GoalTransaction.command_id == command_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_transaction_by_legacy_contribution_id(
+        self, legacy_id: UUID
+    ) -> GoalTransaction | None:
+        result = await self.session.execute(
+            select(GoalTransaction).where(GoalTransaction.legacy_contribution_id == legacy_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_transactions_by_goal(
+        self, goal_id: UUID, user_id: UUID, limit: int = 50, offset: int = 0
+    ) -> tuple[list[tuple[GoalTransaction, str | None]], int]:
+        count_stmt = (
+            select(func.count())
+            .select_from(GoalTransaction)
+            .where(GoalTransaction.goal_id == goal_id)
+            .where(GoalTransaction.user_id == user_id)
+        )
+        total = await self.session.scalar(count_stmt) or 0
+
+        result = await self.session.execute(
+            select(GoalTransaction, FinancialEvent.description)
+            .outerjoin(FinancialEvent, FinancialEvent.id == GoalTransaction.event_id)
+            .where(GoalTransaction.goal_id == goal_id)
+            .where(GoalTransaction.user_id == user_id)
+            .order_by(GoalTransaction.created_at.desc(), GoalTransaction.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return [(row[0], row[1]) for row in result.all()], total
+
+    async def calculate_reserved_by_account(self, account_id: UUID, user_id: UUID) -> Decimal:
+        allocations_sum = func.coalesce(
+            func.sum(GoalTransaction.source_amount).filter(
+                GoalTransaction.transaction_type == GoalTransactionType.allocation
+            ),
+            Decimal("0"),
+        )
+        releases_sum = func.coalesce(
+            func.sum(GoalTransaction.source_amount).filter(
+                GoalTransaction.transaction_type == GoalTransactionType.release
+            ),
+            Decimal("0"),
+        )
+
+        result = await self.session.execute(
+            select(allocations_sum - releases_sum)
+            .where(GoalTransaction.account_id == account_id)
+            .where(GoalTransaction.user_id == user_id)
+        )
+        val = result.scalar_one_or_none()
+        return Decimal(str(val)) if val is not None else Decimal("0.00")
+
+    async def calculate_reserved_by_user_currency(
+        self,
+        user_id: UUID,
+    ) -> dict[str, Decimal]:
+        signed_source_amount = case(
+            (
+                GoalTransaction.transaction_type == GoalTransactionType.allocation,
+                GoalTransaction.source_amount,
+            ),
+            (
+                GoalTransaction.transaction_type == GoalTransactionType.release,
+                -GoalTransaction.source_amount,
+            ),
+            else_=Decimal("0"),
+        )
+        currency = func.upper(GoalTransaction.source_currency)
+        result = await self.session.execute(
+            select(currency, func.coalesce(func.sum(signed_source_amount), Decimal("0")))
+            .join(Account, Account.id == GoalTransaction.account_id)
+            .where(GoalTransaction.user_id == user_id)
+            .where(Account.user_id == user_id)
+            .where(Account.is_active.is_(True))
+            .where(
+                GoalTransaction.transaction_type.in_(
+                    (
+                        GoalTransactionType.allocation,
+                        GoalTransactionType.release,
+                    )
+                )
+            )
+            .group_by(currency)
+        )
+        return {row[0]: Decimal(str(row[1] or 0)) for row in result.all()}
+
+    async def calculate_progress_by_goal(self, goal_id: UUID, user_id: UUID) -> Decimal:
+        allocations_sum = func.coalesce(
+            func.sum(GoalTransaction.applied_amount).filter(
+                GoalTransaction.transaction_type == GoalTransactionType.allocation
+            ),
+            Decimal("0"),
+        )
+        releases_sum = func.coalesce(
+            func.sum(GoalTransaction.applied_amount).filter(
+                GoalTransaction.transaction_type == GoalTransactionType.release
+            ),
+            Decimal("0"),
+        )
+
+        result = await self.session.execute(
+            select(allocations_sum - releases_sum)
+            .where(GoalTransaction.goal_id == goal_id)
+            .where(GoalTransaction.user_id == user_id)
+        )
+        val = result.scalar_one_or_none()
+        return Decimal(str(val)) if val is not None else Decimal("0.00")
+
+    async def count_non_legacy_transactions(self) -> int:
+        result = await self.session.execute(
+            select(func.count(GoalTransaction.id)).where(
+                GoalTransaction.legacy_contribution_id.is_(None)
+            )
+        )
+        return result.scalar_one() or 0

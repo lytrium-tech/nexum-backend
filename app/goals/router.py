@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, status
+from fastapi import APIRouter, Depends, Header, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.repository import AccountRepository
@@ -12,6 +12,7 @@ from app.goals.schemas import (
     GoalContributionResult,
     GoalCreate,
     GoalRead,
+    GoalTransactionsResponse,
     GoalUpdate,
 )
 from app.goals.service import GoalService
@@ -86,12 +87,22 @@ async def delete_goal(
         await service.delete_goal(user_id, goal_id)
 
 
-@router.post("/{goal_id}/contributions", response_model=GoalContributionResult)
+@router.post(
+    "/{goal_id}/contributions",
+    response_model=GoalContributionResult,
+    responses={
+        401: {"description": "Autenticación requerida"},
+        403: {"description": "Cuenta o meta ajena/inactiva"},
+        404: {"description": "Cuenta o meta no encontrada"},
+        409: {"description": "Conflicto de idempotencia, reserva o monto"},
+        422: {"description": "Payload o moneda inválidos"},
+    },
+)
 async def create_contribution(
     goal_id: UUID,
     payload: GoalContributionCreate,
     current_profile: CurrentUserProfile,
-    idempotency_key: str | None = Header(None),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     session: AsyncSession = Depends(get_db_session),
 ) -> GoalContributionResult:
     uow = UnitOfWork(session)
@@ -99,3 +110,24 @@ async def create_contribution(
         service = get_goal_service(session)
         user_id = current_profile.id
         return await service.create_contribution(user_id, goal_id, payload, idempotency_key)
+
+
+@router.get(
+    "/{goal_id}/transactions",
+    response_model=GoalTransactionsResponse,
+    responses={
+        401: {"description": "Autenticación requerida"},
+        403: {"description": "Meta ajena"},
+        404: {"description": "Meta no encontrada"},
+        422: {"description": "Paginación inválida"},
+    },
+)
+async def list_goal_transactions(
+    goal_id: UUID,
+    current_profile: CurrentUserProfile,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    service: GoalService = Depends(get_goal_service),
+) -> GoalTransactionsResponse:
+    user_id = current_profile.id
+    return await service.list_goal_transactions(user_id, goal_id, limit, offset)

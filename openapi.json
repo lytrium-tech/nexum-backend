@@ -577,6 +577,56 @@
         }
       }
     },
+    "/api/v1/accounts/{account_id}/availability": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Get Account Availability",
+        "operationId": "get_account_availability_api_v1_accounts__account_id__availability_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Account Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountAvailabilityRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Autenticaci\u00f3n requerida"
+          },
+          "404": {
+            "description": "Cuenta inexistente o no accesible"
+          },
+          "409": {
+            "description": "Estado de reservas inconsistente"
+          },
+          "422": {
+            "description": "Cuenta inactiva o sin balance v\u00e1lido"
+          }
+        }
+      }
+    },
     "/api/v1/accounts/{account_id}/adjustments": {
       "post": {
         "tags": [
@@ -1398,7 +1448,7 @@
             }
           },
           {
-            "name": "idempotency-key",
+            "name": "Idempotency-Key",
             "in": "header",
             "required": false,
             "schema": {
@@ -1435,15 +1485,93 @@
               }
             }
           },
+          "401": {
+            "description": "Autenticaci\u00f3n requerida"
+          },
+          "403": {
+            "description": "Cuenta o meta ajena/inactiva"
+          },
+          "404": {
+            "description": "Cuenta o meta no encontrada"
+          },
+          "409": {
+            "description": "Conflicto de idempotencia, reserva o monto"
+          },
           "422": {
-            "description": "Validation Error",
+            "description": "Payload o moneda inv\u00e1lidos"
+          }
+        }
+      }
+    },
+    "/api/v1/goals/{goal_id}/transactions": {
+      "get": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "List Goal Transactions",
+        "operationId": "list_goal_transactions_api_v1_goals__goal_id__transactions_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "goal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Goal Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/GoalTransactionsResponse"
                 }
               }
             }
+          },
+          "401": {
+            "description": "Autenticaci\u00f3n requerida"
+          },
+          "403": {
+            "description": "Meta ajena"
+          },
+          "404": {
+            "description": "Meta no encontrada"
+          },
+          "422": {
+            "description": "Paginaci\u00f3n inv\u00e1lida"
           }
         }
       }
@@ -4862,6 +4990,46 @@
   },
   "components": {
     "schemas": {
+      "AccountAvailabilityRead": {
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Account Id"
+          },
+          "currency": {
+            "type": "string",
+            "maxLength": 3,
+            "minLength": 3,
+            "title": "Currency"
+          },
+          "balance": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Balance"
+          },
+          "goal_reserved_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Goal Reserved Amount"
+          },
+          "available_balance": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Available Balance"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "account_id",
+          "currency",
+          "balance",
+          "goal_reserved_amount",
+          "available_balance"
+        ],
+        "title": "AccountAvailabilityRead"
+      },
       "AccountBalanceRead": {
         "properties": {
           "account_id": {
@@ -7538,7 +7706,7 @@
               },
               {
                 "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)"
               }
             ],
             "title": "Amount"
@@ -7554,7 +7722,32 @@
                 "type": "null"
               }
             ],
-            "title": "Currency"
+            "title": "Currency",
+            "description": "Legacy compatibility only. The account currency is authoritative."
+          },
+          "command_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command Id"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
           },
           "source_message_id": {
             "anyOf": [
@@ -7580,6 +7773,7 @@
             "title": "Raw Message"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "account_id",
@@ -7589,6 +7783,86 @@
       },
       "GoalContributionResult": {
         "properties": {
+          "transaction_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Transaction Id"
+          },
+          "event_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Event Id"
+          },
+          "goal_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Goal Id"
+          },
+          "account_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Account Id"
+          },
+          "source_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+            "title": "Source Amount"
+          },
+          "source_currency": {
+            "type": "string",
+            "maxLength": 3,
+            "minLength": 3,
+            "title": "Source Currency"
+          },
+          "applied_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+            "title": "Applied Amount"
+          },
+          "goal_currency": {
+            "type": "string",
+            "maxLength": 3,
+            "minLength": 3,
+            "title": "Goal Currency"
+          },
+          "goal_current_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Goal Current Amount"
+          },
+          "goal_remaining_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Goal Remaining Amount"
+          },
+          "goal_status": {
+            "type": "string",
+            "title": "Goal Status"
+          },
+          "account_balance": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Account Balance"
+          },
+          "goal_reserved_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Goal Reserved Amount"
+          },
+          "available_balance": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Available Balance"
+          },
+          "idempotent": {
+            "type": "boolean",
+            "title": "Idempotent"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
           "contribution_id": {
             "anyOf": [
               {
@@ -7601,21 +7875,16 @@
             ],
             "title": "Contribution Id"
           },
-          "event_id": {
+          "amount": {
             "anyOf": [
               {
                 "type": "string",
-                "format": "uuid"
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Event Id"
-          },
-          "amount": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Amount"
           },
           "currency": {
@@ -7628,29 +7897,6 @@
               }
             ],
             "title": "Currency"
-          },
-          "applied_amount": {
-            "anyOf": [
-              {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Applied Amount"
-          },
-          "goal_currency": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Goal Currency"
           },
           "fx_rate": {
             "anyOf": [
@@ -7693,14 +7939,16 @@
             "default": false
           },
           "balance_after": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Balance After"
-          },
-          "goal_current_amount": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Goal Current Amount"
           },
           "progress_percentage": {
             "anyOf": [
@@ -7715,19 +7963,36 @@
             "title": "Progress Percentage"
           },
           "status": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Status"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
-          "contribution_id",
+          "transaction_id",
           "event_id",
-          "amount",
-          "balance_after",
+          "goal_id",
+          "account_id",
+          "source_amount",
+          "source_currency",
+          "applied_amount",
+          "goal_currency",
           "goal_current_amount",
-          "progress_percentage",
-          "status"
+          "goal_remaining_amount",
+          "goal_status",
+          "account_balance",
+          "goal_reserved_amount",
+          "available_balance",
+          "idempotent",
+          "created_at"
         ],
         "title": "GoalContributionResult"
       },
@@ -7946,6 +8211,139 @@
           "daily_required_this_period"
         ],
         "title": "GoalRead"
+      },
+      "GoalTransactionRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "transaction_type": {
+            "$ref": "#/components/schemas/GoalTransactionType"
+          },
+          "account_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Account Id"
+          },
+          "source_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+            "title": "Source Amount"
+          },
+          "source_currency": {
+            "type": "string",
+            "maxLength": 3,
+            "minLength": 3,
+            "title": "Source Currency"
+          },
+          "applied_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+            "title": "Applied Amount"
+          },
+          "goal_currency": {
+            "type": "string",
+            "maxLength": 3,
+            "minLength": 3,
+            "title": "Goal Currency"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "legacy",
+              "native"
+            ],
+            "title": "Origin"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "transaction_type",
+          "account_id",
+          "source_amount",
+          "source_currency",
+          "applied_amount",
+          "goal_currency",
+          "event_id",
+          "created_at",
+          "origin"
+        ],
+        "title": "GoalTransactionRead"
+      },
+      "GoalTransactionType": {
+        "type": "string",
+        "enum": [
+          "allocation",
+          "release",
+          "adjustment",
+          "legacy_import"
+        ],
+        "title": "GoalTransactionType"
+      },
+      "GoalTransactionsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GoalTransactionRead"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "GoalTransactionsResponse"
       },
       "GoalUpdate": {
         "properties": {

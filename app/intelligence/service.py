@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import ConflictError
 from app.credit.service import CreditCardService
 from app.intelligence.repository import IntelligenceRepository
 from app.intelligence.schemas import (
@@ -173,12 +174,27 @@ class IntelligenceService:
 
         goal_repo = GoalRepository(self.session)
         user_goals = await goal_repo.list_active(user_id)
+        reserved_by_currency = await goal_repo.calculate_reserved_by_user_currency(user_id)
+
+        goal_reserved = Decimal("0.00")
+        for curr, amount in reserved_by_currency.items():
+            if amount < 0:
+                raise ConflictError(message="La reserva acumulada de metas es inconsistente.")
+            currency_metrics = get_cm(curr)
+            if amount > currency_metrics.available_real:
+                raise ConflictError(
+                    message="Las reservas de metas exceden el balance bruto disponible."
+                )
+            goal_reserved += amount
+            currency_metrics.committed_outflows += amount
 
         goals_required = Decimal("0.00")
         from app.goals.schemas import GoalRead
 
         if user_goals:
-            goal_contributions = await goal_repo.get_period_contributions(user_id, period_str)
+            goal_contributions = await goal_repo.get_period_contributions(
+                user_id, month_start, next_month_start
+            )
             for g in user_goals:
                 gr = GoalRead.model_validate(g)
                 gr.contributed_this_period = goal_contributions.get(g.id, Decimal("0.00"))
@@ -186,7 +202,7 @@ class IntelligenceService:
                 curr = g.currency.upper()
                 get_cm(curr).committed_outflows += gr.remaining_required_this_period
 
-        committed_outflows = pending_obligations + payment_required + goals_required
+        committed_outflows = pending_obligations + payment_required + goal_reserved + goals_required
 
         free_money = available_real - committed_outflows
         if free_money < 0:
@@ -197,7 +213,9 @@ class IntelligenceService:
 
         # Prevent global truth mixing of currencies
         has_multiple_currencies = (
-            cash.get("currency_count", 0) > 1 or cf.get("currency_count", 0) > 1
+            cash.get("currency_count", 0) > 1
+            or cf.get("currency_count", 0) > 1
+            or len(totals_by_currency) > 1
         )
 
         calculation_warnings = []
@@ -385,22 +403,28 @@ class IntelligenceService:
 
         avail = snapshot.truth.available_real
         pending_obl = self._safe_decimal(snapshot.obligations.pending_amount)
-        goals_req = snapshot.truth.goals_required_this_period
         cc_req = snapshot.truth.payment_required
         free = snapshot.truth.free_money
+        goals_commitment = max(
+            Decimal("0.00"),
+            snapshot.truth.committed_outflows - pending_obl - cc_req,
+        )
 
         explanation = {
             "step_1": "Tomamos todo el dinero disponible en cuentas l├¡quidas.",
             "step_2": "Restamos las obligaciones pendientes del mes actual.",
             "step_3": "Restamos el pago requerido de tarjetas de cr├®dito ya facturado.",
-            "step_4": "Restamos el dinero necesario para cumplir tus metas de este mes.",
+            "step_4": (
+                "Restamos las reservas de metas y la necesidad futura pendiente "
+                "del periodo, cada una una sola vez."
+            ),
             "result": "El saldo resultante es tu dinero libre, descontando compromisos inminentes.",
         }
 
         return FreeMoneyRead(
             available_real=avail,
             minus_pending_obligations=pending_obl,
-            minus_goals_required=goals_req,
+            minus_goals_required=goals_commitment,
             minus_credit_cards_required_payment=cc_req,
             free_money_result=free,
             explanation=explanation,

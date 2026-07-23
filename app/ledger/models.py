@@ -29,6 +29,20 @@ from sqlalchemy.sql import func
 from app.accounts.models import Account  # noqa: F401
 from app.categories.models import Category  # noqa: F401
 from app.core.database import Base
+from app.ledger.enums import EventType
+
+FINANCIAL_EVENT_TYPES = tuple(event_type.value for event_type in EventType)
+
+
+def _sql_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+FINANCIAL_EVENT_TYPE_CHECK_SQL = (
+    "event_type = ANY (ARRAY["
+    + ", ".join(_sql_literal(value) for value in FINANCIAL_EVENT_TYPES)
+    + "])"
+)
 
 
 class FinancialEvent(Base):
@@ -100,9 +114,7 @@ class FinancialEvent(Base):
             name="financial_events_direction_check",
         ),
         CheckConstraint(
-            "event_type = ANY (ARRAY['income', 'expense', 'credit_card_purchase', "
-            "'credit_card_payment', 'obligation_payment', "
-            "'goal_contribution', 'manual_adjustment', 'transfer_out', 'transfer_in'])",
+            FINANCIAL_EVENT_TYPE_CHECK_SQL,
             name="financial_events_type_check",
         ),
         # Índice único parcial que garantiza idempotencia

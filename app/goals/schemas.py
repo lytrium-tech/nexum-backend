@@ -1,11 +1,13 @@
 import calendar
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from app.core.currency import get_minimum_unit, round_up_to_minimum_unit
+from app.goals.enums import GoalTransactionType
 
 
 class GoalCreate(BaseModel):
@@ -66,7 +68,9 @@ class GoalRead(BaseModel):
             return Decimal("0.00")
         today = datetime.now(UTC).date()
         if today >= self.target_date:
-            return self.remaining_amount
+            # required_this_period is measured from the start-of-period state;
+            # contributed_this_period is subtracted later exactly once.
+            return self.remaining_amount + self.contributed_this_period
 
         days_left = (self.target_date - today).days
         months_left = max(Decimal(days_left) / Decimal("30"), Decimal("1"))
@@ -128,24 +132,89 @@ class GoalRead(BaseModel):
 
 class GoalContributionCreate(BaseModel):
     account_id: UUID
-    amount: Decimal = Field(gt=0)
-    currency: str | None = Field(None, min_length=3, max_length=3)
+    amount: Decimal = Field(
+        gt=0,
+        max_digits=14,
+        decimal_places=2,
+        allow_inf_nan=False,
+    )
+    currency: str | None = Field(
+        None,
+        min_length=3,
+        max_length=3,
+        description="Legacy compatibility only. The account currency is authoritative.",
+    )
+    command_id: UUID | None = None
+    description: str | None = Field(None, max_length=255)
     source_message_id: UUID | None = None
     raw_message: str | None = None
 
+    model_config = ConfigDict(extra="forbid")
+
 
 class GoalContributionResult(BaseModel):
-    contribution_id: UUID | None
-    event_id: UUID | None
-    amount: Decimal
+    transaction_id: UUID
+    event_id: UUID
+    goal_id: UUID
+    account_id: UUID
+    source_amount: Decimal = Field(max_digits=14, decimal_places=2)
+    source_currency: str = Field(min_length=3, max_length=3)
+    applied_amount: Decimal = Field(max_digits=14, decimal_places=2)
+    goal_currency: str = Field(min_length=3, max_length=3)
+    goal_current_amount: Decimal
+    goal_remaining_amount: Decimal
+    goal_status: str
+    account_balance: Decimal
+    goal_reserved_amount: Decimal
+    available_balance: Decimal
+    idempotent: bool
+    created_at: AwareDatetime
+
+    # Legacy fields to maintain backwards compatibility if needed by frontend
+    contribution_id: UUID | None = None
+    amount: Decimal | None = None
     currency: str | None = None
-    applied_amount: Decimal | None = None
-    goal_currency: str | None = None
     fx_rate: Decimal | None = None
     rate_source: str | None = None
     rate_timestamp: datetime | None = None
     is_estimated: bool = False
-    balance_after: Decimal
-    goal_current_amount: Decimal
-    progress_percentage: Decimal | None
-    status: str
+    balance_after: Decimal | None = None
+    progress_percentage: Decimal | None = None
+    status: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("source_currency", "goal_currency", "currency")
+    @classmethod
+    def uppercase_currency(cls, value: str | None) -> str | None:
+        return value.upper() if value is not None else None
+
+
+class GoalTransactionRead(BaseModel):
+    id: UUID
+    transaction_type: GoalTransactionType
+    account_id: UUID
+    source_amount: Decimal = Field(max_digits=14, decimal_places=2)
+    source_currency: str = Field(min_length=3, max_length=3)
+    applied_amount: Decimal = Field(max_digits=14, decimal_places=2)
+    goal_currency: str = Field(min_length=3, max_length=3)
+    event_id: UUID | None
+    description: str | None = Field(None, max_length=255)
+    created_at: AwareDatetime
+    origin: Literal["legacy", "native"]
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    @field_validator("source_currency", "goal_currency")
+    @classmethod
+    def uppercase_currency(cls, value: str) -> str:
+        return value.upper()
+
+
+class GoalTransactionsResponse(BaseModel):
+    items: list[GoalTransactionRead]
+    total: int
+    limit: int
+    offset: int
+
+    model_config = ConfigDict(extra="forbid")

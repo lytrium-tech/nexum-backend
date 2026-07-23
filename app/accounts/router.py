@@ -1,22 +1,24 @@
-from uuid import UUID
 from datetime import datetime
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.repository import AccountRepository
 from app.accounts.schemas import (
+    AccountAvailabilityRead,
     AccountCreate,
-    AccountRead,
     AccountDetailRead,
-    AccountSummary,
     AccountPeriodSummary,
+    AccountRead,
+    AccountSummary,
     AccountUpdate,
     BalanceAdjustmentCreate,
 )
 from app.accounts.service import AccountService
 from app.core.database import get_db_session
 from app.core.uow import UnitOfWork
+from app.goals.repository import GoalRepository
 from app.ledger.repository import LedgerRepository
 from app.ledger.schemas import LedgerEventsResponse
 from app.users.dependencies import CurrentUserProfile
@@ -27,7 +29,8 @@ router = APIRouter(prefix="/accounts", tags=["accounts"])
 def get_account_service(session: AsyncSession = Depends(get_db_session)) -> AccountService:
     repo = AccountRepository(session)
     ledger_repo = LedgerRepository(session)
-    return AccountService(repo, ledger_repo)
+    goal_repo = GoalRepository(session)
+    return AccountService(repo, ledger_repo, goal_repo)
 
 
 @router.get("", response_model=list[AccountRead])
@@ -85,6 +88,25 @@ async def get_account_period_summary(
 ) -> AccountPeriodSummary:
     user_id = current_profile.id
     return await service.get_account_period_summary(user_id, account_id, month)
+
+
+@router.get(
+    "/{account_id}/availability",
+    response_model=AccountAvailabilityRead,
+    responses={
+        401: {"description": "Autenticación requerida"},
+        404: {"description": "Cuenta inexistente o no accesible"},
+        409: {"description": "Estado de reservas inconsistente"},
+        422: {"description": "Cuenta inactiva o sin balance válido"},
+    },
+)
+async def get_account_availability(
+    account_id: UUID,
+    current_profile: CurrentUserProfile,
+    service: AccountService = Depends(get_account_service),
+) -> AccountAvailabilityRead:
+    user_id = current_profile.id
+    return await service.get_account_availability(user_id, account_id)
 
 
 @router.post("", response_model=AccountRead, status_code=status.HTTP_201_CREATED)
@@ -164,7 +186,5 @@ async def delete_account(
     session: AsyncSession = Depends(get_db_session),
 ) -> None:
     from fastapi import HTTPException
-    raise HTTPException(
-        status_code=422,
-        detail="account_deletion_not_supported_use_archive"
-    )
+
+    raise HTTPException(status_code=422, detail="account_deletion_not_supported_use_archive")

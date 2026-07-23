@@ -35,7 +35,7 @@ class IntelligenceRepository:
             "COALESCE(SUM(CASE WHEN event_type = 'expense' THEN amount ELSE 0 END), 0) as cash_expenses_current_period, "
             "COALESCE(SUM(CASE WHEN event_type = 'credit_card_purchase' THEN amount ELSE 0 END), 0) as credit_card_consumption_current_period, "
             "COALESCE(SUM(CASE WHEN event_type = 'credit_card_payment' THEN amount ELSE 0 END), 0) as debt_payments_current_period, "
-            "COALESCE(SUM(CASE WHEN event_type = 'goal_contribution' THEN amount ELSE 0 END), 0) as goal_contributions_current_period, "
+            "COALESCE(SUM(CASE WHEN event_type = 'goal_contribution' AND direction = 'outflow' THEN amount ELSE 0 END), 0) as goal_contributions_current_period, "
             "COALESCE(SUM(CASE WHEN event_type = 'obligation_payment' THEN amount ELSE 0 END), 0) as obligation_payments_current_period, "
             "COUNT(DISTINCT currency) as currency_count "
             "FROM financial_events "
@@ -55,7 +55,7 @@ class IntelligenceRepository:
             "COALESCE(SUM(CASE WHEN event_type = 'expense' THEN amount ELSE 0 END), 0) as cash_expenses_current_period, "
             "COALESCE(SUM(CASE WHEN event_type = 'credit_card_purchase' THEN amount ELSE 0 END), 0) as credit_card_consumption_current_period, "
             "COALESCE(SUM(CASE WHEN event_type = 'credit_card_payment' THEN amount ELSE 0 END), 0) as debt_payments_current_period, "
-            "COALESCE(SUM(CASE WHEN event_type = 'goal_contribution' THEN amount ELSE 0 END), 0) as goal_contributions_current_period, "
+            "COALESCE(SUM(CASE WHEN event_type = 'goal_contribution' AND direction = 'outflow' THEN amount ELSE 0 END), 0) as goal_contributions_current_period, "
             "COALESCE(SUM(CASE WHEN event_type = 'obligation_payment' THEN amount ELSE 0 END), 0) as obligation_payments_current_period "
             "FROM financial_events "
             "WHERE user_id = :user_id AND occurred_at >= :start AND occurred_at < :end "
@@ -73,7 +73,7 @@ class IntelligenceRepository:
         query = text(
             "SELECT "
             "COALESCE(SUM(CASE WHEN event_type = 'income' THEN amount ELSE 0 END), 0) as historical_income, "
-            "COALESCE(SUM(CASE WHEN event_type IN ('expense', 'credit_card_payment', 'goal_contribution', 'obligation_payment') THEN amount ELSE 0 END), 0) as historical_expenses "
+            "COALESCE(SUM(CASE WHEN event_type IN ('expense', 'credit_card_payment', 'obligation_payment') OR (event_type = 'goal_contribution' AND direction = 'outflow') THEN amount ELSE 0 END), 0) as historical_expenses "
             "FROM financial_events "
             "WHERE user_id = :user_id AND occurred_at < :before"
         )
@@ -144,7 +144,43 @@ class IntelligenceRepository:
         return dict(row) if row else None
 
     async def get_cashflow(self, user_id: uuid.UUID) -> dict[str, Any] | None:
-        query = text("SELECT * FROM public.v_cashflow_current_month WHERE user_id = :user_id")
+        # Keep this endpoint independent from legacy views that classify every
+        # goal_contribution as an outflow. Reserved allocations are neutral;
+        # reconciliation balance_adjustment events are neither income nor
+        # operational cashflow.
+        query = text(
+            "WITH period_bounds AS ("
+            "  SELECT "
+            "    date_trunc('month', now() AT TIME ZONE 'America/Bogota') "
+            "      AT TIME ZONE 'America/Bogota' AS start_at, "
+            "    (date_trunc('month', now() AT TIME ZONE 'America/Bogota') "
+            "      + interval '1 month') AT TIME ZONE 'America/Bogota' AS end_at"
+            "), aggregates AS ("
+            "  SELECT "
+            "    COALESCE(SUM(CASE WHEN event_type = 'income' "
+            "      THEN amount ELSE 0 END), 0) AS monthly_income, "
+            "    COALESCE(SUM(CASE WHEN event_type = 'expense' "
+            "      THEN amount ELSE 0 END), 0) AS consumption_outflow, "
+            "    COALESCE(SUM(CASE WHEN event_type = 'goal_contribution' "
+            "      AND direction = 'outflow' THEN amount ELSE 0 END), 0) "
+            "      AS wealth_allocation, "
+            "    COALESCE(SUM(CASE WHEN event_type = 'credit_card_payment' "
+            "      THEN amount ELSE 0 END), 0) AS debt_service, "
+            "    COALESCE(SUM(CASE WHEN event_type = 'obligation_payment' "
+            "      THEN amount ELSE 0 END), 0) AS committed_outflow "
+            "  FROM financial_events, period_bounds "
+            "  WHERE user_id = :user_id "
+            "    AND occurred_at >= period_bounds.start_at "
+            "    AND occurred_at < period_bounds.end_at"
+            ") "
+            "SELECT "
+            "  to_char(now() AT TIME ZONE 'America/Bogota', 'YYYY-MM') AS period, "
+            "  monthly_income, consumption_outflow, wealth_allocation, "
+            "  debt_service, committed_outflow, "
+            "  monthly_income - consumption_outflow - wealth_allocation "
+            "    - debt_service - committed_outflow AS net_liquidity_change "
+            "FROM aggregates"
+        )
         result = await self.session.execute(query, {"user_id": user_id})
         row = result.mappings().first()
         return dict(row) if row else None
