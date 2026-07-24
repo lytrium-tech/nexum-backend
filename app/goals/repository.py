@@ -187,6 +187,53 @@ class GoalRepository:
         val = result.scalar_one_or_none()
         return Decimal(str(val)) if val is not None else Decimal("0.00")
 
+    async def calculate_reserved_by_goal_and_account(
+        self, user_id: UUID, goal_id: UUID, account_id: UUID
+    ) -> Decimal:
+        allocations_sum = func.coalesce(
+            func.sum(GoalTransaction.source_amount).filter(
+                GoalTransaction.transaction_type == GoalTransactionType.allocation
+            ),
+            Decimal("0"),
+        )
+        releases_sum = func.coalesce(
+            func.sum(GoalTransaction.source_amount).filter(
+                GoalTransaction.transaction_type == GoalTransactionType.release
+            ),
+            Decimal("0"),
+        )
+
+        result = await self.session.execute(
+            select(allocations_sum - releases_sum)
+            .where(GoalTransaction.goal_id == goal_id)
+            .where(GoalTransaction.account_id == account_id)
+            .where(GoalTransaction.user_id == user_id)
+        )
+        val = result.scalar_one_or_none()
+        return Decimal(str(val)) if val is not None else Decimal("0.00")
+
+    async def calculate_total_reserved_by_goal(self, user_id: UUID, goal_id: UUID) -> Decimal:
+        allocations_sum = func.coalesce(
+            func.sum(GoalTransaction.source_amount).filter(
+                GoalTransaction.transaction_type == GoalTransactionType.allocation
+            ),
+            Decimal("0"),
+        )
+        releases_sum = func.coalesce(
+            func.sum(GoalTransaction.source_amount).filter(
+                GoalTransaction.transaction_type == GoalTransactionType.release
+            ),
+            Decimal("0"),
+        )
+
+        result = await self.session.execute(
+            select(allocations_sum - releases_sum)
+            .where(GoalTransaction.goal_id == goal_id)
+            .where(GoalTransaction.user_id == user_id)
+        )
+        val = result.scalar_one_or_none()
+        return Decimal(str(val)) if val is not None else Decimal("0.00")
+
     async def calculate_reserved_by_user_currency(
         self,
         user_id: UUID,

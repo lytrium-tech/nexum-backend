@@ -218,3 +218,45 @@ class GoalTransactionsResponse(BaseModel):
     offset: int
 
     model_config = ConfigDict(extra="forbid")
+
+
+class GoalReleaseCreate(BaseModel):
+    account_id: UUID
+    amount: Decimal = Field(
+        gt=0,
+        max_digits=14,
+        decimal_places=2,
+        allow_inf_nan=False,
+    )
+    command_id: UUID | None = None
+    description: str | None = Field(None, max_length=255)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class GoalReleaseResult(BaseModel):
+    transaction_id: UUID
+    event_id: UUID
+    goal_id: UUID
+    account_id: UUID
+    released_amount: Decimal = Field(max_digits=14, decimal_places=2)
+    source_currency: str = Field(min_length=3, max_length=3)
+    applied_amount: Decimal = Field(max_digits=14, decimal_places=2)
+    goal_currency: str = Field(min_length=3, max_length=3)
+    goal_current_amount: Decimal
+    goal_remaining_amount: Decimal
+    goal_status: str
+    account_balance: Decimal
+    goal_account_reserved_amount: Decimal
+    goal_total_reserved_amount: Decimal
+    account_total_reserved_amount: Decimal
+    available_balance: Decimal
+    idempotent: bool
+    created_at: AwareDatetime
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("source_currency", "goal_currency")
+    @classmethod
+    def uppercase_currency(cls, value: str | None) -> str | None:
+        return value.upper() if value is not None else None

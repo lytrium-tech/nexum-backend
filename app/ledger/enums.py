@@ -25,6 +25,7 @@ class EventType(StrEnum):
     TRANSFER_IN = "transfer_in"
     OPENING_BALANCE = "opening_balance"
     BALANCE_ADJUSTMENT = "balance_adjustment"
+    GOAL_RELEASE = "goal_release"
 
 
 class Direction(StrEnum):

@@ -4,25 +4,25 @@ import os
 import sys
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import httpx
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
-from app.core.config import settings
 from app.core.database import create_async_engine, get_engine, init_engine
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.users.models import User
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-async def create_test_user() -> uuid.UUID:
+async def create_test_user(user_id_hex: str) -> uuid.UUID:
     await init_engine()
     async_session = async_sessionmaker(get_engine(), expire_on_commit=False, class_=AsyncSession)
     async with async_session() as session:
         user = User(
-            email=f"smoke_{uuid.uuid4().hex[:10]}@example.com",
+            email=f"smoke_{user_id_hex}@example.com",
             name="Smoke User",
             timezone="America/Bogota",
             currency="COP",
@@ -72,16 +72,17 @@ async def check_db_state(goal_id: str, command_id: str):
 
 async def run_smoke():
     logger.info("Iniciando prueba Smoke E2E de Goals Domain...")
-    
+   
     # 0. Entorno y protecciones
     base_url = os.environ.get("SMOKE_BASE_URL", "http://localhost:8000")
     if "api.nexum.lytrium.tech" in base_url or "api.lytrium" in base_url:
         logger.error("Ejecución en producción bloqueada por seguridad.")
         sys.exit(1)
-        
-    user_id = await create_test_user()
-    
-    async with httpx.AsyncClient(timeout=10.0) as client:
+       
+    user_id_hex = uuid.uuid4().hex[:10]
+    user_id = await create_test_user(user_id_hex)
+   
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
         # 1. Health
         r = await client.get(f"{base_url}/health")
         r.raise_for_status()
@@ -90,12 +91,12 @@ async def run_smoke():
         headers = {
             "Authorization": f"Bearer {user_id}",
             "X-Test-Bypass-Auth": "true",
-            "X-Test-Email": f"smoke_{user_id}@example.com",
+            "X-Test-Email": f"smoke_{user_id_hex}@example.com",
         }
 
         # 2. Cuenta
         r = await client.post(
-            f"{base_url}/api/v1/accounts",
+            f"{base_url}/api/v1/accounts/",
             json={"name": f"Smoke Goal Account {uuid.uuid4().hex[:6]}", "type": "bank", "currency": "COP"},
             headers=headers,
         )
@@ -223,8 +224,67 @@ async def run_smoke():
         logger.info(f"Intento Aporte Post-Completado: Status Code {r.status_code} (Esperado 409)")
         assert r.status_code == 409
 
-        # 12. Verificación final DB
-        await check_db_state(goal_id, cmd1)
+        # 12. Release parcial de 100
+        release_cmd1 = str(uuid.uuid4())
+        r = await client.post(
+            f"{base_url}/api/v1/goals/{goal_id}/releases",
+            json={"account_id": account_id, "amount": "100"},
+            headers={**headers, "Idempotency-Key": release_cmd1},
+        )
+        r.raise_for_status()
+        data = r.json()
+        logger.info(
+            f"Release 1 OK: Idempotent {data['idempotent']}, AccountBalance: {data['account_balance']}, GoalCurrent: {data['goal_current_amount']}, Available: {data['available_balance']}"
+        )
+       
+        # Validaciones fuertes requeridas por PRD:
+        assert data["transaction_id"] is not None
+        assert data["event_id"] is not None
+        assert Decimal(data["released_amount"]) == Decimal("100.00")
+        assert Decimal(data["account_balance"]) == Decimal("500.00")
+        assert Decimal(data["goal_current_amount"]) == Decimal("200.00")
+        assert Decimal(data["goal_account_reserved_amount"]) == Decimal("200.00")
+        assert Decimal(data["goal_total_reserved_amount"]) == Decimal("200.00")
+        assert Decimal(data["account_total_reserved_amount"]) == Decimal("200.00")
+        assert Decimal(data["available_balance"]) == Decimal("300.00")
+        assert data["goal_status"] == "active"
+        assert data["idempotent"] is False
+
+        # 13. Retry Release parcial
+        r = await client.post(
+            f"{base_url}/api/v1/goals/{goal_id}/releases",
+            json={"account_id": account_id, "amount": "100"},
+            headers={**headers, "Idempotency-Key": release_cmd1},
+        )
+        r.raise_for_status()
+        retry_data = r.json()
+        logger.info(
+            f"Retry Release 1 OK: Idempotent {retry_data['idempotent']}, Available: {retry_data['available_balance']}, GoalCurrent: {retry_data['goal_current_amount']}"
+        )
+        assert retry_data["transaction_id"] == data["transaction_id"]
+        assert retry_data["event_id"] == data["event_id"]
+        assert Decimal(retry_data["released_amount"]) == Decimal("100.00")
+        assert Decimal(retry_data["account_balance"]) == Decimal("500.00")
+        assert Decimal(retry_data["goal_current_amount"]) == Decimal("200.00")
+        assert Decimal(retry_data["goal_account_reserved_amount"]) == Decimal("200.00")
+        assert Decimal(retry_data["goal_total_reserved_amount"]) == Decimal("200.00")
+        assert Decimal(retry_data["account_total_reserved_amount"]) == Decimal("200.00")
+        assert Decimal(retry_data["available_balance"]) == Decimal("300.00")
+        assert retry_data["goal_status"] == "active"
+        assert retry_data["idempotent"] is True
+
+        # 14. Status final de meta (reabierta)
+        r = await client.get(f"{base_url}/api/v1/goals/{goal_id}", headers=headers)
+        r.raise_for_status()
+        goal_data = r.json()
+        logger.info(
+            f"Meta Status tras Release: {goal_data['status']}, Progress: {goal_data['progress_percentage']}%"
+        )
+        assert goal_data["status"] == "active"
+        assert float(goal_data["progress_percentage"]) < 100.0
+
+        # 15. Verificación final DB
+        await check_db_state(goal_id, release_cmd1)
 
 
 if __name__ == "__main__":

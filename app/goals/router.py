@@ -12,6 +12,8 @@ from app.goals.schemas import (
     GoalContributionResult,
     GoalCreate,
     GoalRead,
+    GoalReleaseCreate,
+    GoalReleaseResult,
     GoalTransactionsResponse,
     GoalUpdate,
 )
@@ -110,6 +112,29 @@ async def create_contribution(
         service = get_goal_service(session)
         user_id = current_profile.id
         return await service.create_contribution(user_id, goal_id, payload, idempotency_key)
+
+
+@router.post(
+    "/{goal_id}/releases",
+    response_model=GoalReleaseResult,
+    responses={
+        401: {"description": "Autenticación requerida"},
+        400: {"description": "Meta archivada, cancelada o con estado inválido"},
+        403: {"description": "Cuenta inactiva o sin saldo configurado"},
+        404: {"description": "Cuenta o meta no encontrada o inaccesible"},
+        409: {"description": "Conflicto de idempotencia, reserva o monto"},
+        422: {"description": "Payload o moneda inválidos"},
+    },
+)
+async def create_release(
+    goal_id: UUID,
+    payload: GoalReleaseCreate,
+    current_profile: CurrentUserProfile,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    service: GoalService = Depends(get_goal_service),
+) -> GoalReleaseResult:
+    user_id = current_profile.id
+    return await service.create_release(user_id, goal_id, payload, idempotency_key)
 
 
 @router.get(
