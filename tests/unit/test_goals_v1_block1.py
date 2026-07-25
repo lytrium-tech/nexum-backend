@@ -135,7 +135,7 @@ async def test_reserved_query_filters_owner_account_and_transaction_types():
     assert result == Decimal("75.00")
     assert "goal_transactions.account_id" in sql
     assert "goal_transactions.user_id" in sql
-    assert "goal_transactions.transaction_type = 'allocation'" in sql
+    assert "IN ('allocation', 'legacy_import')" in sql
     assert "goal_transactions.transaction_type = 'release'" in sql
 
 

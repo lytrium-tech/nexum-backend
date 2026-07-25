@@ -1311,7 +1311,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GoalRead"
+                  "$ref": "#/components/schemas/GoalDetailRead"
                 }
               }
             }
@@ -7773,6 +7773,56 @@
         ],
         "title": "Frequency"
       },
+      "GoalAccountReservationRead": {
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Account Id"
+          },
+          "account_name": {
+            "type": "string",
+            "title": "Account Name"
+          },
+          "account_currency": {
+            "type": "string",
+            "maxLength": 3,
+            "minLength": 3,
+            "title": "Account Currency"
+          },
+          "contributed_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+            "title": "Contributed Amount"
+          },
+          "released_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+            "title": "Released Amount"
+          },
+          "reserved_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+            "title": "Reserved Amount"
+          },
+          "account_is_active": {
+            "type": "boolean",
+            "title": "Account Is Active"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "account_id",
+          "account_name",
+          "account_currency",
+          "contributed_amount",
+          "released_amount",
+          "reserved_amount",
+          "account_is_active"
+        ],
+        "title": "GoalAccountReservationRead"
+      },
       "GoalContributionCreate": {
         "properties": {
           "account_id": {
@@ -8147,6 +8197,159 @@
           "currency"
         ],
         "title": "GoalCreate"
+      },
+      "GoalDetailRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "target_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Target Amount"
+          },
+          "current_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Current Amount"
+          },
+          "target_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Date"
+          },
+          "currency": {
+            "type": "string",
+            "maxLength": 3,
+            "minLength": 3,
+            "title": "Currency"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "contributed_this_period": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Contributed This Period",
+            "default": "0.00"
+          },
+          "reservations_by_account": {
+            "items": {
+              "$ref": "#/components/schemas/GoalAccountReservationRead"
+            },
+            "type": "array",
+            "title": "Reservations By Account"
+          },
+          "remaining_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Remaining Amount",
+            "readOnly": true
+          },
+          "progress_percentage": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Progress Percentage",
+            "readOnly": true
+          },
+          "currency_minimum_unit": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Currency Minimum Unit",
+            "readOnly": true
+          },
+          "is_flexible": {
+            "type": "boolean",
+            "title": "Is Flexible",
+            "readOnly": true
+          },
+          "monthly_required": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Monthly Required",
+            "readOnly": true
+          },
+          "required_this_period": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Required This Period",
+            "readOnly": true
+          },
+          "remaining_required_this_period": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Remaining Required This Period",
+            "readOnly": true
+          },
+          "period_status": {
+            "type": "string",
+            "title": "Period Status",
+            "readOnly": true
+          },
+          "days_remaining_in_period": {
+            "type": "integer",
+            "title": "Days Remaining In Period",
+            "readOnly": true
+          },
+          "daily_required_this_period": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Daily Required This Period",
+            "readOnly": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "target_amount",
+          "current_amount",
+          "target_date",
+          "currency",
+          "status",
+          "is_active",
+          "created_at",
+          "updated_at",
+          "remaining_amount",
+          "progress_percentage",
+          "currency_minimum_unit",
+          "is_flexible",
+          "monthly_required",
+          "required_this_period",
+          "remaining_required_this_period",
+          "period_status",
+          "days_remaining_in_period",
+          "daily_required_this_period"
+        ],
+        "title": "GoalDetailRead"
       },
       "GoalRead": {
         "properties": {

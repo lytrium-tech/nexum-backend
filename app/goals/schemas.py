@@ -25,6 +25,23 @@ class GoalUpdate(BaseModel):
     target_date: date | None = None
 
 
+class GoalAccountReservationRead(BaseModel):
+    account_id: UUID
+    account_name: str
+    account_currency: str = Field(min_length=3, max_length=3)
+    contributed_amount: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    released_amount: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    reserved_amount: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    account_is_active: bool
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    @field_validator("account_currency")
+    @classmethod
+    def uppercase_currency(cls, value: str) -> str:
+        return value.upper()
+
+
 class GoalRead(BaseModel):
     id: UUID
     name: str
@@ -38,7 +55,6 @@ class GoalRead(BaseModel):
     updated_at: datetime
 
     contributed_this_period: Decimal = Decimal("0.00")
-
     model_config = ConfigDict(from_attributes=True)
 
     @computed_field
@@ -128,6 +144,10 @@ class GoalRead(BaseModel):
             return self.remaining_required_this_period
         raw_daily = self.remaining_required_this_period / Decimal(str(days))
         return round_up_to_minimum_unit(raw_daily, self.currency)
+
+
+class GoalDetailRead(GoalRead):
+    reservations_by_account: list[GoalAccountReservationRead] = Field(default_factory=list)
 
 
 class GoalContributionCreate(BaseModel):

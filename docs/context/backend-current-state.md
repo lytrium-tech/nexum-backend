@@ -2,16 +2,14 @@
 
 ## Repository State
 - **Checkout actual:** rama `goals-v1-phase2-releases`
-- **Repository HEAD:** `c26de44f81b3446d41ea8b49a08d6f73d6c114ad`
-- **origin/main:** `c26de44f81b3446d41ea8b49a08d6f73d6c114ad`
-- **main local:** `61cfc3822730e6f59e3097d3f9f86f24b68350d4`
-- **Cambios locales:** Metas V1 Fase 2, Bloques 1–3, permanece local y sin commit.
+- **Repository HEAD:** `7f1f6caf3e5bf450a18e5aa3273a2d00edf34c44`
+- **origin/main:** `7f1f6caf3e5bf450a18e5aa3273a2d00edf34c44`
+- **Cambios locales:** gap V1.8 `reservations_by_account` y cambios preexistentes ajenos preservados; staging vacío.
 
 ## Repository vs Production
-- **Repository Current State:** `HEAD` y `origin/main` apuntan a `c26de44f81b3446d41ea8b49a08d6f73d6c114ad`; `main` local todavía apunta a `61cfc3822730e6f59e3097d3f9f86f24b68350d4`.
-- **Production:** Metas V1 Fase 1 está desplegada.
-- **Migración productiva de Metas:** `goals_v1_ph1_reserved`.
-- **Metas V1 Fase 2:** no está desplegada.
+- **Repository Current State:** `HEAD` y `origin/main` sincronizados en `7f1f6caf3e5bf450a18e5aa3273a2d00edf34c44`.
+- **Production:** Metas V1 Fase 2 está desplegada.
+- **Migración productiva de Metas:** `goals_v1_ph2_releases`.
 
 ## Backend Purpose
 - Backend financiero de Nexum.
@@ -43,14 +41,18 @@
   - Cálculo de `available_balance` aislando la porción reservada.
   - Paginación e historial HTTP consolidado entre transacciones nativas y legacy (`/api/v1/goals/{goal_id}/transactions`).
   - Inteligencia conciliada sin duplicar saldos entre sources ni considerar neutrales como cashflow.
-- **Goals V1 Phase 2 (local, sin commit):**
-  - Migración propuesta: `goals_v1_ph2_releases`.
-  - Bloque 1 (Fundación): Gate PostgreSQL aprobado para upgrade, constraint canónico, repository y bloqueo de downgrade con eventos `goal_release`. Constraint canónico actualizado.
-  - Bloque 2 (Motor): Servicio core `create_release` con locks jerárquicos y control de idempotencia nativo. Cobertura completa de tests en core.
-  - Bloque 3 (API e Integración): Router implementado, compatibilidad History/Availability/Intelligence.
-  - Bloque 4 (Release Gate): Ejecutado exitosamente en Argos local. Cero drift. Migración aprobada estructural y funcionalmente. Base de datos Gate restaurada a `goals_v1_ph1_reserved`.
-  - Fase 2 lista para revisión, commit y despliegue a producción.
-  - Fase 2 no tiene commit y no está desplegada.
+- **Goals V1 Phase 2 (producción):**
+  - Fase 2 ("Releases") implementada y desplegada en producción.
+  - Commit productivo: `7f1f6caf3e5bf450a18e5aa3273a2d00edf34c44`
+  - Migración aplicada: `goals_v1_ph2_releases`.
+  - Endpoint `POST /api/v1/goals/{goal_id}/releases` disponible y documentado en OpenAPI.
+  - Release Gate aprobado y cero drift post-despliegue validado.
+  - Handoff detallado creado en `../docs/handoff/backend/backend-to-frontend-v1-8.md`.
+  - Gap V1.8 local: `reservations_by_account` expuesto únicamente en Goal Detail mediante una agregación autoritativa por cuenta. OpenAPI local actualizado.
+  - Las cuentas inactivas con reserva permanecen visibles con `account_is_active = false`; los releases desde cuentas inactivas continúan rechazados.
+  - `reserved_amount` es el máximo visual para el cliente; el backend revalida el máximo real bajo lock. History no debe usarse para reconstruir reservas.
+  - Validación local del gap: suite completa `663 passed, 9 skipped, 216 warnings`; PostgreSQL físico no fue ejecutado en esta auditoría.
+  - Frontend Sync pausado hasta commit y despliegue del gap V1.8.
 
 ## Obligations Current State
 - **Obligations Core:** Estabilizado operando sobre rutas `/api/v1.7`.

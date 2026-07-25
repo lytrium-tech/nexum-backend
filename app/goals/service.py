@@ -23,9 +23,11 @@ from app.goals.exceptions import (
 from app.goals.models import Goal, GoalTransaction
 from app.goals.repository import GoalRepository
 from app.goals.schemas import (
+    GoalAccountReservationRead,
     GoalContributionCreate,
     GoalContributionResult,
     GoalCreate,
+    GoalDetailRead,
     GoalRead,
     GoalReleaseCreate,
     GoalReleaseResult,
@@ -78,7 +80,7 @@ class GoalService:
             results.append(gr)
         return results
 
-    async def get_goal(self, auth_user_id: UUID, goal_id: UUID) -> GoalRead:
+    async def get_goal(self, auth_user_id: UUID, goal_id: UUID) -> GoalDetailRead:
         goal = await self._get_goal_or_404(goal_id)
         if goal.user_id != auth_user_id:
             raise GoalForbiddenError()
@@ -87,9 +89,32 @@ class GoalService:
         contributions = await self.repository.get_period_contributions(
             auth_user_id, start_date, end_date
         )
+        reservations_raw = await self.repository.get_reservations_by_account(auth_user_id, goal_id)
+        if any(
+            amount < 0
+            for reservation in reservations_raw
+            for amount in (
+                reservation.contributed_amount,
+                reservation.released_amount,
+                reservation.reserved_amount,
+            )
+        ):
+            raise ConflictError(message="El desglose de reservas por cuenta es inconsistente.")
 
-        gr = GoalRead.model_validate(goal)
+        reservations_total = sum(
+            (reservation.reserved_amount for reservation in reservations_raw),
+            Decimal("0.00"),
+        )
+        if reservations_total != goal.current_amount:
+            raise ConflictError(
+                message="El total reservado por cuenta no coincide con el progreso de la meta."
+            )
+
+        gr = GoalDetailRead.model_validate(goal)
         gr.contributed_this_period = contributions.get(goal.id, Decimal("0.00"))
+        gr.reservations_by_account = [
+            GoalAccountReservationRead.model_validate(r) for r in reservations_raw
+        ]
         return gr
 
     async def create_goal(self, auth_user_id: UUID, payload: GoalCreate) -> GoalRead:

@@ -11,6 +11,7 @@ from app.goals.schemas import (
     GoalContributionCreate,
     GoalContributionResult,
     GoalCreate,
+    GoalDetailRead,
     GoalRead,
     GoalReleaseCreate,
     GoalReleaseResult,
@@ -52,12 +53,12 @@ async def list_goals(
     return await service.list_goals(user_id)
 
 
-@router.get("/{goal_id}", response_model=GoalRead)
+@router.get("/{goal_id}", response_model=GoalDetailRead)
 async def get_goal(
     goal_id: UUID,
     current_profile: CurrentUserProfile,
     service: GoalService = Depends(get_goal_service),
-) -> GoalRead:
+) -> GoalDetailRead:
     user_id = current_profile.id
     return await service.get_goal(user_id, goal_id)
 

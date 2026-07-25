@@ -209,13 +209,19 @@ async def test_reserved_query_supports_allocations_legacy_native_and_releases_on
 
     reserved = await repository.calculate_reserved_by_account(uuid4(), uuid4())
     statement = session.execute.await_args.args[0]
-    parameters = set(statement.compile().params.values())
+    parameters = []
+    for val in statement.compile().params.values():
+        if isinstance(val, list):
+            parameters.extend(val)
+        else:
+            parameters.append(val)
+    parameters = set(parameters)
 
     assert reserved == Decimal("250.00")
     assert GoalTransactionType.allocation in parameters
     assert GoalTransactionType.release in parameters
     assert GoalTransactionType.adjustment not in parameters
-    assert GoalTransactionType.legacy_import not in parameters
+    assert GoalTransactionType.legacy_import in parameters
 
 
 @pytest.fixture
