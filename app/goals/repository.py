@@ -22,10 +22,14 @@ class GoalAccountReservation:
     contributed_amount: Decimal
     released_amount: Decimal
     reserved_amount: Decimal
+    goal_currency: str
+    applied_contributed_amount: Decimal
+    applied_released_amount: Decimal
+    applied_reserved_amount: Decimal
     account_is_active: bool
 
 
-def _reservation_amounts():
+def _source_reservation_amounts():
     allocations_sum = func.coalesce(
         func.sum(GoalTransaction.source_amount).filter(
             GoalTransaction.transaction_type.in_(
@@ -36,6 +40,24 @@ def _reservation_amounts():
     )
     releases_sum = func.coalesce(
         func.sum(GoalTransaction.source_amount).filter(
+            GoalTransaction.transaction_type == GoalTransactionType.release
+        ),
+        Decimal("0"),
+    )
+    return allocations_sum, releases_sum, allocations_sum - releases_sum
+
+
+def _applied_reservation_amounts():
+    allocations_sum = func.coalesce(
+        func.sum(GoalTransaction.applied_amount).filter(
+            GoalTransaction.transaction_type.in_(
+                [GoalTransactionType.allocation, GoalTransactionType.legacy_import]
+            )
+        ),
+        Decimal("0"),
+    )
+    releases_sum = func.coalesce(
+        func.sum(GoalTransaction.applied_amount).filter(
             GoalTransaction.transaction_type == GoalTransactionType.release
         ),
         Decimal("0"),
@@ -196,7 +218,7 @@ class GoalRepository:
         return [(row[0], row[1]) for row in result.all()], total
 
     async def calculate_reserved_by_account(self, account_id: UUID, user_id: UUID) -> Decimal:
-        _, _, reserved_amount = _reservation_amounts()
+        _, _, reserved_amount = _source_reservation_amounts()
 
         result = await self.session.execute(
             select(reserved_amount)
@@ -209,7 +231,7 @@ class GoalRepository:
     async def calculate_reserved_by_goal_and_account(
         self, user_id: UUID, goal_id: UUID, account_id: UUID
     ) -> Decimal:
-        _, _, reserved_amount = _reservation_amounts()
+        _, _, reserved_amount = _source_reservation_amounts()
 
         result = await self.session.execute(
             select(reserved_amount)
@@ -221,7 +243,7 @@ class GoalRepository:
         return Decimal(str(val)) if val is not None else Decimal("0.00")
 
     async def calculate_total_reserved_by_goal(self, user_id: UUID, goal_id: UUID) -> Decimal:
-        _, _, reserved_amount = _reservation_amounts()
+        _, _, reserved_amount = _applied_reservation_amounts()
 
         result = await self.session.execute(
             select(reserved_amount)
@@ -237,29 +259,37 @@ class GoalRepository:
     async def get_reservations_by_account(
         self, user_id: UUID, goal_id: UUID
     ) -> list[GoalAccountReservation]:
-        allocations_sum, releases_sum, reserved_amount = _reservation_amounts()
+        source_alloc, source_rel, source_reserved = _source_reservation_amounts()
+        applied_alloc, applied_rel, applied_reserved = _applied_reservation_amounts()
 
         stmt = (
             select(
                 Account.id.label("account_id"),
                 Account.name.label("account_name"),
                 Account.currency.label("account_currency"),
-                allocations_sum.label("contributed_amount"),
-                releases_sum.label("released_amount"),
-                reserved_amount.label("reserved_amount"),
+                source_alloc.label("contributed_amount"),
+                source_rel.label("released_amount"),
+                source_reserved.label("reserved_amount"),
+                Goal.currency.label("goal_currency"),
+                applied_alloc.label("applied_contributed_amount"),
+                applied_rel.label("applied_released_amount"),
+                applied_reserved.label("applied_reserved_amount"),
                 Account.is_active.label("account_is_active"),
             )
             .join(Account, Account.id == GoalTransaction.account_id)
+            .join(Goal, Goal.id == GoalTransaction.goal_id)
             .where(GoalTransaction.goal_id == goal_id)
             .where(GoalTransaction.user_id == user_id)
             .where(Account.user_id == user_id)
+            .where(Goal.user_id == user_id)
             .group_by(
                 Account.id,
                 Account.name,
                 Account.currency,
                 Account.is_active,
+                Goal.currency,
             )
-            .having(reserved_amount != 0)
+            .having((source_reserved != 0) | (applied_reserved != 0))
             .order_by(Account.id)
         )
 
@@ -272,6 +302,10 @@ class GoalRepository:
                 contributed_amount=Decimal(str(row.contributed_amount)),
                 released_amount=Decimal(str(row.released_amount)),
                 reserved_amount=Decimal(str(row.reserved_amount)),
+                goal_currency=row.goal_currency,
+                applied_contributed_amount=Decimal(str(row.applied_contributed_amount)),
+                applied_released_amount=Decimal(str(row.applied_released_amount)),
+                applied_reserved_amount=Decimal(str(row.applied_reserved_amount)),
                 account_is_active=row.account_is_active,
             )
             for row in result.all()
@@ -283,7 +317,9 @@ class GoalRepository:
     ) -> dict[str, Decimal]:
         signed_source_amount = case(
             (
-                GoalTransaction.transaction_type == GoalTransactionType.allocation,
+                GoalTransaction.transaction_type.in_(
+                    (GoalTransactionType.allocation, GoalTransactionType.legacy_import)
+                ),
                 GoalTransaction.source_amount,
             ),
             (
@@ -303,6 +339,7 @@ class GoalRepository:
                 GoalTransaction.transaction_type.in_(
                     (
                         GoalTransactionType.allocation,
+                        GoalTransactionType.legacy_import,
                         GoalTransactionType.release,
                     )
                 )
@@ -312,21 +349,10 @@ class GoalRepository:
         return {row[0]: Decimal(str(row[1] or 0)) for row in result.all()}
 
     async def calculate_progress_by_goal(self, goal_id: UUID, user_id: UUID) -> Decimal:
-        allocations_sum = func.coalesce(
-            func.sum(GoalTransaction.applied_amount).filter(
-                GoalTransaction.transaction_type == GoalTransactionType.allocation
-            ),
-            Decimal("0"),
-        )
-        releases_sum = func.coalesce(
-            func.sum(GoalTransaction.applied_amount).filter(
-                GoalTransaction.transaction_type == GoalTransactionType.release
-            ),
-            Decimal("0"),
-        )
+        _, _, progress_amount = _applied_reservation_amounts()
 
         result = await self.session.execute(
-            select(allocations_sum - releases_sum)
+            select(progress_amount)
             .where(GoalTransaction.goal_id == goal_id)
             .where(GoalTransaction.user_id == user_id)
         )

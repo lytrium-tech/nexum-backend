@@ -156,7 +156,7 @@ async def test_progress_query_filters_owner_goal_and_transaction_types():
     assert result == Decimal("125.00")
     assert "goal_transactions.goal_id" in sql
     assert "goal_transactions.user_id" in sql
-    assert "goal_transactions.transaction_type = 'allocation'" in sql
+    assert "goal_transactions.transaction_type IN ('allocation', 'legacy_import')" in sql
     assert "goal_transactions.transaction_type = 'release'" in sql
 
 
@@ -367,10 +367,12 @@ async def test_goal_transaction_repository(
         goal_currency="COP",
     )
     await repo.create_transaction(tx_leg)
-    # legacy_import should NOT be included in calculations based on the filter logic
-    # Filter is explicit: == allocation or == release
+    # legacy_import is an authoritative imported reservation and must use
+    # source_amount for Account reserve and applied_amount for Goal progress.
     reserve = await repo.calculate_reserved_by_account(sample_account.id, sample_user.id)
-    assert reserve == Decimal("100.00")
+    assert reserve == Decimal("120.00")
+    progress = await repo.calculate_progress_by_goal(sample_goal.id, sample_user.id)
+    assert progress == Decimal("120.00")
 
 
 @pytest.mark.asyncio

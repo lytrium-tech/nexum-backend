@@ -214,18 +214,17 @@ async def test_repository_calculates_reserved_by_goal_and_account_from_source_am
     assert result == Decimal("400.00")
     assert "sum(goal_transactions.source_amount)" in sql
     assert "applied_amount" not in sql
-    assert " = 'allocation'" in sql
+    assert "IN ('allocation', 'legacy_import')" in sql
     assert " = 'release'" in sql
     assert ") - coalesce(" in sql
     assert "adjustment" not in sql
-    assert "legacy_import" not in sql
     assert f"goal_transactions.user_id = '{user_id}'" in sql
     assert f"goal_transactions.goal_id = '{goal_id}'" in sql
     assert f"goal_transactions.account_id = '{account_id}'" in sql
 
 
 @pytest.mark.asyncio
-async def test_repository_calculates_total_reserved_by_goal_from_source_amount():
+async def test_repository_calculates_total_reserved_by_goal_from_applied_amount():
     session = _RecordingSession(Decimal("700.00"))
     repository = GoalRepository(session)  # type: ignore[arg-type]
     user_id = UUID("11111111-1111-1111-1111-111111111111")
@@ -235,16 +234,32 @@ async def test_repository_calculates_total_reserved_by_goal_from_source_amount()
     sql = _compiled_sql(session.statement)
 
     assert result == Decimal("700.00")
-    assert "sum(goal_transactions.source_amount)" in sql
-    assert "applied_amount" not in sql
-    assert " = 'allocation'" in sql
+    assert "sum(goal_transactions.applied_amount)" in sql
+    assert "IN ('allocation', 'legacy_import')" in sql
     assert " = 'release'" in sql
     assert ") - coalesce(" in sql
     assert "adjustment" not in sql
-    assert "legacy_import" not in sql
     assert f"goal_transactions.user_id = '{user_id}'" in sql
     assert f"goal_transactions.goal_id = '{goal_id}'" in sql
     assert "goal_transactions.account_id =" not in sql
+
+
+@pytest.mark.asyncio
+async def test_repository_calculates_progress_from_applied_amount_with_legacy_import():
+    session = _RecordingSession(Decimal("700.00"))
+    repository = GoalRepository(session)  # type: ignore[arg-type]
+    user_id = UUID("11111111-1111-1111-1111-111111111111")
+    goal_id = UUID("22222222-2222-2222-2222-222222222222")
+
+    result = await repository.calculate_progress_by_goal(goal_id, user_id)
+    sql = _compiled_sql(session.statement)
+
+    assert result == Decimal("700.00")
+    assert "sum(goal_transactions.applied_amount)" in sql
+    assert "source_amount" not in sql
+    assert "IN ('allocation', 'legacy_import')" in sql
+    assert " = 'release'" in sql
+    assert "adjustment" not in sql
 
 
 def test_migration_revision_and_exclusive_type_addition(releases_migration):

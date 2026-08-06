@@ -103,6 +103,10 @@ def _reservation(
     contributed=Decimal("100.00"),
     released=Decimal("0.00"),
     reserved=Decimal("100.00"),
+    applied_contributed=None,
+    applied_released=None,
+    applied_reserved=None,
+    goal_currency="COP",
     is_active=True,
 ):
     return GoalAccountReservation(
@@ -112,6 +116,12 @@ def _reservation(
         contributed_amount=contributed,
         released_amount=released,
         reserved_amount=reserved,
+        goal_currency=goal_currency,
+        applied_contributed_amount=applied_contributed
+        if applied_contributed is not None
+        else contributed,
+        applied_released_amount=applied_released if applied_released is not None else released,
+        applied_reserved_amount=applied_reserved if applied_reserved is not None else reserved,
         account_is_active=is_active,
     )
 
@@ -140,7 +150,13 @@ def test_reservation_schema_is_typed_exact_and_rejects_negative_amounts():
             "contributed_amount": Decimal("200.10"),
             "released_amount": Decimal("0.10"),
             "reserved_amount": Decimal("200.00"),
+            "goal_currency": "usd",
+            "applied_contributed_amount": Decimal("200.10"),
+            "applied_released_amount": Decimal("0.10"),
+            "applied_reserved_amount": Decimal("200.00"),
             "account_is_active": False,
+            "is_releasable": False,
+            "release_block_reason": "account_inactive",
         }
     )
 
@@ -175,6 +191,10 @@ async def test_repository_uses_one_authoritative_aggregate_query_for_all_account
             contributed_amount=Decimal("600.00"),
             released_amount=Decimal("100.00"),
             reserved_amount=Decimal("500.00"),
+            goal_currency="COP",
+            applied_contributed_amount=Decimal("600.00"),
+            applied_released_amount=Decimal("100.00"),
+            applied_reserved_amount=Decimal("500.00"),
             account_is_active=True,
         ),
         SimpleNamespace(
@@ -184,6 +204,10 @@ async def test_repository_uses_one_authoritative_aggregate_query_for_all_account
             contributed_amount=Decimal("200.00"),
             released_amount=Decimal("50.00"),
             reserved_amount=Decimal("150.00"),
+            goal_currency="COP",
+            applied_contributed_amount=Decimal("200.00"),
+            applied_released_amount=Decimal("50.00"),
+            applied_reserved_amount=Decimal("150.00"),
             account_is_active=False,
         ),
     ]
@@ -212,7 +236,6 @@ async def test_repository_uses_one_authoritative_aggregate_query_for_all_account
         ),
     ]
     assert "sum(goal_transactions.source_amount)" in sql
-    assert "applied_amount" not in sql
     assert "legacy_contribution_id" not in sql
     assert "command_id" not in sql
     assert "IN ('allocation', 'legacy_import')" in sql
@@ -230,7 +253,7 @@ async def test_repository_uses_one_authoritative_aggregate_query_for_all_account
 
 
 @pytest.mark.asyncio
-async def test_total_and_account_breakdown_share_source_amount_semantics_and_ownership():
+async def test_total_goal_reservation_uses_applied_amount_and_ownership():
     user_id = UUID("11111111-1111-1111-1111-111111111111")
     goal_id = UUID("22222222-2222-2222-2222-222222222222")
     session = _ScalarRecordingSession(Decimal("650.00"))
@@ -240,8 +263,7 @@ async def test_total_and_account_breakdown_share_source_amount_semantics_and_own
     sql = _compiled_sql(session.statements[0])
 
     assert result == Decimal("650.00")
-    assert "sum(goal_transactions.source_amount)" in sql
-    assert "applied_amount" not in sql
+    assert "sum(goal_transactions.applied_amount)" in sql
     assert "IN ('allocation', 'legacy_import')" in sql
     assert " = 'release'" in sql
     assert f"goal_transactions.user_id = '{user_id}'" in sql
@@ -327,11 +349,17 @@ async def test_goal_detail_empty_collection_is_valid_only_for_zero_progress(
                     contributed=Decimal("100.00"),
                     released=Decimal("150.00"),
                     reserved=Decimal("-50.00"),
+                    applied_contributed=Decimal("100.00"),
+                    applied_released=Decimal("150.00"),
+                    applied_reserved=Decimal("-50.00"),
                 )
             ],
             Decimal("-50.00"),
         ),
-        ([_reservation(reserved=Decimal("99.99"))], Decimal("100.00")),
+        (
+            [_reservation(reserved=Decimal("99.99"), applied_reserved=Decimal("99.99"))],
+            Decimal("100.00"),
+        ),
     ],
 )
 async def test_goal_detail_rejects_negative_or_divergent_reservation_truth(
@@ -447,7 +475,13 @@ def test_goal_detail_http_serializes_breakdown_without_changing_goal_list():
                 contributed_amount=Decimal("150.00"),
                 released_amount=Decimal("50.00"),
                 reserved_amount=Decimal("100.00"),
+                goal_currency="COP",
+                applied_contributed_amount=Decimal("150.00"),
+                applied_released_amount=Decimal("50.00"),
+                applied_reserved_amount=Decimal("100.00"),
                 account_is_active=True,
+                is_releasable=True,
+                release_block_reason=None,
             )
         ],
     )
@@ -469,7 +503,13 @@ def test_goal_detail_http_serializes_breakdown_without_changing_goal_list():
             "contributed_amount": "150.00",
             "released_amount": "50.00",
             "reserved_amount": "100.00",
+            "goal_currency": "COP",
+            "applied_contributed_amount": "150.00",
+            "applied_released_amount": "50.00",
+            "applied_reserved_amount": "100.00",
             "account_is_active": True,
+            "is_releasable": True,
+            "release_block_reason": None,
         }
     ]
     service.get_goal.assert_awaited_once_with(user.id, goal_id)

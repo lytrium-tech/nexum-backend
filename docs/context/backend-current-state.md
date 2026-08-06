@@ -2,12 +2,13 @@
 
 ## Repository State
 - **Checkout actual:** rama `goals-v1-phase2-releases`
-- **Repository HEAD:** `7f1f6caf3e5bf450a18e5aa3273a2d00edf34c44`
-- **origin/main:** `7f1f6caf3e5bf450a18e5aa3273a2d00edf34c44`
-- **Cambios locales:** gap V1.8 `reservations_by_account` y cambios preexistentes ajenos preservados; staging vacío.
+- **Repository HEAD:** `06e682d2bd26fce4a07bcac32e9695c025f6cc89`
+- **origin/main:** `06e682d2bd26fce4a07bcac32e9695c025f6cc89`
+- **Cambios locales:** corrección `GOALS_V1_8_CROSS_CURRENCY_RESERVATION_INVARIANT` sin commit; staging vacío.
+- **Integridad del working tree:** una comparación forense detectó que cambios tracked preexistentes y ajenos al fix ya no están presentes. No fueron restaurados automáticamente; el commit queda bloqueado hasta reconciliación manual.
 
 ## Repository vs Production
-- **Repository Current State:** `HEAD` y `origin/main` sincronizados en `7f1f6caf3e5bf450a18e5aa3273a2d00edf34c44`.
+- **Repository Current State:** `HEAD` y `origin/main` sincronizados en `06e682d2bd26fce4a07bcac32e9695c025f6cc89`.
 - **Production:** Metas V1 Fase 2 está desplegada.
 - **Migración productiva de Metas:** `goals_v1_ph2_releases`.
 
@@ -48,11 +49,12 @@
   - Endpoint `POST /api/v1/goals/{goal_id}/releases` disponible y documentado en OpenAPI.
   - Release Gate aprobado y cero drift post-despliegue validado.
   - Handoff detallado creado en `../docs/handoff/backend/backend-to-frontend-v1-8.md`.
-  - Gap V1.8 local: `reservations_by_account` expuesto únicamente en Goal Detail mediante una agregación autoritativa por cuenta. OpenAPI local actualizado.
+  - Corrección V1.8 local y no desplegada: Goal Detail separa reservas en moneda fuente (`source_amount`) y progreso aplicado en moneda de meta (`applied_amount`).
+  - Los registros cross-currency históricos son legibles, pero no liberables bajo la política aprobada same-currency-only.
   - Las cuentas inactivas con reserva permanecen visibles con `account_is_active = false`; los releases desde cuentas inactivas continúan rechazados.
-  - `reserved_amount` es el máximo visual para el cliente; el backend revalida el máximo real bajo lock. History no debe usarse para reconstruir reservas.
-  - Validación local del gap: suite completa `663 passed, 9 skipped, 216 warnings`; PostgreSQL físico no fue ejecutado en esta auditoría.
-  - Frontend Sync pausado hasta commit y despliegue del gap V1.8.
+  - `reserved_amount` está expresado en `account_currency`; `applied_reserved_amount` está expresado en `goal_currency`. El backend revalida releases bajo lock. History no debe usarse para reconstruir reservas.
+  - OpenAPI local actualizado. No se ejecutaron migraciones ni data repair para esta corrección.
+  - Frontend Sync permanece pausado hasta reconciliar el working tree, cerrar la auditoría, crear commit y desplegar la corrección.
 
 ## Obligations Current State
 - **Obligations Core:** Estabilizado operando sobre rutas `/api/v1.7`.

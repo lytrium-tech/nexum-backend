@@ -7788,26 +7788,70 @@
             "type": "string",
             "maxLength": 3,
             "minLength": 3,
-            "title": "Account Currency"
+            "title": "Account Currency",
+            "description": "La moneda fuente (account_currency)."
           },
           "contributed_amount": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
-            "title": "Contributed Amount"
+            "title": "Contributed Amount",
+            "description": "Expresado en la moneda fuente."
           },
           "released_amount": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
-            "title": "Released Amount"
+            "title": "Released Amount",
+            "description": "Expresado en la moneda fuente."
           },
           "reserved_amount": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
-            "title": "Reserved Amount"
+            "title": "Reserved Amount",
+            "description": "Expresado en la moneda fuente."
+          },
+          "goal_currency": {
+            "type": "string",
+            "maxLength": 3,
+            "minLength": 3,
+            "title": "Goal Currency"
+          },
+          "applied_contributed_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+            "title": "Applied Contributed Amount"
+          },
+          "applied_released_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+            "title": "Applied Released Amount"
+          },
+          "applied_reserved_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+            "title": "Applied Reserved Amount"
           },
           "account_is_active": {
             "type": "boolean",
             "title": "Account Is Active"
+          },
+          "is_releasable": {
+            "type": "boolean",
+            "title": "Is Releasable"
+          },
+          "release_block_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "currency_mismatch_legacy",
+                  "account_inactive"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Block Reason"
           }
         },
         "additionalProperties": false,
@@ -7819,7 +7863,12 @@
           "contributed_amount",
           "released_amount",
           "reserved_amount",
-          "account_is_active"
+          "goal_currency",
+          "applied_contributed_amount",
+          "applied_released_amount",
+          "applied_reserved_amount",
+          "account_is_active",
+          "is_releasable"
         ],
         "title": "GoalAccountReservationRead"
       },

@@ -3,8 +3,6 @@ from pathlib import Path
 
 import pytest
 
-from app.ledger.models import FINANCIAL_EVENT_TYPES
-
 
 class OperationRecorder:
     def __init__(self) -> None:
@@ -40,7 +38,21 @@ def test_upgrade_constraint_converges_known_states_and_matches_model(
 
     goals_migration._upgrade_financial_events_type_constraint()
 
-    assert tuple(goals_migration.POST_GOALS_FINANCIAL_EVENT_TYPES) == (FINANCIAL_EVENT_TYPES)
+    expected_phase1_event_types = (
+        "income",
+        "expense",
+        "goal_contribution",
+        "obligation_payment",
+        "credit_card_purchase",
+        "credit_card_payment",
+        "manual_adjustment",
+        "transfer_out",
+        "transfer_in",
+        "opening_balance",
+        "balance_adjustment",
+    )
+
+    assert tuple(goals_migration.POST_GOALS_FINANCIAL_EVENT_TYPES) == expected_phase1_event_types
     assert [call[0] for call in recorder.calls] == [
         "execute",
         "drop_constraint",

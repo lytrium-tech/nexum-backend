@@ -97,12 +97,15 @@ class GoalService:
                 reservation.contributed_amount,
                 reservation.released_amount,
                 reservation.reserved_amount,
+                reservation.applied_contributed_amount,
+                reservation.applied_released_amount,
+                reservation.applied_reserved_amount,
             )
         ):
             raise ConflictError(message="El desglose de reservas por cuenta es inconsistente.")
 
         reservations_total = sum(
-            (reservation.reserved_amount for reservation in reservations_raw),
+            (reservation.applied_reserved_amount for reservation in reservations_raw),
             Decimal("0.00"),
         )
         if reservations_total != goal.current_amount:
@@ -112,9 +115,37 @@ class GoalService:
 
         gr = GoalDetailRead.model_validate(goal)
         gr.contributed_this_period = contributions.get(goal.id, Decimal("0.00"))
-        gr.reservations_by_account = [
-            GoalAccountReservationRead.model_validate(r) for r in reservations_raw
-        ]
+
+        mapped_reservations = []
+        for r in reservations_raw:
+            is_releasable = False
+            release_block_reason = None
+
+            if r.account_currency.upper() != r.goal_currency.upper():
+                release_block_reason = "currency_mismatch_legacy"
+            elif not r.account_is_active:
+                release_block_reason = "account_inactive"
+            else:
+                is_releasable = True
+
+            read_model = GoalAccountReservationRead(
+                account_id=r.account_id,
+                account_name=r.account_name,
+                account_currency=r.account_currency,
+                contributed_amount=r.contributed_amount,
+                released_amount=r.released_amount,
+                reserved_amount=r.reserved_amount,
+                goal_currency=r.goal_currency,
+                applied_contributed_amount=r.applied_contributed_amount,
+                applied_released_amount=r.applied_released_amount,
+                applied_reserved_amount=r.applied_reserved_amount,
+                account_is_active=r.account_is_active,
+                is_releasable=is_releasable,
+                release_block_reason=release_block_reason,
+            )
+            mapped_reservations.append(read_model)
+
+        gr.reservations_by_account = mapped_reservations
         return gr
 
     async def create_goal(self, auth_user_id: UUID, payload: GoalCreate) -> GoalRead:

@@ -28,15 +28,29 @@ class GoalUpdate(BaseModel):
 class GoalAccountReservationRead(BaseModel):
     account_id: UUID
     account_name: str
-    account_currency: str = Field(min_length=3, max_length=3)
-    contributed_amount: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
-    released_amount: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
-    reserved_amount: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    account_currency: str = Field(
+        min_length=3, max_length=3, description="La moneda fuente (account_currency)."
+    )
+    contributed_amount: Decimal = Field(
+        ge=0, max_digits=14, decimal_places=2, description="Expresado en la moneda fuente."
+    )
+    released_amount: Decimal = Field(
+        ge=0, max_digits=14, decimal_places=2, description="Expresado en la moneda fuente."
+    )
+    reserved_amount: Decimal = Field(
+        ge=0, max_digits=14, decimal_places=2, description="Expresado en la moneda fuente."
+    )
+    goal_currency: str = Field(min_length=3, max_length=3)
+    applied_contributed_amount: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    applied_released_amount: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    applied_reserved_amount: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
     account_is_active: bool
+    is_releasable: bool
+    release_block_reason: Literal["currency_mismatch_legacy", "account_inactive"] | None = None
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 
-    @field_validator("account_currency")
+    @field_validator("account_currency", "goal_currency")
     @classmethod
     def uppercase_currency(cls, value: str) -> str:
         return value.upper()
