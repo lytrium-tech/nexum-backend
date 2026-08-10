@@ -2,13 +2,13 @@
 
 ## Repository State
 - **Checkout actual:** rama `goals-v1-phase2-releases`
-- **Repository HEAD:** `06e682d2bd26fce4a07bcac32e9695c025f6cc89`
-- **origin/main:** `06e682d2bd26fce4a07bcac32e9695c025f6cc89`
-- **Cambios locales:** corrección `GOALS_V1_8_CROSS_CURRENCY_RESERVATION_INVARIANT` sin commit; staging vacío.
-- **Integridad del working tree:** una comparación forense detectó que cambios tracked preexistentes y ajenos al fix ya no están presentes. No fueron restaurados automáticamente; el commit queda bloqueado hasta reconciliación manual.
+- **Repository HEAD:** `9dab5a4de617366b620785a66294494986abde63`
+- **origin/main:** `9dab5a4de617366b620785a66294494986abde63`
+- **Cambios locales:** documentación de despliegue.
+- **Integridad del working tree:** working tree reconciliado. Despliegue de hotfix productivo finalizado.
 
 ## Repository vs Production
-- **Repository Current State:** `HEAD` y `origin/main` sincronizados en `06e682d2bd26fce4a07bcac32e9695c025f6cc89`.
+- **Repository Current State:** `HEAD` y `origin/main` sincronizados en `9dab5a4de617366b620785a66294494986abde63`.
 - **Production:** Metas V1 Fase 2 está desplegada.
 - **Migración productiva de Metas:** `goals_v1_ph2_releases`.
 
@@ -44,17 +44,18 @@
   - Inteligencia conciliada sin duplicar saldos entre sources ni considerar neutrales como cashflow.
 - **Goals V1 Phase 2 (producción):**
   - Fase 2 ("Releases") implementada y desplegada en producción.
-  - Commit productivo: `7f1f6caf3e5bf450a18e5aa3273a2d00edf34c44`
+  - Goals V1.8 — Reservations by Account deployed via Hotfix.
+  - Commit productivo: `9dab5a4de617366b620785a66294494986abde63`
   - Migración aplicada: `goals_v1_ph2_releases`.
   - Endpoint `POST /api/v1/goals/{goal_id}/releases` disponible y documentado en OpenAPI.
+  - Endpoint GET `api/v1/goals/{goal_id}` expone aditivamente `reservations_by_account`.
   - Release Gate aprobado y cero drift post-despliegue validado.
   - Handoff detallado creado en `../docs/handoff/backend/backend-to-frontend-v1-8.md`.
-  - Corrección V1.8 local y no desplegada: Goal Detail separa reservas en moneda fuente (`source_amount`) y progreso aplicado en moneda de meta (`applied_amount`).
-  - Los registros cross-currency históricos son legibles, pero no liberables bajo la política aprobada same-currency-only.
+  - La invariante fue corregida para comparar únicamente cantidades expresadas en la moneda de la meta: SUM(applied_reserved_amount) == goal.current_amount. Las reservas source permanecen expresadas en account_currency. Los datos legacy cross-currency son read-safe, mientras que nuevas contributions y releases cross-currency continúan rechazadas.
   - Las cuentas inactivas con reserva permanecen visibles con `account_is_active = false`; los releases desde cuentas inactivas continúan rechazados.
   - `reserved_amount` está expresado en `account_currency`; `applied_reserved_amount` está expresado en `goal_currency`. El backend revalida releases bajo lock. History no debe usarse para reconstruir reservas.
-  - OpenAPI local actualizado. No se ejecutaron migraciones ni data repair para esta corrección.
-  - Frontend Sync permanece pausado hasta reconciliar el working tree, cerrar la auditoría, crear commit y desplegar la corrección.
+  - OpenAPI actualizado. No se ejecutaron migraciones ni data repair para esta corrección.
+  - Frontend Sync desbloqueado. Issue #1 permanece abierto hasta Frontend QA.
 
 ## Obligations Current State
 - **Obligations Core:** Estabilizado operando sobre rutas `/api/v1.7`.
