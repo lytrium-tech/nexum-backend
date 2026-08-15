@@ -1,12 +1,13 @@
 import uuid
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from freezegun import freeze_time
 
 from app.obligations.enums_v17 import PeriodStatus
-from app.obligations.models import Obligation, ObligationPeriod
+from app.obligations.models import Obligation
 from app.obligations.service_v17 import ObligationV17Service
 
 
@@ -120,11 +121,12 @@ async def test_batch_refresh_does_not_duplicate_periods(mock_db):
     mock_db.execute.side_effect = side_effect
 
     from sqlalchemy.exc import IntegrityError
+
     mock_db.flush.side_effect = IntegrityError("mock error", params=None, orig=None)
 
     # Should not raise exception
     await service.refresh_due_periods_for_user(user_id)
-    
+
     assert mock_db.begin_nested.call_count == 1
     assert mock_db.expunge.call_count > 0
 
@@ -192,7 +194,7 @@ async def test_batch_refresh_fixed_obligation_creates_pending_payment_or_overdue
         amount_type="fixed",
         start_date=date(2020, 1, 1),
         first_due_date=date(2020, 1, 5),
-        end_date=date(2020, 3, 1), # Only up to March 2020 to prevent huge loop
+        end_date=date(2020, 3, 1),  # Only up to March 2020 to prevent huge loop
     )
 
     def side_effect(stmt):
@@ -221,7 +223,7 @@ async def test_batch_refresh_fixed_obligation_creates_pending_payment_or_overdue
 async def test_summary_does_not_refresh_closed_obligations(mock_db):
     service = ObligationV17Service(mock_db)
     user_id = uuid.uuid4()
-    
+
     def side_effect(stmt):
         mock_result = MagicMock()
         stmt_str = str(stmt).lower()
@@ -237,12 +239,13 @@ async def test_summary_does_not_refresh_closed_obligations(mock_db):
     mock_db.execute.side_effect = side_effect
 
     await service.refresh_due_periods_for_user(user_id)
-    
+
     # Should not call add_all because active_obls is empty
     mock_db.add_all.assert_not_called()
 
 
 @pytest.mark.asyncio
+@freeze_time("2026-07-15")
 async def test_auto_refresh_is_idempotent(mock_db):
     service = ObligationV17Service(mock_db)
     user_id = uuid.uuid4()
@@ -284,6 +287,6 @@ async def test_auto_refresh_is_idempotent(mock_db):
     mock_db.execute.side_effect = side_effect
 
     await service.refresh_due_periods_for_user(user_id)
-    
+
     # Because sequence 1 is already returned as existing, it should generate nothing
     mock_db.add_all.assert_not_called()
