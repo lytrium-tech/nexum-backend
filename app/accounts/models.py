@@ -32,3 +32,13 @@ class Account(Base):
             "type = ANY (ARRAY['bank', 'wallet', 'cash', 'savings'])", name="accounts_type_check"
         ),
     )
+
+    @property
+    def available_balance(self) -> Decimal:
+        if hasattr(self, "_available_balance"):
+            return self._available_balance
+        return self.balance or Decimal("0.00")
+
+    @available_balance.setter
+    def available_balance(self, value: Decimal) -> None:
+        self._available_balance = value

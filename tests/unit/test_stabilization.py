@@ -5,7 +5,6 @@ from uuid import uuid4
 
 import pytest
 
-from app.accounts.schemas import AccountUpdate
 from app.accounts.service import AccountService
 from app.conversations.schemas import ConversationalRequest, PendingActionRead
 from app.conversations.service import ConversationsService
@@ -47,9 +46,10 @@ async def test_reactivate_account_success():
         is_active=False,
         type="bank",
         balance=Decimal("0.0"),
+        available_balance=Decimal("0.0"),
         currency="USD",
         created_at=datetime.now(UTC),
-        updated_at=datetime.now(UTC)
+        updated_at=datetime.now(UTC),
     )
     m.name = "Test"
     repo_mock.get_by_id.return_value = m
@@ -127,12 +127,7 @@ async def test_conversational_create_goal_dynamic_currency():
 
 
 @pytest.mark.skip(reason="V1.6 obligations core refactoring")
-
-
 @pytest.mark.asyncio
-
-
-
 async def test_conversational_create_obligation_dynamic_currency():
     """Bug 1 variant: create_obligation uses dynamic currency instead of COP."""
     repo_mock = AsyncMock()

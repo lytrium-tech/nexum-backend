@@ -43,18 +43,51 @@ class AccountService:
         self.ledger_repo = ledger_repo
         self.goal_repository = goal_repository
 
+    @staticmethod
+    def _set_available_balance(account: Account, reserved: Decimal) -> Decimal:
+        if account.balance is None:
+            raise ValidationError(message="La cuenta no tiene un balance válido.")
+        if reserved < 0:
+            raise ConflictError(message="La reserva acumulada de la cuenta es inconsistente.")
+
+        available_balance = account.balance - reserved
+        if available_balance < 0:
+            raise ConflictError(
+                message="Las reservas de metas exceden el balance bruto de la cuenta."
+            )
+
+        account.available_balance = available_balance
+        return available_balance
+
+    async def _populate_available_balance(self, account, auth_user_id: UUID) -> None:
+        if self.goal_repository:
+            reserved = await self.goal_repository.calculate_reserved_by_account(
+                account.id, auth_user_id
+            )
+            self._set_available_balance(account, reserved)
+
     async def list_accounts(
         self, auth_user_id: UUID, include_archived: bool = False
     ) -> list[AccountRead]:
         accounts = await self.repository.list_by_user(
             auth_user_id, include_archived=include_archived
         )
+        if self.goal_repository:
+            reserved_by_account = await self.goal_repository.get_reserved_amounts_for_user(
+                auth_user_id
+            )
+            for account in accounts:
+                reserved = reserved_by_account.get(account.id, Decimal("0.00"))
+                self._set_available_balance(account, reserved)
+
         return [AccountRead.model_validate(a) for a in accounts]
 
     async def get_account(self, auth_user_id: UUID, account_id: UUID) -> AccountDetailRead:
         account = await self._get_account_or_404(account_id, include_inactive=True)
         if account.user_id != auth_user_id:
             raise AccountForbiddenError()
+
+        await self._populate_available_balance(account, auth_user_id)
 
         has_movements = False
         movement_count = 0
@@ -116,6 +149,7 @@ class AccountService:
             )
             await self.ledger_repo.insert_event(event_create)
 
+        await self._populate_available_balance(created, auth_user_id)
         return AccountRead.model_validate(created)
 
     async def update_account(
@@ -139,6 +173,7 @@ class AccountService:
             account.type = payload.type.value
 
         await self.repository.session.flush()
+        await self._populate_available_balance(account, auth_user_id)
         return AccountRead.model_validate(account)
 
     async def archive_account(self, auth_user_id: UUID, account_id: UUID) -> AccountRead:
@@ -147,6 +182,7 @@ class AccountService:
             raise AccountForbiddenError()
         account.is_active = False
         await self.repository.session.flush()
+        await self._populate_available_balance(account, auth_user_id)
         return AccountRead.model_validate(account)
 
     async def restore_account(self, auth_user_id: UUID, account_id: UUID) -> AccountRead:
@@ -155,6 +191,7 @@ class AccountService:
             raise AccountForbiddenError()
         account.is_active = True
         await self.repository.session.flush()
+        await self._populate_available_balance(account, auth_user_id)
         return AccountRead.model_validate(account)
 
     async def delete_account(self, auth_user_id: UUID, account_id: UUID) -> None:
@@ -173,6 +210,7 @@ class AccountService:
 
         diff = payload.target_balance - account.balance
         if diff == 0:
+            await self._populate_available_balance(account, auth_user_id)
             return AccountRead.model_validate(account)
 
         ledger_dir = Direction.INFLOW if diff > 0 else Direction.OUTFLOW
@@ -199,6 +237,7 @@ class AccountService:
             await self.ledger_repo.insert_event(event_create)
 
         await self.repository.session.flush()
+        await self._populate_available_balance(account, auth_user_id)
         return AccountRead.model_validate(account)
 
     async def _get_account_or_404(
@@ -355,14 +394,7 @@ class AccountService:
             account_id,
             auth_user_id,
         )
-        if reserved_amount < 0:
-            raise ConflictError(message="La reserva acumulada de la cuenta es inconsistente.")
-
-        available_balance = account.balance - reserved_amount
-        if available_balance < 0:
-            raise ConflictError(
-                message="Las reservas de metas exceden el balance bruto de la cuenta."
-            )
+        available_balance = self._set_available_balance(account, reserved_amount)
 
         return AccountAvailabilityRead(
             account_id=account.id,

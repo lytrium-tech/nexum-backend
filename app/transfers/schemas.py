@@ -9,7 +9,23 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.accounts.schemas import AccountRead
+from app.accounts.enums import AccountType
+
+
+class TransferAccountRead(BaseModel):
+    """Account representation for transfers; exposes gross balance only."""
+
+    id: UUID
+    user_id: UUID
+    name: str
+    type: AccountType
+    balance: Decimal
+    currency: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TransferRequest(BaseModel):
@@ -55,8 +71,8 @@ class LedgerEventsRef(BaseModel):
 
 class TransferResult(BaseModel):
     id: UUID
-    source_account: AccountRead
-    destination_account: AccountRead
+    source_account: TransferAccountRead
+    destination_account: TransferAccountRead
     amount: Decimal
     currency: str
     target_amount: Decimal | None = None

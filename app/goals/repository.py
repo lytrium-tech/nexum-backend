@@ -228,6 +228,29 @@ class GoalRepository:
         val = result.scalar_one_or_none()
         return Decimal(str(val)) if val is not None else Decimal("0.00")
 
+    async def get_reserved_amounts_for_user(self, user_id: UUID) -> dict[UUID, Decimal]:
+        _, _, reserved_amount = _source_reservation_amounts()
+        result = await self.session.execute(
+            select(
+                GoalTransaction.account_id,
+                reserved_amount.label("reserved"),
+            )
+            .join(Account, Account.id == GoalTransaction.account_id)
+            .where(GoalTransaction.user_id == user_id)
+            .where(Account.user_id == user_id)
+            .where(
+                GoalTransaction.transaction_type.in_(
+                    (
+                        GoalTransactionType.allocation,
+                        GoalTransactionType.legacy_import,
+                        GoalTransactionType.release,
+                    )
+                )
+            )
+            .group_by(GoalTransaction.account_id)
+        )
+        return {row.account_id: Decimal(str(row.reserved)) for row in result.all()}
+
     async def calculate_reserved_by_goal_and_account(
         self, user_id: UUID, goal_id: UUID, account_id: UUID
     ) -> Decimal:

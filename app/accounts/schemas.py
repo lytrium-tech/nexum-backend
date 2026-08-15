@@ -27,7 +27,10 @@ class AccountRead(BaseModel):
     user_id: UUID
     name: str
     type: AccountType
-    balance: Decimal
+    balance: Decimal = Field(description="Saldo bruto contable; no descuenta reservas de metas.")
+    available_balance: Decimal = Field(
+        description="Saldo gastable después de descontar reservas autoritativas de metas."
+    )
     currency: str
     is_active: bool
     created_at: datetime
@@ -71,9 +74,11 @@ class BalanceAdjustmentCreate(BaseModel):
 class AccountAvailabilityRead(BaseModel):
     account_id: UUID
     currency: str = Field(min_length=3, max_length=3)
-    balance: Decimal
+    balance: Decimal = Field(description="Saldo bruto contable.")
     goal_reserved_amount: Decimal
-    available_balance: Decimal
+    available_balance: Decimal = Field(
+        description="Saldo bruto menos reservas autoritativas de metas."
+    )
 
     model_config = ConfigDict(extra="forbid")
 
