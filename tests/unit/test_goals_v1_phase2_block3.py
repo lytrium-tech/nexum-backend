@@ -251,6 +251,7 @@ def test_history_includes_releases(test_client, mock_goal_service):
             description="Release test",
             created_at=datetime.now(UTC),
             origin="native",
+            channel="manual",
         )
     ]
 

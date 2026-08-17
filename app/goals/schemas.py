@@ -1,10 +1,19 @@
 import calendar
+import zoneinfo
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field, field_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 from app.core.currency import get_minimum_unit, round_up_to_minimum_unit
 from app.goals.enums import GoalTransactionType
@@ -236,6 +245,7 @@ class GoalTransactionRead(BaseModel):
     description: str | None = Field(None, max_length=255)
     created_at: AwareDatetime
     origin: Literal["legacy", "native"]
+    channel: Literal["manual", "automatic", "legacy"]
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 
@@ -294,3 +304,105 @@ class GoalReleaseResult(BaseModel):
     @classmethod
     def uppercase_currency(cls, value: str | None) -> str | None:
         return value.upper() if value is not None else None
+
+
+class GoalAutoContributionScheduleRead(BaseModel):
+    id: UUID
+    goal_id: UUID
+    account_id: UUID
+    amount: Decimal = Field(max_digits=14, decimal_places=2)
+    frequency: Literal["weekly", "monthly"]
+    execution_day: str
+    timezone: str
+    start_date: date | None
+    status: Literal["active", "paused", "cancelled"]
+    pause_reason: (
+        Literal["user_paused", "goal_completed", "account_inactive", "goal_archived"] | None
+    )
+    next_run_at: AwareDatetime | None
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+
+class GoalAutoContributionScheduleCreate(BaseModel):
+    account_id: UUID
+    amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2, allow_inf_nan=False)
+    frequency: Literal["weekly", "monthly"]
+    execution_day: str
+    timezone: str
+    start_date: date | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        try:
+            zoneinfo.ZoneInfo(value)
+        except Exception as e:
+            raise ValueError("Timezone inválida") from e
+        return value
+
+    @model_validator(mode="after")
+    def validate_frequency_day(self) -> "GoalAutoContributionScheduleCreate":
+        day = self.execution_day.lower()
+        self.execution_day = day
+        if self.frequency == "weekly":
+            if day not in {
+                "monday",
+                "tuesday",
+                "wednesday",
+                "thursday",
+                "friday",
+                "saturday",
+                "sunday",
+            }:
+                raise ValueError("execution_day inválido para frecuencia weekly")
+        elif self.frequency == "monthly":
+            if day not in {str(value) for value in range(1, 32)}:
+                raise ValueError("execution_day inválido para frecuencia monthly")
+        return self
+
+
+class GoalAutoContributionScheduleUpdate(BaseModel):
+    account_id: UUID | None = None
+    amount: Decimal | None = Field(None, gt=0, max_digits=14, decimal_places=2, allow_inf_nan=False)
+    frequency: Literal["weekly", "monthly"] | None = None
+    execution_day: str | None = None
+    timezone: str | None = None
+    start_date: date | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_null_non_nullable_updates(cls, value):
+        if isinstance(value, dict):
+            for field_name in (
+                "account_id",
+                "amount",
+                "frequency",
+                "execution_day",
+                "timezone",
+            ):
+                if field_name in value and value[field_name] is None:
+                    raise ValueError(f"{field_name} no puede ser null")
+        return value
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            zoneinfo.ZoneInfo(value)
+        except Exception as e:
+            raise ValueError("Timezone inválida") from e
+        return value
+
+    @field_validator("execution_day")
+    @classmethod
+    def normalize_execution_day(cls, value: str | None) -> str | None:
+        return value.lower() if value is not None else None

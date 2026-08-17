@@ -20,6 +20,7 @@ from app.goals.models import Goal, GoalTransaction
 from app.goals.repository import GoalRepository
 from app.goals.router import get_goal_service
 from app.goals.schemas import (
+    GoalContributionCreate,
     GoalContributionResult,
     GoalTransactionRead,
     GoalTransactionsResponse,
@@ -30,6 +31,8 @@ from app.intelligence.service import IntelligenceService
 from app.main import app
 from app.users.dependencies import get_current_user_profile_dep
 from app.users.schemas import UserRead
+
+_DEFAULT_METADATA = object()
 
 
 def make_user(user_id: UUID) -> UserRead:
@@ -95,6 +98,8 @@ def make_transaction(
     goal_id: UUID,
     legacy: bool = False,
     created_at: datetime | None = None,
+    transaction_type: GoalTransactionType = GoalTransactionType.allocation,
+    metadata_json: object = _DEFAULT_METADATA,
 ) -> GoalTransaction:
     return GoalTransaction(
         id=uuid4(),
@@ -102,7 +107,7 @@ def make_transaction(
         goal_id=goal_id,
         account_id=uuid4(),
         event_id=uuid4(),
-        transaction_type=GoalTransactionType.allocation,
+        transaction_type=transaction_type,
         source_amount=Decimal("100.00"),
         source_currency="cop",
         applied_amount=Decimal("100.00"),
@@ -110,7 +115,9 @@ def make_transaction(
         command_id=uuid4(),
         command_fingerprint="fingerprint",
         legacy_contribution_id=uuid4() if legacy else None,
-        metadata_json={"private": "must-not-leak"},
+        metadata_json=(
+            {"private": "must-not-leak"} if metadata_json is _DEFAULT_METADATA else metadata_json
+        ),
         created_at=created_at or datetime.now(UTC),
     )
 
@@ -308,11 +315,103 @@ async def test_goal_history_sanitizes_description_and_hides_private_metadata():
 
     assert result.items[0].description == "Aporte de emergencia"
     assert result.items[0].source_currency == "COP"
+    assert result.items[0].origin == "native"
+    assert result.items[0].channel == "manual"
     assert result.items[1].description is None
     assert result.items[1].origin == "legacy"
+    assert result.items[1].channel == "legacy"
     assert "command_id" not in result.items[0].model_dump()
     assert "command_fingerprint" not in result.items[0].model_dump()
     assert "metadata_json" not in result.items[0].model_dump()
+
+
+@pytest.mark.parametrize(
+    ("transaction_type", "legacy", "metadata_json", "expected_origin", "expected_channel"),
+    [
+        (GoalTransactionType.allocation, False, None, "native", "manual"),
+        (GoalTransactionType.allocation, False, {}, "native", "manual"),
+        (GoalTransactionType.allocation, False, {"channel": "manual"}, "native", "manual"),
+        (
+            GoalTransactionType.allocation,
+            False,
+            {"channel": "automatic"},
+            "native",
+            "automatic",
+        ),
+        (
+            GoalTransactionType.allocation,
+            False,
+            {"channel": "unexpected"},
+            "native",
+            "manual",
+        ),
+        (GoalTransactionType.allocation, False, ["invalid"], "native", "manual"),
+        (
+            GoalTransactionType.allocation,
+            True,
+            None,
+            "legacy",
+            "legacy",
+        ),
+        (
+            GoalTransactionType.allocation,
+            True,
+            {"channel": "automatic"},
+            "legacy",
+            "legacy",
+        ),
+        (GoalTransactionType.legacy_import, False, {}, "native", "legacy"),
+        (
+            GoalTransactionType.release,
+            False,
+            {"channel": "automatic"},
+            "native",
+            "manual",
+        ),
+        (
+            GoalTransactionType.adjustment,
+            False,
+            {"channel": "automatic"},
+            "native",
+            "manual",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_goal_history_resolves_channel_defensively(
+    transaction_type,
+    legacy,
+    metadata_json,
+    expected_origin,
+    expected_channel,
+):
+    user_id = uuid4()
+    goal = make_goal(user_id=user_id)
+    transaction = make_transaction(
+        user_id=user_id,
+        goal_id=goal.id,
+        legacy=legacy,
+        transaction_type=transaction_type,
+        metadata_json=metadata_json,
+    )
+    repository = AsyncMock()
+    repository.get_by_id.return_value = goal
+    repository.list_transactions_by_goal.return_value = ([(transaction, None)], 1)
+    service = GoalService(repository, AsyncMock(), AsyncMock())
+
+    result = await service.list_goal_transactions(user_id, goal.id)
+
+    assert result.items[0].origin == expected_origin
+    assert result.items[0].channel == expected_channel
+
+
+def test_public_contribution_contract_rejects_internal_channel():
+    with pytest.raises(PydanticValidationError):
+        GoalContributionCreate(
+            account_id=uuid4(),
+            amount=Decimal("1.00"),
+            channel="automatic",
+        )
 
 
 @pytest.mark.asyncio
@@ -667,6 +766,7 @@ def test_block3_schemas_enforce_currency_and_aware_timestamps():
         description=None,
         created_at=datetime.now(UTC),
         origin="native",
+        channel="manual",
     )
     assert transaction.source_currency == "COP"
 

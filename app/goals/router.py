@@ -4,10 +4,13 @@ from fastapi import APIRouter, Depends, Header, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.repository import AccountRepository
-from app.core.database import get_db_session
+from app.core.database import get_db_session, mark_session_read_only
 from app.core.uow import UnitOfWork
 from app.goals.repository import GoalRepository
 from app.goals.schemas import (
+    GoalAutoContributionScheduleCreate,
+    GoalAutoContributionScheduleRead,
+    GoalAutoContributionScheduleUpdate,
     GoalContributionCreate,
     GoalContributionResult,
     GoalCreate,
@@ -157,3 +160,130 @@ async def list_goal_transactions(
 ) -> GoalTransactionsResponse:
     user_id = current_profile.id
     return await service.list_goal_transactions(user_id, goal_id, limit, offset)
+
+
+@router.get(
+    "/{goal_id}/auto-contribution",
+    response_model=GoalAutoContributionScheduleRead,
+    responses={
+        401: {"description": "Autenticación requerida"},
+        403: {"description": "Meta ajena"},
+        404: {"description": "Meta o schedule no encontrado"},
+    },
+)
+async def get_auto_contribution_schedule(
+    goal_id: UUID,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+    service: GoalService = Depends(get_goal_service),
+) -> GoalAutoContributionScheduleRead:
+    mark_session_read_only(session)
+    return await service.get_auto_contribution_schedule(current_profile.id, goal_id)
+
+
+@router.put(
+    "/{goal_id}/auto-contribution",
+    response_model=GoalAutoContributionScheduleRead,
+    responses={
+        400: {"description": "Meta no operativa"},
+        401: {"description": "Autenticación requerida"},
+        403: {"description": "Meta o cuenta ajena/inactiva"},
+        404: {"description": "Meta o cuenta no encontrada"},
+        409: {"description": "Ya existe un schedule no cancelado"},
+        422: {"description": "Configuración, timezone o moneda inválida"},
+    },
+)
+async def put_auto_contribution_schedule(
+    goal_id: UUID,
+    payload: GoalAutoContributionScheduleCreate,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+) -> GoalAutoContributionScheduleRead:
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = get_goal_service(session)
+        return await service.put_auto_contribution_schedule(current_profile.id, goal_id, payload)
+
+
+@router.patch(
+    "/{goal_id}/auto-contribution",
+    response_model=GoalAutoContributionScheduleRead,
+    responses={
+        401: {"description": "Autenticación requerida"},
+        403: {"description": "Meta o cuenta ajena/inactiva"},
+        404: {"description": "Meta, cuenta o schedule no encontrado"},
+        422: {"description": "Configuración, timezone o moneda inválida"},
+    },
+)
+async def patch_auto_contribution_schedule(
+    goal_id: UUID,
+    payload: GoalAutoContributionScheduleUpdate,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+) -> GoalAutoContributionScheduleRead:
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = get_goal_service(session)
+        return await service.patch_auto_contribution_schedule(current_profile.id, goal_id, payload)
+
+
+@router.delete(
+    "/{goal_id}/auto-contribution",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        401: {"description": "Autenticación requerida"},
+        403: {"description": "Meta ajena"},
+        404: {"description": "Meta o schedule no encontrado"},
+    },
+)
+async def delete_auto_contribution_schedule(
+    goal_id: UUID,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+) -> None:
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = get_goal_service(session)
+        await service.delete_auto_contribution_schedule(current_profile.id, goal_id)
+
+
+@router.post(
+    "/{goal_id}/auto-contribution/pause",
+    response_model=GoalAutoContributionScheduleRead,
+    responses={
+        401: {"description": "Autenticación requerida"},
+        403: {"description": "Meta ajena"},
+        404: {"description": "Meta o schedule no encontrado"},
+    },
+)
+async def pause_auto_contribution_schedule(
+    goal_id: UUID,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+) -> GoalAutoContributionScheduleRead:
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = get_goal_service(session)
+        return await service.pause_auto_contribution_schedule(current_profile.id, goal_id)
+
+
+@router.post(
+    "/{goal_id}/auto-contribution/resume",
+    response_model=GoalAutoContributionScheduleRead,
+    responses={
+        400: {"description": "Meta no operativa"},
+        401: {"description": "Autenticación requerida"},
+        403: {"description": "Meta o cuenta ajena/inactiva"},
+        404: {"description": "Meta, cuenta o schedule no encontrado"},
+        422: {"description": "Timezone o moneda inválida"},
+    },
+)
+async def resume_auto_contribution_schedule(
+    goal_id: UUID,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+) -> GoalAutoContributionScheduleRead:
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = get_goal_service(session)
+        return await service.resume_auto_contribution_schedule(current_profile.id, goal_id)

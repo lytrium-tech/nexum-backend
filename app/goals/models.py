@@ -11,11 +11,13 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Mapped, mapped_column
@@ -132,4 +134,125 @@ class GoalTransaction(Base):
         Index("ix_goal_transactions_user_id", "user_id"),
         Index("ix_goal_transactions_created_at", "created_at"),
         Index("ix_goal_transactions_tx_type", "transaction_type"),
+    )
+
+
+class GoalAutoContributionSchedule(Base):
+    __tablename__ = "goal_auto_contribution_schedules"
+
+    id: Mapped[UUID] = mapped_column(
+        postgresql.UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid(),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    goal_id: Mapped[UUID] = mapped_column(
+        ForeignKey("goals.id", ondelete="RESTRICT"), nullable=False
+    )
+    account_id: Mapped[UUID] = mapped_column(
+        ForeignKey("accounts.id", ondelete="RESTRICT"), nullable=False
+    )
+
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    frequency: Mapped[str] = mapped_column(Text, nullable=False)
+    execution_day: Mapped[str] = mapped_column(Text, nullable=False)
+
+    timezone: Mapped[str] = mapped_column(Text, nullable=False)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    status: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="active",
+        server_default="active",
+    )
+    pause_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="chk_gacs_amount_pos"),
+        CheckConstraint("frequency IN ('weekly', 'monthly')", name="chk_gacs_frequency"),
+        CheckConstraint(
+            "(frequency = 'weekly' AND execution_day IN ('monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday')) OR "
+            "(frequency = 'monthly' AND execution_day ~ '^[1-9]$|^[1-2][0-9]$|^3[0-1]$')",
+            name="chk_gacs_execution_day",
+        ),
+        CheckConstraint("status IN ('active', 'paused', 'cancelled')", name="chk_gacs_status"),
+        CheckConstraint(
+            "pause_reason IS NULL OR pause_reason IN ('user_paused', 'goal_completed', 'account_inactive', 'goal_archived')",
+            name="chk_gacs_pause_reason",
+        ),
+        CheckConstraint(
+            "status != 'active' OR next_run_at IS NOT NULL", name="chk_gacs_active_next_run"
+        ),
+        Index(
+            "ix_goal_auto_contrib_goal_id_active",
+            "goal_id",
+            unique=True,
+            postgresql_where=text("status != 'cancelled'"),
+        ),
+        Index("ix_goal_auto_contrib_status_next_run", "status", "next_run_at"),
+        Index("ix_goal_auto_contrib_user_id", "user_id"),
+    )
+
+
+class GoalAutoContributionRun(Base):
+    __tablename__ = "goal_auto_contribution_runs"
+
+    id: Mapped[UUID] = mapped_column(
+        postgresql.UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid(),
+    )
+    schedule_id: Mapped[UUID] = mapped_column(
+        ForeignKey("goal_auto_contribution_schedules.id", ondelete="RESTRICT"), nullable=False
+    )
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    result_code: Mapped[str] = mapped_column(Text, nullable=False)
+
+    configured_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    executed_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    missed_occurrences_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+
+    goal_transaction_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("goal_transactions.id", ondelete="SET NULL"), nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("schedule_id", "scheduled_for", name="uq_gacr_schedule_scheduled_for"),
+        CheckConstraint("status IN ('succeeded', 'skipped', 'failed')", name="chk_gacr_status"),
+        CheckConstraint(
+            "result_code IN ('success', 'insufficient_available_balance', 'account_inactive', 'goal_completed', 'goal_archived', 'goal_cancelled', 'currency_mismatch', 'technical_error')",
+            name="chk_gacr_result_code",
+        ),
+        CheckConstraint("configured_amount > 0", name="chk_gacr_conf_amount_pos"),
+        CheckConstraint(
+            "executed_amount IS NULL OR executed_amount > 0", name="chk_gacr_exec_amount_pos"
+        ),
+        CheckConstraint("missed_occurrences_count >= 0", name="chk_gacr_missed_count"),
+        Index("ix_goal_auto_contrib_runs_schedule_id", "schedule_id"),
     )

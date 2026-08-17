@@ -1,8 +1,12 @@
+import calendar
 import hashlib
 import json
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
-from uuid import UUID
+from typing import Literal
+from uuid import UUID, uuid5
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.exc import IntegrityError
 
@@ -10,6 +14,8 @@ from app.accounts.exceptions import AccountForbiddenError
 from app.accounts.repository import AccountRepository
 from app.cash.exceptions import InsufficientFundsError
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from app.core.logging import get_logger
+from app.core.uow import UnitOfWork
 from app.core.utils import clean_presentation_name, normalize_name
 from app.goals.enums import GoalTransactionType
 from app.goals.exceptions import (
@@ -20,10 +26,18 @@ from app.goals.exceptions import (
     GoalNotActiveError,
     GoalTargetAmountError,
 )
-from app.goals.models import Goal, GoalTransaction
+from app.goals.models import (
+    Goal,
+    GoalAutoContributionRun,
+    GoalAutoContributionSchedule,
+    GoalTransaction,
+)
 from app.goals.repository import GoalRepository
 from app.goals.schemas import (
     GoalAccountReservationRead,
+    GoalAutoContributionScheduleCreate,
+    GoalAutoContributionScheduleRead,
+    GoalAutoContributionScheduleUpdate,
     GoalContributionCreate,
     GoalContributionResult,
     GoalCreate,
@@ -38,6 +52,49 @@ from app.goals.schemas import (
 from app.ledger.enums import Direction, EventType
 from app.ledger.repository import LedgerRepository
 from app.ledger.schemas import LedgerEventCreate
+
+AUTO_CONTRIBUTION_EXECUTION_TIME = time(8, 0)
+WEEKDAY_INDEX = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+}
+MONTHLY_EXECUTION_DAYS = {str(value) for value in range(1, 32)}
+
+NAMESPACE_AUTOCONTRIB = UUID("1481b2ab-9d8a-4c28-bb73-514dcd245b0d")
+logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class AutoContributionExecutionResult:
+    run_id: UUID
+    status: str
+    result_code: str
+    configured_amount: Decimal
+    executed_amount: Decimal | None
+    goal_transaction_id: UUID | None
+    idempotent: bool
+
+
+@dataclass
+class AutoContributionProcessorSummary:
+    selected: int = 0
+    succeeded: int = 0
+    skipped: int = 0
+    technical_failures: int = 0
+    reconciled: int = 0
+    missed_occurrences: int = 0
+    completed_goals: int = 0
+    paused_schedules: int = 0
+    cancelled_schedules: int = 0
+
+
+class _AutoContributionRunRace(Exception):
+    """Otra transacción cerró la misma occurrence."""
 
 
 class GoalService:
@@ -312,6 +369,7 @@ class GoalService:
         payload: GoalContributionCreate,
         command_id: UUID,
         transaction: GoalTransaction,
+        channel: Literal["manual", "automatic"],
     ) -> GoalContributionResult:
         if (
             transaction.user_id != auth_user_id
@@ -374,6 +432,11 @@ class GoalService:
             raise ConflictError(
                 message="El registro idempotente no contiene una respuesta histórica completa."
             )
+        persisted_channel = snapshot.get("channel", "manual")
+        if persisted_channel != channel:
+            raise ConflictError(
+                message="Conflicto de idempotencia: el canal difiere de la operación original."
+            )
 
         return GoalContributionResult(
             transaction_id=transaction.id,
@@ -402,6 +465,7 @@ class GoalService:
         goal_id: UUID,
         payload: GoalContributionCreate,
         command_id: UUID | None,
+        channel: Literal["manual", "automatic"],
     ) -> GoalContributionResult | None:
         if command_id is None:
             return None
@@ -414,6 +478,7 @@ class GoalService:
             payload=payload,
             command_id=command_id,
             transaction=transaction,
+            channel=channel,
         )
 
     async def create_contribution(
@@ -422,7 +487,12 @@ class GoalService:
         goal_id: UUID,
         payload: GoalContributionCreate,
         idempotency_key: str | None,
+        *,
+        channel: Literal["manual", "automatic"] = "manual",
     ) -> GoalContributionResult:
+        if channel not in {"manual", "automatic"}:
+            raise ValueError("El canal interno del aporte no es v\u00e1lido.")
+
         command_id = self._resolve_command_id(
             payload.command_id,
             idempotency_key,
@@ -433,6 +503,7 @@ class GoalService:
             goal_id=goal_id,
             payload=payload,
             command_id=command_id,
+            channel=channel,
         )
         if replay is not None:
             return replay
@@ -454,6 +525,7 @@ class GoalService:
             goal_id=goal_id,
             payload=payload,
             command_id=command_id,
+            channel=channel,
         )
         if replay is not None:
             return replay
@@ -522,6 +594,7 @@ class GoalService:
             "goal_reserved_amount": str(new_reserved),
             "available_balance": str(new_available),
             "progress_percentage": str(progress),
+            "channel": channel,
         }
 
         event_create = LedgerEventCreate(
@@ -560,6 +633,7 @@ class GoalService:
                         goal_id=goal_id,
                         payload=payload,
                         command_id=command_id,
+                        channel=channel,
                     )
                     if replay is not None:
                         return replay
@@ -596,6 +670,7 @@ class GoalService:
                 goal_id=goal_id,
                 payload=payload,
                 command_id=command_id,
+                channel=channel,
             )
             if replay is None:
                 raise
@@ -621,6 +696,25 @@ class GoalService:
             created_at=transaction.created_at,
         )
 
+    @staticmethod
+    def _resolve_history_channel(
+        transaction_type: GoalTransactionType,
+        legacy_contribution_id: UUID | None,
+        metadata_json: object,
+    ) -> Literal["manual", "automatic", "legacy"]:
+        if (
+            legacy_contribution_id is not None
+            or transaction_type == GoalTransactionType.legacy_import
+        ):
+            return "legacy"
+        if transaction_type != GoalTransactionType.allocation:
+            return "manual"
+        if isinstance(metadata_json, dict):
+            channel = metadata_json.get("channel")
+            if channel in {"manual", "automatic"}:
+                return channel
+        return "manual"
+
     async def list_goal_transactions(
         self, auth_user_id: UUID, goal_id: UUID, limit: int = 50, offset: int = 0
     ) -> "GoalTransactionsResponse":
@@ -636,7 +730,15 @@ class GoalService:
         for transaction, event_description in rows:
             transaction_type = GoalTransactionType(transaction.transaction_type)
             t = transaction
-            origin = "legacy" if getattr(t, "legacy_contribution_id", None) else "native"
+            legacy_contribution_id = getattr(t, "legacy_contribution_id", None)
+            is_legacy = legacy_contribution_id is not None
+            origin = "legacy" if is_legacy else "native"
+            channel = self._resolve_history_channel(
+                transaction_type,
+                legacy_contribution_id,
+                t.metadata_json,
+            )
+
             description = None
             if origin == "native" and isinstance(event_description, str):
                 sanitized = " ".join(event_description.split())
@@ -654,6 +756,7 @@ class GoalService:
                     description=description,
                     created_at=t.created_at,
                     origin=origin,
+                    channel=channel,
                 )
             )
 
@@ -1066,3 +1169,955 @@ class GoalService:
             idempotent=False,
             created_at=transaction.created_at,
         )
+
+    @staticmethod
+    def _calculate_next_occurrence(
+        frequency: str,
+        execution_day: str,
+        timezone_str: str,
+        start_date_val: date | None,
+        now: datetime,
+    ) -> datetime:
+        if now.utcoffset() is None:
+            raise ValueError("now debe incluir zona horaria")
+
+        tz = ZoneInfo(timezone_str)
+        now_utc = now.astimezone(UTC)
+        now_local = now.astimezone(tz)
+        effective_start_date = start_date_val if start_date_val is not None else now_local.date()
+        start_checking_date = max(effective_start_date, now_local.date())
+
+        if frequency == "weekly":
+            try:
+                target_weekday = WEEKDAY_INDEX[execution_day.lower()]
+            except KeyError as exc:
+                raise ValueError("execution_day inválido para frecuencia weekly") from exc
+            current_weekday = start_checking_date.weekday()
+            days_ahead = target_weekday - current_weekday
+            if days_ahead < 0:
+                days_ahead += 7
+            candidate_date = start_checking_date + timedelta(days=days_ahead)
+            candidate = datetime.combine(
+                candidate_date,
+                AUTO_CONTRIBUTION_EXECUTION_TIME,
+                tzinfo=tz,
+            ).astimezone(UTC)
+            if candidate <= now_utc:
+                candidate_date += timedelta(days=7)
+                candidate = datetime.combine(
+                    candidate_date,
+                    AUTO_CONTRIBUTION_EXECUTION_TIME,
+                    tzinfo=tz,
+                ).astimezone(UTC)
+            return candidate
+
+        if frequency == "monthly":
+            if execution_day not in MONTHLY_EXECUTION_DAYS:
+                raise ValueError("execution_day inválido para frecuencia monthly")
+            target_day = int(execution_day)
+            year = start_checking_date.year
+            month = start_checking_date.month
+            for _ in range(12):
+                last_day_of_month = calendar.monthrange(year, month)[1]
+                actual_day = min(target_day, last_day_of_month)
+                if (
+                    start_checking_date.year == year
+                    and start_checking_date.month == month
+                    and start_checking_date.day > actual_day
+                ):
+                    if month == 12:
+                        year += 1
+                        month = 1
+                    else:
+                        month += 1
+                    continue
+                candidate_date = date(year, month, actual_day)
+                candidate = datetime.combine(
+                    candidate_date,
+                    AUTO_CONTRIBUTION_EXECUTION_TIME,
+                    tzinfo=tz,
+                ).astimezone(UTC)
+                if candidate > now_utc:
+                    return candidate
+                if month == 12:
+                    year += 1
+                    month = 1
+                else:
+                    month += 1
+            raise ValueError("No se pudo calcular la próxima fecha")
+
+        raise ValueError("Frecuencia de schedule inválida")
+
+    async def _get_owned_goal(self, auth_user_id: UUID, goal_id: UUID) -> Goal:
+        goal = await self._get_goal_or_404(goal_id)
+        if goal.user_id != auth_user_id:
+            raise GoalForbiddenError()
+        return goal
+
+    @staticmethod
+    def _ensure_goal_operational(goal: Goal) -> None:
+        if not goal.is_active or goal.status != "active":
+            raise GoalNotActiveError()
+
+    async def _validate_schedule_account(
+        self,
+        auth_user_id: UUID,
+        goal: Goal,
+        account_id: UUID,
+    ):
+        account = await self.account_repo.get_by_id(account_id, include_inactive=True)
+        if not account:
+            raise NotFoundError(message="Cuenta no encontrada.")
+        if account.user_id != auth_user_id or account.user_id != goal.user_id:
+            raise AccountForbiddenError()
+        if not account.is_active:
+            raise ForbiddenError(message="Cuenta inactiva.")
+        if account.currency.upper() != goal.currency.upper():
+            raise ValidationError(
+                message="La moneda de la cuenta no coincide con la moneda de la meta."
+            )
+        return account
+
+    async def _validate_schedule_dependencies(
+        self, auth_user_id: UUID, goal_id: UUID, account_id: UUID
+    ):
+        goal = await self._get_owned_goal(auth_user_id, goal_id)
+        account = await self._validate_schedule_account(auth_user_id, goal, account_id)
+        return goal, account
+
+    async def get_auto_contribution_schedule(
+        self,
+        auth_user_id: UUID,
+        goal_id: UUID,
+    ) -> GoalAutoContributionScheduleRead:
+        await self._get_owned_goal(auth_user_id, goal_id)
+        schedule = await self.repository.get_current_auto_contribution_schedule(
+            auth_user_id, goal_id
+        )
+        if not schedule:
+            raise NotFoundError(message="Schedule no encontrado.")
+        return GoalAutoContributionScheduleRead.model_validate(schedule)
+
+    @staticmethod
+    def _is_auto_schedule_unique_violation(exc: IntegrityError) -> bool:
+        current: object | None = exc.orig
+        visited: set[int] = set()
+        expected = "ix_goal_auto_contrib_goal_id_active"
+        while current is not None and id(current) not in visited:
+            visited.add(id(current))
+            constraint_name = getattr(current, "constraint_name", None)
+            diag = getattr(current, "diag", None)
+            if constraint_name == expected or getattr(diag, "constraint_name", None) == expected:
+                return True
+            current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+        return expected in str(exc.orig)
+
+    async def put_auto_contribution_schedule(
+        self,
+        auth_user_id: UUID,
+        goal_id: UUID,
+        payload: GoalAutoContributionScheduleCreate,
+    ) -> GoalAutoContributionScheduleRead:
+        goal, account = await self._validate_schedule_dependencies(
+            auth_user_id, goal_id, payload.account_id
+        )
+        self._ensure_goal_operational(goal)
+
+        try:
+            async with self.repository.session.begin_nested():
+                schedule = await self.repository.get_auto_contribution_schedule_for_update(
+                    auth_user_id, goal_id
+                )
+                now = datetime.now(UTC)
+
+                if schedule:
+                    schedule.account_id = payload.account_id
+                    schedule.amount = payload.amount
+                    schedule.frequency = payload.frequency
+                    schedule.execution_day = payload.execution_day
+                    schedule.timezone = payload.timezone
+                    schedule.start_date = payload.start_date
+                    schedule.updated_at = now
+
+                    if schedule.status == "active":
+                        schedule.next_run_at = self._calculate_next_occurrence(
+                            schedule.frequency,
+                            schedule.execution_day,
+                            schedule.timezone,
+                            schedule.start_date,
+                            now,
+                        )
+                    else:
+                        schedule.next_run_at = None
+                else:
+                    next_run_at = self._calculate_next_occurrence(
+                        payload.frequency,
+                        payload.execution_day,
+                        payload.timezone,
+                        payload.start_date,
+                        now,
+                    )
+                    schedule = GoalAutoContributionSchedule(
+                        user_id=auth_user_id,
+                        goal_id=goal_id,
+                        account_id=payload.account_id,
+                        amount=payload.amount,
+                        frequency=payload.frequency,
+                        execution_day=payload.execution_day,
+                        timezone=payload.timezone,
+                        start_date=payload.start_date,
+                        status="active",
+                        next_run_at=next_run_at,
+                    )
+                    await self.repository.create_auto_contribution_schedule(schedule)
+
+                await self.repository.session.flush()
+                return GoalAutoContributionScheduleRead.model_validate(schedule)
+        except IntegrityError as exc:
+            if not self._is_auto_schedule_unique_violation(exc):
+                raise
+            raise ConflictError(message="Ya existe un schedule activo o pausado.") from exc
+
+    async def patch_auto_contribution_schedule(
+        self,
+        auth_user_id: UUID,
+        goal_id: UUID,
+        payload: GoalAutoContributionScheduleUpdate,
+    ) -> GoalAutoContributionScheduleRead:
+        goal = await self._get_owned_goal(auth_user_id, goal_id)
+        schedule = await self.repository.get_auto_contribution_schedule_for_update(
+            auth_user_id, goal_id
+        )
+        if not schedule:
+            raise NotFoundError(message="Schedule no encontrado.")
+
+        if payload.account_id is not None and payload.account_id != schedule.account_id:
+            await self._validate_schedule_account(auth_user_id, goal, payload.account_id)
+            schedule.account_id = payload.account_id
+
+        if payload.amount is not None:
+            schedule.amount = payload.amount
+
+        freq = payload.frequency if payload.frequency is not None else schedule.frequency
+        day = payload.execution_day if payload.execution_day is not None else schedule.execution_day
+        tz = payload.timezone if payload.timezone is not None else schedule.timezone
+        start_date_changed = "start_date" in payload.model_fields_set
+        start_date = payload.start_date if start_date_changed else schedule.start_date
+
+        if freq == "weekly":
+            valid_weekly = {
+                "monday",
+                "tuesday",
+                "wednesday",
+                "thursday",
+                "friday",
+                "saturday",
+                "sunday",
+            }
+            if day.lower() not in valid_weekly:
+                raise ValidationError(message="execution_day inválido para frecuencia weekly")
+        elif freq == "monthly":
+            if day not in MONTHLY_EXECUTION_DAYS:
+                raise ValidationError(message="execution_day inválido para frecuencia monthly")
+
+        calendar_changed = (
+            payload.frequency is not None
+            or payload.execution_day is not None
+            or payload.timezone is not None
+            or start_date_changed
+        )
+
+        schedule.frequency = freq
+        schedule.execution_day = day.lower()
+        schedule.timezone = tz
+        schedule.start_date = start_date
+
+        now = datetime.now(UTC)
+        schedule.updated_at = now
+
+        if schedule.status == "active" and calendar_changed:
+            schedule.next_run_at = self._calculate_next_occurrence(
+                schedule.frequency,
+                schedule.execution_day,
+                schedule.timezone,
+                schedule.start_date,
+                now,
+            )
+
+        await self.repository.session.flush()
+        return GoalAutoContributionScheduleRead.model_validate(schedule)
+
+    async def pause_auto_contribution_schedule(
+        self,
+        auth_user_id: UUID,
+        goal_id: UUID,
+    ) -> GoalAutoContributionScheduleRead:
+        await self._get_owned_goal(auth_user_id, goal_id)
+        schedule = await self.repository.get_auto_contribution_schedule_for_update(
+            auth_user_id, goal_id
+        )
+        if not schedule:
+            raise NotFoundError(message="Schedule no encontrado.")
+
+        if schedule.status == "active":
+            schedule.status = "paused"
+            schedule.pause_reason = "user_paused"
+            schedule.next_run_at = None
+            schedule.updated_at = datetime.now(UTC)
+            await self.repository.session.flush()
+
+        return GoalAutoContributionScheduleRead.model_validate(schedule)
+
+    async def resume_auto_contribution_schedule(
+        self,
+        auth_user_id: UUID,
+        goal_id: UUID,
+    ) -> GoalAutoContributionScheduleRead:
+        goal = await self._get_owned_goal(auth_user_id, goal_id)
+        schedule = await self.repository.get_auto_contribution_schedule_for_update(
+            auth_user_id, goal_id
+        )
+        if not schedule:
+            raise NotFoundError(message="Schedule no encontrado.")
+
+        await self._validate_schedule_account(auth_user_id, goal, schedule.account_id)
+        self._ensure_goal_operational(goal)
+
+        now = datetime.now(UTC)
+        schedule.status = "active"
+        schedule.pause_reason = None
+        schedule.next_run_at = self._calculate_next_occurrence(
+            schedule.frequency, schedule.execution_day, schedule.timezone, schedule.start_date, now
+        )
+        schedule.updated_at = now
+        await self.repository.session.flush()
+
+        return GoalAutoContributionScheduleRead.model_validate(schedule)
+
+    async def delete_auto_contribution_schedule(
+        self,
+        auth_user_id: UUID,
+        goal_id: UUID,
+    ) -> None:
+        await self._get_owned_goal(auth_user_id, goal_id)
+        schedule = await self.repository.get_auto_contribution_schedule_for_update(
+            auth_user_id, goal_id
+        )
+        if not schedule:
+            raise NotFoundError(message="Schedule no encontrado.")
+
+        schedule.status = "cancelled"
+        schedule.pause_reason = None
+        schedule.next_run_at = None
+        schedule.updated_at = datetime.now(UTC)
+        await self.repository.session.flush()
+
+    @staticmethod
+    def _canonical_auto_contribution_instant(value: datetime, field_name: str) -> datetime:
+        if value.utcoffset() is None:
+            raise ValueError(f"{field_name} debe incluir zona horaria.")
+        return value.astimezone(UTC)
+
+    @classmethod
+    def _auto_contribution_command_id(cls, schedule_id: UUID, scheduled_for: datetime) -> UUID:
+        scheduled_for_utc = cls._canonical_auto_contribution_instant(scheduled_for, "scheduled_for")
+        canonical_occurrence = scheduled_for_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+        return uuid5(NAMESPACE_AUTOCONTRIB, f"{schedule_id}|{canonical_occurrence}")
+
+    @staticmethod
+    def _validate_auto_contribution_calendar(
+        schedule: GoalAutoContributionSchedule,
+        scheduled_for_utc: datetime,
+    ) -> None:
+        local_occurrence = scheduled_for_utc.astimezone(ZoneInfo(schedule.timezone))
+        if local_occurrence.timetz().replace(tzinfo=None) != AUTO_CONTRIBUTION_EXECUTION_TIME:
+            raise ValueError("scheduled_for no coincide con la hora local del schedule.")
+        if schedule.start_date is not None and local_occurrence.date() < schedule.start_date:
+            raise ValueError("scheduled_for es anterior al start_date del schedule.")
+
+        if schedule.frequency == "weekly":
+            expected_weekday = WEEKDAY_INDEX.get(schedule.execution_day.lower())
+            if expected_weekday is None or local_occurrence.weekday() != expected_weekday:
+                raise ValueError("scheduled_for no pertenece al calendario weekly del schedule.")
+            return
+
+        if schedule.frequency == "monthly":
+            if schedule.execution_day not in MONTHLY_EXECUTION_DAYS:
+                raise ValueError("El schedule monthly tiene un execution_day inválido.")
+            desired_day = int(schedule.execution_day)
+            actual_day = min(
+                desired_day,
+                calendar.monthrange(local_occurrence.year, local_occurrence.month)[1],
+            )
+            if local_occurrence.day != actual_day:
+                raise ValueError("scheduled_for no pertenece al calendario monthly del schedule.")
+            return
+
+        raise ValueError("El schedule tiene una frecuencia inválida.")
+
+    @staticmethod
+    def _execution_result_from_run(
+        run: GoalAutoContributionRun, *, idempotent: bool
+    ) -> AutoContributionExecutionResult:
+        return AutoContributionExecutionResult(
+            run_id=run.id,
+            status=run.status,
+            result_code=run.result_code,
+            configured_amount=run.configured_amount,
+            executed_amount=run.executed_amount,
+            goal_transaction_id=run.goal_transaction_id,
+            idempotent=idempotent,
+        )
+
+    @staticmethod
+    def _is_auto_contribution_run_unique_violation(exc: IntegrityError) -> bool:
+        current: object | None = exc.orig
+        visited: set[int] = set()
+        expected = "uq_gacr_schedule_scheduled_for"
+        while current is not None and id(current) not in visited:
+            visited.add(id(current))
+            constraint_name = getattr(current, "constraint_name", None)
+            diag = getattr(current, "diag", None)
+            if constraint_name == expected or getattr(diag, "constraint_name", None) == expected:
+                return True
+            current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+        return expected in str(exc.orig)
+
+    async def _persist_auto_contribution_run(
+        self, run: GoalAutoContributionRun
+    ) -> AutoContributionExecutionResult:
+        try:
+            async with self.repository.session.begin_nested():
+                await self.repository.create_auto_contribution_run(run)
+        except IntegrityError as exc:
+            if self._is_auto_contribution_run_unique_violation(exc):
+                raise _AutoContributionRunRace() from exc
+            raise
+        return self._execution_result_from_run(run, idempotent=False)
+
+    def _advance_auto_contribution_schedule(
+        self,
+        schedule: GoalAutoContributionSchedule,
+        now_utc: datetime,
+    ) -> None:
+        schedule.status = "active"
+        schedule.pause_reason = None
+        schedule.next_run_at = self._calculate_next_occurrence(
+            schedule.frequency,
+            schedule.execution_day,
+            schedule.timezone,
+            schedule.start_date,
+            now_utc,
+        )
+        schedule.updated_at = now_utc
+
+    async def execute_auto_contribution_occurrence(
+        self,
+        schedule_id: UUID,
+        scheduled_for: datetime,
+        now: datetime,
+        missed_occurrences_count: int = 0,
+    ) -> AutoContributionExecutionResult:
+        """Ejecuta y confirma una occurrence en una sola transacción."""
+        if (
+            not isinstance(missed_occurrences_count, int)
+            or isinstance(missed_occurrences_count, bool)
+            or missed_occurrences_count < 0
+        ):
+            raise ValueError("missed_occurrences_count debe ser un entero mayor o igual a cero.")
+
+        scheduled_for_utc = self._canonical_auto_contribution_instant(
+            scheduled_for, "scheduled_for"
+        )
+        now_utc = self._canonical_auto_contribution_instant(now, "now")
+        if scheduled_for_utc > now_utc:
+            raise ValueError("scheduled_for no puede estar en el futuro.")
+
+        try:
+            async with UnitOfWork(self.repository.session).transaction():
+                return await self._execute_auto_contribution_occurrence(
+                    schedule_id=schedule_id,
+                    scheduled_for_utc=scheduled_for_utc,
+                    now_utc=now_utc,
+                    missed_occurrences_count=missed_occurrences_count,
+                )
+        except _AutoContributionRunRace:
+            async with UnitOfWork(self.repository.session).transaction():
+                existing_run = await self.repository.get_auto_contribution_run(
+                    schedule_id, scheduled_for_utc
+                )
+                if existing_run is None:
+                    raise ConflictError(
+                        message="La occurrence colisionó pero el Run ganador no está disponible."
+                    )
+                return self._execution_result_from_run(existing_run, idempotent=True)
+
+    async def _execute_auto_contribution_occurrence(
+        self,
+        *,
+        schedule_id: UUID,
+        scheduled_for_utc: datetime,
+        now_utc: datetime,
+        missed_occurrences_count: int,
+    ) -> AutoContributionExecutionResult:
+        # Replay if Run already exists before locks
+        existing_run = await self.repository.get_auto_contribution_run(
+            schedule_id, scheduled_for_utc
+        )
+        if existing_run:
+            return self._execution_result_from_run(existing_run, idempotent=True)
+
+        schedule = await self.repository.get_auto_contribution_schedule_by_id_for_update(
+            schedule_id
+        )
+        if not schedule:
+            raise NotFoundError(message="Schedule no encontrado.")
+        return await self._execute_auto_contribution_occurrence_in_uow(
+            schedule=schedule,
+            scheduled_for_utc=scheduled_for_utc,
+            now_utc=now_utc,
+            missed_occurrences_count=missed_occurrences_count,
+        )
+
+    async def _execute_auto_contribution_occurrence_in_uow(
+        self,
+        *,
+        schedule: GoalAutoContributionSchedule,
+        scheduled_for_utc: datetime,
+        now_utc: datetime,
+        missed_occurrences_count: int,
+    ) -> AutoContributionExecutionResult:
+        idempotency_key = str(self._auto_contribution_command_id(schedule.id, scheduled_for_utc))
+
+        # Replay if Run already exists before locks
+        existing_run = await self.repository.get_auto_contribution_run(
+            schedule.id, scheduled_for_utc
+        )
+        if existing_run:
+            return self._execution_result_from_run(existing_run, idempotent=True)
+
+        if schedule.status != "active":
+            raise ConflictError(message="El schedule no está activo.")
+
+        self._validate_auto_contribution_calendar(schedule, scheduled_for_utc)
+
+        # Mismo orden de locks que create_contribution: Account -> Goal.
+        account = await self.account_repo.get_by_id_for_update(
+            schedule.account_id, include_inactive=True
+        )
+        goal = await self.repository.get_by_id_for_update(schedule.goal_id)
+
+        if not goal or not account:
+            raise ConflictError(message="Goal o Account no encontrados.")
+
+        if schedule.user_id != goal.user_id or schedule.user_id != account.user_id:
+            raise ConflictError(message="Ownership invariant failure.")
+
+        business_skip_reason = None
+        if goal.status == "completed":
+            business_skip_reason = "goal_completed"
+        elif goal.status == "cancelled":
+            business_skip_reason = "goal_cancelled"
+        elif not goal.is_active:
+            business_skip_reason = "goal_archived"
+        elif goal.status != "active":
+            raise ConflictError(message="El lifecycle de la meta es inconsistente.")
+        elif not account.is_active:
+            business_skip_reason = "account_inactive"
+        elif account.currency.upper() != goal.currency.upper():
+            business_skip_reason = "currency_mismatch"
+
+        if business_skip_reason:
+            if business_skip_reason in ("goal_completed", "account_inactive", "goal_archived"):
+                schedule.status = "paused"
+                schedule.pause_reason = business_skip_reason
+                schedule.next_run_at = None
+            elif business_skip_reason == "goal_cancelled":
+                schedule.status = "cancelled"
+                schedule.pause_reason = None
+                schedule.next_run_at = None
+            elif business_skip_reason == "currency_mismatch":
+                self._advance_auto_contribution_schedule(schedule, now_utc)
+            if business_skip_reason != "currency_mismatch":
+                schedule.updated_at = now_utc
+
+            run = GoalAutoContributionRun(
+                schedule_id=schedule.id,
+                scheduled_for=scheduled_for_utc,
+                status="skipped",
+                result_code=business_skip_reason,
+                configured_amount=schedule.amount,
+                executed_amount=None,
+                missed_occurrences_count=missed_occurrences_count,
+            )
+            return await self._persist_auto_contribution_run(run)
+
+        remaining = goal.target_amount - goal.current_amount
+        if remaining <= 0:
+            schedule.status = "paused"
+            schedule.pause_reason = "goal_completed"
+            schedule.next_run_at = None
+            schedule.updated_at = now_utc
+            run = GoalAutoContributionRun(
+                schedule_id=schedule.id,
+                scheduled_for=scheduled_for_utc,
+                status="skipped",
+                result_code="goal_completed",
+                configured_amount=schedule.amount,
+                executed_amount=None,
+                missed_occurrences_count=missed_occurrences_count,
+            )
+            return await self._persist_auto_contribution_run(run)
+
+        candidate = min(schedule.amount, remaining)
+        payload = GoalContributionCreate(
+            account_id=schedule.account_id,
+            amount=candidate,
+            currency=goal.currency,
+            command_id=None,
+        )
+
+        contrib_result = None
+        try:
+            async with self.repository.session.begin_nested():
+                contrib_result = await self.create_contribution(
+                    auth_user_id=schedule.user_id,
+                    goal_id=schedule.goal_id,
+                    payload=payload,
+                    idempotency_key=idempotency_key,
+                    channel="automatic",
+                )
+        except InsufficientFundsError:
+            self._advance_auto_contribution_schedule(schedule, now_utc)
+            run = GoalAutoContributionRun(
+                schedule_id=schedule.id,
+                scheduled_for=scheduled_for_utc,
+                status="skipped",
+                result_code="insufficient_available_balance",
+                configured_amount=schedule.amount,
+                executed_amount=None,
+                missed_occurrences_count=missed_occurrences_count,
+            )
+            return await self._persist_auto_contribution_run(run)
+
+        if goal.status == "completed":
+            schedule.status = "paused"
+            schedule.pause_reason = "goal_completed"
+            schedule.next_run_at = None
+            schedule.updated_at = now_utc
+        else:
+            self._advance_auto_contribution_schedule(schedule, now_utc)
+
+        run = GoalAutoContributionRun(
+            schedule_id=schedule.id,
+            scheduled_for=scheduled_for_utc,
+            executed_at=now_utc if not contrib_result.idempotent else contrib_result.created_at,
+            status="succeeded",
+            result_code="success",
+            configured_amount=schedule.amount,
+            executed_amount=contrib_result.applied_amount,
+            missed_occurrences_count=missed_occurrences_count,
+            goal_transaction_id=contrib_result.transaction_id,
+        )
+        result = await self._persist_auto_contribution_run(run)
+        return AutoContributionExecutionResult(
+            run_id=result.run_id,
+            status=result.status,
+            result_code=result.result_code,
+            configured_amount=result.configured_amount,
+            executed_amount=result.executed_amount,
+            goal_transaction_id=result.goal_transaction_id,
+            idempotent=contrib_result.idempotent,
+        )
+
+    @staticmethod
+    def calculate_latest_due_occurrence(
+        schedule: GoalAutoContributionSchedule,
+        now: datetime,
+    ) -> tuple[datetime, int]:
+        if schedule.next_run_at is None:
+            raise ValueError("Schedule no tiene next_run_at")
+        if now.utcoffset() is None:
+            raise ValueError("now debe incluir zona horaria")
+        if schedule.next_run_at.utcoffset() is None:
+            raise ValueError("next_run_at debe incluir zona horaria")
+
+        now = now.astimezone(UTC)
+        tz = ZoneInfo(schedule.timezone)
+        now_local = now.astimezone(tz)
+        first_due_local = schedule.next_run_at.astimezone(tz)
+
+        if now_local < first_due_local:
+            return schedule.next_run_at, 0
+
+        if schedule.frequency == "weekly":
+            diff_days = (now_local.date() - first_due_local.date()).days
+            missed_count = diff_days // 7
+            latest_due_date = first_due_local.date() + timedelta(days=missed_count * 7)
+            latest_due_utc = datetime.combine(
+                latest_due_date,
+                AUTO_CONTRIBUTION_EXECUTION_TIME,
+                tzinfo=tz,
+            ).astimezone(UTC)
+
+            if latest_due_utc > now:
+                missed_count -= 1
+                if missed_count < 0:
+                    return schedule.next_run_at, 0
+                latest_due_date = first_due_local.date() + timedelta(days=missed_count * 7)
+                latest_due_utc = datetime.combine(
+                    latest_due_date,
+                    AUTO_CONTRIBUTION_EXECUTION_TIME,
+                    tzinfo=tz,
+                ).astimezone(UTC)
+
+            return latest_due_utc, missed_count
+
+        if schedule.frequency == "monthly":
+            first_year = first_due_local.year
+            first_month = first_due_local.month
+            now_year = now_local.year
+            now_month = now_local.month
+
+            desired_day = int(schedule.execution_day)
+
+            candidate_day = min(desired_day, calendar.monthrange(now_year, now_month)[1])
+            candidate_date = date(now_year, now_month, candidate_day)
+            candidate_utc = datetime.combine(
+                candidate_date,
+                AUTO_CONTRIBUTION_EXECUTION_TIME,
+                tzinfo=tz,
+            ).astimezone(UTC)
+
+            if candidate_utc > now:
+                if now_month == 1:
+                    now_month = 12
+                    now_year -= 1
+                else:
+                    now_month -= 1
+                candidate_day = min(desired_day, calendar.monthrange(now_year, now_month)[1])
+                candidate_date = date(now_year, now_month, candidate_day)
+                candidate_utc = datetime.combine(
+                    candidate_date,
+                    AUTO_CONTRIBUTION_EXECUTION_TIME,
+                    tzinfo=tz,
+                ).astimezone(UTC)
+
+            if candidate_utc < schedule.next_run_at:
+                candidate_utc = schedule.next_run_at
+                now_year = first_year
+                now_month = first_month
+
+            missed_count = (now_year * 12 + now_month) - (first_year * 12 + first_month)
+            if missed_count < 0:
+                missed_count = 0
+
+            return candidate_utc, missed_count
+
+        raise ValueError("Frecuencia de schedule inválida")
+
+    async def _reconcile_existing_auto_contribution_run(
+        self,
+        *,
+        schedule: GoalAutoContributionSchedule,
+        run: GoalAutoContributionRun,
+        now_utc: datetime,
+    ) -> tuple[bool, bool]:
+        """Consume un Run final existente sin repetir escrituras financieras."""
+        previous_status = schedule.status
+
+        if run.status == "succeeded":
+            if run.result_code != "success":
+                raise ConflictError(message="Run succeeded con result_code inconsistente.")
+            goal = await self.repository.get_by_id(schedule.goal_id)
+            if goal is None:
+                raise ConflictError(message="Goal del schedule no encontrado.")
+            if goal.status == "completed":
+                schedule.status = "paused"
+                schedule.pause_reason = "goal_completed"
+                schedule.next_run_at = None
+                schedule.updated_at = now_utc
+            elif goal.status == "cancelled":
+                schedule.status = "cancelled"
+                schedule.pause_reason = None
+                schedule.next_run_at = None
+                schedule.updated_at = now_utc
+            elif not goal.is_active:
+                schedule.status = "paused"
+                schedule.pause_reason = "goal_archived"
+                schedule.next_run_at = None
+                schedule.updated_at = now_utc
+            elif goal.status == "active":
+                self._advance_auto_contribution_schedule(schedule, now_utc)
+            else:
+                raise ConflictError(message="El lifecycle de la meta es inconsistente.")
+        elif run.status == "skipped":
+            if run.result_code in {
+                "goal_completed",
+                "account_inactive",
+                "goal_archived",
+            }:
+                schedule.status = "paused"
+                schedule.pause_reason = run.result_code
+                schedule.next_run_at = None
+                schedule.updated_at = now_utc
+            elif run.result_code == "goal_cancelled":
+                schedule.status = "cancelled"
+                schedule.pause_reason = None
+                schedule.next_run_at = None
+                schedule.updated_at = now_utc
+            elif run.result_code in {
+                "insufficient_available_balance",
+                "currency_mismatch",
+            }:
+                self._advance_auto_contribution_schedule(schedule, now_utc)
+            else:
+                raise ConflictError(message="Run skipped con result_code inconsistente.")
+        else:
+            raise ConflictError(message="Run existente no es un outcome final reconciliable.")
+
+        paused = previous_status != "paused" and schedule.status == "paused"
+        cancelled = previous_status != "cancelled" and schedule.status == "cancelled"
+        return paused, cancelled
+
+    async def process_due_auto_contributions(
+        self, now: datetime, batch_size: int = 50
+    ) -> AutoContributionProcessorSummary:
+        if (
+            not isinstance(batch_size, int)
+            or isinstance(batch_size, bool)
+            or batch_size < 1
+            or batch_size > 50
+        ):
+            raise ValueError("batch_size debe ser un entero entre 1 y 50.")
+
+        now_utc = self._canonical_auto_contribution_instant(now, "now")
+        summary = AutoContributionProcessorSummary()
+        attempted_schedule_ids: set[UUID] = set()
+        logger.info(
+            "auto_contribution_processor_started",
+            now=now_utc.isoformat(),
+            batch_size=batch_size,
+        )
+
+        try:
+            for _ in range(batch_size):
+                schedule: GoalAutoContributionSchedule | None = None
+                selected_schedule_id: UUID | None = None
+                latest_due_utc: datetime | None = None
+                try:
+                    async with UnitOfWork(self.repository.session).transaction():
+                        schedule = await self.repository.get_next_due_auto_contribution_schedule_for_update(
+                            now=now_utc,
+                            excluded_schedule_ids=(
+                                list(attempted_schedule_ids) if attempted_schedule_ids else None
+                            ),
+                        )
+                        if schedule is None:
+                            break
+
+                        selected_schedule_id = schedule.id
+                        attempted_schedule_ids.add(selected_schedule_id)
+                        summary.selected += 1
+                        latest_due_utc, missed_count = self.calculate_latest_due_occurrence(
+                            schedule, now_utc
+                        )
+                        logger.info(
+                            "auto_contribution_schedule_selected",
+                            schedule_id=str(schedule.id),
+                            scheduled_for=latest_due_utc.isoformat(),
+                            missed_occurrences_count=missed_count,
+                        )
+
+                        existing_run = await self.repository.get_auto_contribution_run(
+                            schedule.id, latest_due_utc
+                        )
+                        if existing_run is not None:
+                            (
+                                paused,
+                                cancelled,
+                            ) = await self._reconcile_existing_auto_contribution_run(
+                                schedule=schedule,
+                                run=existing_run,
+                                now_utc=now_utc,
+                            )
+                            summary.reconciled += 1
+                            summary.paused_schedules += int(paused)
+                            summary.cancelled_schedules += int(cancelled)
+                            logger.info(
+                                "auto_contribution_occurrence_reconciled",
+                                schedule_id=str(schedule.id),
+                                scheduled_for=latest_due_utc.isoformat(),
+                                run_status=existing_run.status,
+                                result_code=existing_run.result_code,
+                            )
+                            continue
+
+                        result = await self._execute_auto_contribution_occurrence_in_uow(
+                            schedule=schedule,
+                            scheduled_for_utc=latest_due_utc,
+                            now_utc=now_utc,
+                            missed_occurrences_count=missed_count,
+                        )
+
+                        if result.idempotent:
+                            summary.reconciled += 1
+                        elif result.status == "succeeded":
+                            summary.succeeded += 1
+                        elif result.status == "skipped":
+                            summary.skipped += 1
+
+                        summary.missed_occurrences += missed_count
+
+                        if (
+                            not result.idempotent
+                            and result.status == "succeeded"
+                            and schedule.pause_reason == "goal_completed"
+                        ):
+                            summary.completed_goals += 1
+
+                        if schedule.status == "paused":
+                            summary.paused_schedules += 1
+                        elif schedule.status == "cancelled":
+                            summary.cancelled_schedules += 1
+
+                        logger.info(
+                            "auto_contribution_occurrence_succeeded"
+                            if result.status == "succeeded"
+                            else "auto_contribution_occurrence_skipped",
+                            schedule_id=str(schedule.id),
+                            scheduled_for=latest_due_utc.isoformat(),
+                            result_code=result.result_code,
+                            missed_occurrences_count=missed_count,
+                            idempotent=result.idempotent,
+                        )
+                except Exception:
+                    if selected_schedule_id is None:
+                        logger.exception(
+                            "auto_contribution_processor_selection_failed",
+                            now=now_utc.isoformat(),
+                        )
+                        raise
+                    summary.technical_failures += 1
+                    logger.exception(
+                        "auto_contribution_occurrence_failed",
+                        schedule_id=str(selected_schedule_id),
+                        scheduled_for=(
+                            latest_due_utc.isoformat() if latest_due_utc is not None else None
+                        ),
+                    )
+        finally:
+            logger.info(
+                "auto_contribution_processor_finished",
+                selected=summary.selected,
+                succeeded=summary.succeeded,
+                skipped=summary.skipped,
+                technical_failures=summary.technical_failures,
+                reconciled=summary.reconciled,
+                missed_occurrences=summary.missed_occurrences,
+                completed_goals=summary.completed_goals,
+                paused_schedules=summary.paused_schedules,
+                cancelled_schedules=summary.cancelled_schedules,
+            )
+
+        return summary

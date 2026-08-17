@@ -1658,6 +1658,343 @@
         }
       }
     },
+    "/api/v1/goals/{goal_id}/auto-contribution": {
+      "get": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "Get Auto Contribution Schedule",
+        "operationId": "get_auto_contribution_schedule_api_v1_goals__goal_id__auto_contribution_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "goal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Goal Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalAutoContributionScheduleRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Autenticaci\u00f3n requerida"
+          },
+          "403": {
+            "description": "Meta ajena"
+          },
+          "404": {
+            "description": "Meta o schedule no encontrado"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "Put Auto Contribution Schedule",
+        "operationId": "put_auto_contribution_schedule_api_v1_goals__goal_id__auto_contribution_put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "goal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Goal Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoalAutoContributionScheduleCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalAutoContributionScheduleRead"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Meta no operativa"
+          },
+          "401": {
+            "description": "Autenticaci\u00f3n requerida"
+          },
+          "403": {
+            "description": "Meta o cuenta ajena/inactiva"
+          },
+          "404": {
+            "description": "Meta o cuenta no encontrada"
+          },
+          "409": {
+            "description": "Ya existe un schedule no cancelado"
+          },
+          "422": {
+            "description": "Configuraci\u00f3n, timezone o moneda inv\u00e1lida"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "Patch Auto Contribution Schedule",
+        "operationId": "patch_auto_contribution_schedule_api_v1_goals__goal_id__auto_contribution_patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "goal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Goal Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoalAutoContributionScheduleUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalAutoContributionScheduleRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Autenticaci\u00f3n requerida"
+          },
+          "403": {
+            "description": "Meta o cuenta ajena/inactiva"
+          },
+          "404": {
+            "description": "Meta, cuenta o schedule no encontrado"
+          },
+          "422": {
+            "description": "Configuraci\u00f3n, timezone o moneda inv\u00e1lida"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "Delete Auto Contribution Schedule",
+        "operationId": "delete_auto_contribution_schedule_api_v1_goals__goal_id__auto_contribution_delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "goal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Goal Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Autenticaci\u00f3n requerida"
+          },
+          "403": {
+            "description": "Meta ajena"
+          },
+          "404": {
+            "description": "Meta o schedule no encontrado"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/goals/{goal_id}/auto-contribution/pause": {
+      "post": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "Pause Auto Contribution Schedule",
+        "operationId": "pause_auto_contribution_schedule_api_v1_goals__goal_id__auto_contribution_pause_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "goal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Goal Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalAutoContributionScheduleRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Autenticaci\u00f3n requerida"
+          },
+          "403": {
+            "description": "Meta ajena"
+          },
+          "404": {
+            "description": "Meta o schedule no encontrado"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/goals/{goal_id}/auto-contribution/resume": {
+      "post": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "Resume Auto Contribution Schedule",
+        "operationId": "resume_auto_contribution_schedule_api_v1_goals__goal_id__auto_contribution_resume_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "goal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Goal Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalAutoContributionScheduleRead"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Meta no operativa"
+          },
+          "401": {
+            "description": "Autenticaci\u00f3n requerida"
+          },
+          "403": {
+            "description": "Meta o cuenta ajena/inactiva"
+          },
+          "404": {
+            "description": "Meta, cuenta o schedule no encontrado"
+          },
+          "422": {
+            "description": "Timezone o moneda inv\u00e1lida"
+          }
+        }
+      }
+    },
     "/api/v1/obligations": {
       "post": {
         "tags": [
@@ -7890,6 +8227,268 @@
         ],
         "title": "GoalAccountReservationRead"
       },
+      "GoalAutoContributionScheduleCreate": {
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Account Id"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)"
+              }
+            ],
+            "title": "Amount"
+          },
+          "frequency": {
+            "type": "string",
+            "enum": [
+              "weekly",
+              "monthly"
+            ],
+            "title": "Frequency"
+          },
+          "execution_day": {
+            "type": "string",
+            "title": "Execution Day"
+          },
+          "timezone": {
+            "type": "string",
+            "title": "Timezone"
+          },
+          "start_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Date"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "account_id",
+          "amount",
+          "frequency",
+          "execution_day",
+          "timezone"
+        ],
+        "title": "GoalAutoContributionScheduleCreate"
+      },
+      "GoalAutoContributionScheduleRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "goal_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Goal Id"
+          },
+          "account_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Account Id"
+          },
+          "amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+            "title": "Amount"
+          },
+          "frequency": {
+            "type": "string",
+            "enum": [
+              "weekly",
+              "monthly"
+            ],
+            "title": "Frequency"
+          },
+          "execution_day": {
+            "type": "string",
+            "title": "Execution Day"
+          },
+          "timezone": {
+            "type": "string",
+            "title": "Timezone"
+          },
+          "start_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Date"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "paused",
+              "cancelled"
+            ],
+            "title": "Status"
+          },
+          "pause_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "user_paused",
+                  "goal_completed",
+                  "account_inactive",
+                  "goal_archived"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pause Reason"
+          },
+          "next_run_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Run At"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "goal_id",
+          "account_id",
+          "amount",
+          "frequency",
+          "execution_day",
+          "timezone",
+          "start_date",
+          "status",
+          "pause_reason",
+          "next_run_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "GoalAutoContributionScheduleRead"
+      },
+      "GoalAutoContributionScheduleUpdate": {
+        "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "frequency": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "weekly",
+                  "monthly"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frequency"
+          },
+          "execution_day": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Day"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          },
+          "start_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Date"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "GoalAutoContributionScheduleUpdate"
+      },
       "GoalContributionCreate": {
         "properties": {
           "account_id": {
@@ -8807,6 +9406,15 @@
               "native"
             ],
             "title": "Origin"
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "automatic",
+              "legacy"
+            ],
+            "title": "Channel"
           }
         },
         "additionalProperties": false,
@@ -8821,7 +9429,8 @@
           "goal_currency",
           "event_id",
           "created_at",
-          "origin"
+          "origin",
+          "channel"
         ],
         "title": "GoalTransactionRead"
       },

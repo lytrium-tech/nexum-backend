@@ -10,7 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.accounts.models import Account
 from app.core.utils import normalize_name
 from app.goals.enums import GoalTransactionType
-from app.goals.models import Goal, GoalContribution, GoalTransaction
+from app.goals.models import (
+    Goal,
+    GoalAutoContributionRun,
+    GoalAutoContributionSchedule,
+    GoalContribution,
+    GoalTransaction,
+)
 from app.ledger.models import FinancialEvent
 
 
@@ -389,3 +395,83 @@ class GoalRepository:
             )
         )
         return result.scalar_one() or 0
+
+    async def get_current_auto_contribution_schedule(
+        self, user_id: UUID, goal_id: UUID
+    ) -> GoalAutoContributionSchedule | None:
+        result = await self.session.execute(
+            select(GoalAutoContributionSchedule)
+            .where(GoalAutoContributionSchedule.goal_id == goal_id)
+            .where(GoalAutoContributionSchedule.user_id == user_id)
+            .where(GoalAutoContributionSchedule.status != "cancelled")
+        )
+        return result.scalar_one_or_none()
+
+    async def get_auto_contribution_schedule_for_update(
+        self, user_id: UUID, goal_id: UUID
+    ) -> GoalAutoContributionSchedule | None:
+        result = await self.session.execute(
+            select(GoalAutoContributionSchedule)
+            .where(GoalAutoContributionSchedule.goal_id == goal_id)
+            .where(GoalAutoContributionSchedule.user_id == user_id)
+            .where(GoalAutoContributionSchedule.status != "cancelled")
+            .with_for_update()
+        )
+        return result.scalar_one_or_none()
+
+    async def get_auto_contribution_schedule_by_id_for_update(
+        self, schedule_id: UUID
+    ) -> GoalAutoContributionSchedule | None:
+        result = await self.session.execute(
+            select(GoalAutoContributionSchedule)
+            .where(GoalAutoContributionSchedule.id == schedule_id)
+            .with_for_update()
+        )
+        return result.scalar_one_or_none()
+
+    async def get_next_due_auto_contribution_schedule_for_update(
+        self, now: datetime, excluded_schedule_ids: list[UUID] | None = None
+    ) -> GoalAutoContributionSchedule | None:
+        stmt = (
+            select(GoalAutoContributionSchedule)
+            .where(GoalAutoContributionSchedule.status == "active")
+            .where(GoalAutoContributionSchedule.next_run_at.is_not(None))
+            .where(GoalAutoContributionSchedule.next_run_at <= now)
+        )
+        if excluded_schedule_ids:
+            stmt = stmt.where(GoalAutoContributionSchedule.id.not_in(excluded_schedule_ids))
+
+        stmt = (
+            stmt.order_by(
+                GoalAutoContributionSchedule.next_run_at.asc(),
+                GoalAutoContributionSchedule.id.asc(),
+            )
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def create_auto_contribution_schedule(
+        self, schedule: GoalAutoContributionSchedule
+    ) -> GoalAutoContributionSchedule:
+        self.session.add(schedule)
+        await self.session.flush()
+        return schedule
+
+    async def get_auto_contribution_run(
+        self, schedule_id: UUID, scheduled_for: datetime
+    ) -> GoalAutoContributionRun | None:
+        result = await self.session.execute(
+            select(GoalAutoContributionRun)
+            .where(GoalAutoContributionRun.schedule_id == schedule_id)
+            .where(GoalAutoContributionRun.scheduled_for == scheduled_for)
+        )
+        return result.scalar_one_or_none()
+
+    async def create_auto_contribution_run(
+        self, run: GoalAutoContributionRun
+    ) -> GoalAutoContributionRun:
+        self.session.add(run)
+        await self.session.flush()
+        return run

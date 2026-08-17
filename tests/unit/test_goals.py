@@ -423,6 +423,7 @@ async def test_contribution_preserves_balance_and_creates_neutral_allocation(
     assert transaction.transaction_type == "allocation"
     assert transaction.source_amount == transaction.applied_amount == Decimal("100")
     assert transaction.metadata_json["available_balance"] == "800.00"
+    assert transaction.metadata_json["channel"] == "manual"
 
     event_payload = mock_ledger_repo.insert_event.await_args.args[0]
     assert event_payload.direction == "neutral"
@@ -431,6 +432,64 @@ async def test_contribution_preserves_balance_and_creates_neutral_allocation(
     assert event_payload.currency == "COP"
     assert event_payload.description == "Aporte mensual"
     mock_account_repo.update_balance.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_internal_automatic_contribution_persists_history_channel(
+    goal_service,
+    mock_goal_repo,
+    mock_account_repo,
+    mock_ledger_repo,
+):
+    user_id = uuid.uuid4()
+    command_id = uuid.uuid4()
+    goal = make_goal(user_id=user_id)
+    account = make_account(user_id=user_id)
+    configure_new_contribution(
+        mock_goal_repo=mock_goal_repo,
+        mock_account_repo=mock_account_repo,
+        mock_ledger_repo=mock_ledger_repo,
+        goal=goal,
+        account=account,
+        command_id=command_id,
+    )
+
+    await goal_service.create_contribution(
+        user_id,
+        goal.id,
+        GoalContributionCreate(
+            account_id=account.id,
+            amount=Decimal("10.00"),
+            command_id=command_id,
+        ),
+        str(command_id),
+        channel="automatic",
+    )
+
+    transaction = mock_goal_repo.create_transaction.await_args.args[0]
+    assert transaction.metadata_json["channel"] == "automatic"
+
+    mock_goal_repo.get_by_id.return_value = goal
+    mock_goal_repo.list_transactions_by_goal.return_value = ([(transaction, None)], 1)
+    history = await goal_service.list_goal_transactions(user_id, goal.id)
+    assert history.items[0].origin == "native"
+    assert history.items[0].channel == "automatic"
+
+
+@pytest.mark.asyncio
+async def test_internal_contribution_rejects_legacy_channel_before_io(goal_service):
+    with pytest.raises(ValueError, match="canal interno"):
+        await goal_service.create_contribution(
+            uuid.uuid4(),
+            uuid.uuid4(),
+            GoalContributionCreate(account_id=uuid.uuid4(), amount=Decimal("10.00")),
+            None,
+            channel="legacy",  # type: ignore[arg-type]
+        )
+
+    goal_service.repository.get_transaction_by_command_id.assert_not_awaited()
+    goal_service.account_repo.get_by_id_for_update.assert_not_awaited()
+    goal_service.ledger_repo.insert_event.assert_not_awaited()
 
 
 @pytest.mark.asyncio

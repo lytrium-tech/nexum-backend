@@ -36,6 +36,12 @@ from app.core.errors import InfrastructureError
 
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
+_READ_ONLY_SESSION_KEY = "nexum_read_only"
+
+
+def mark_session_read_only(session: AsyncSession) -> None:
+    """Evita commit al cerrar una dependencia usada por un endpoint estrictamente de lectura."""
+    session.info[_READ_ONLY_SESSION_KEY] = True
 
 
 # ── Inicialización y cierre ───────────────────────────────────────────────────
@@ -129,7 +135,10 @@ async def get_db_session() -> AsyncGenerator[AsyncSession]:
     async with _session_factory() as session:
         try:
             yield session
-            await session.commit()
+            if session.info.pop(_READ_ONLY_SESSION_KEY, False):
+                await session.rollback()
+            else:
+                await session.commit()
         except Exception:
             await session.rollback()
             raise
