@@ -56,6 +56,11 @@ def create_mock_v17_service(
             res.scalars.return_value.first.return_value = obligation
             return res
         if "from obligation_periods" in stmt_str:
+            if "due_date <" in stmt_str:
+                matching = [p for p in periods if p.status == PeriodStatus.pending_payment.value]
+                res.scalars.return_value.all.return_value = matching
+                res.scalars.return_value.first.return_value = matching[0] if matching else None
+                return res
             if "status in" in stmt_str or "status.in_" in stmt_str:
                 matching = [
                     p

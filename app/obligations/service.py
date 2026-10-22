@@ -12,6 +12,7 @@ from app.core.currency import (
     round_to_minimum_unit,
 )
 from app.core.errors import NotFoundError
+from app.core.financial_time import financial_date
 from app.ledger.models import FinancialEvent
 from app.ledger.repository import LedgerRepository
 from app.ledger.schemas import LedgerEventCreate
@@ -166,27 +167,46 @@ class ObligationService:
     async def sync_periods(
         self, auth_user_id: UUID, obligation_id: UUID
     ) -> list[ObligationPeriodRead]:
-        obligation = await self.repository.get_by_id(obligation_id)
+        obligation = await self.repository.get_by_id_for_update(obligation_id)
+        if not isinstance(obligation, Obligation):
+            obligation = await self.repository.get_by_id(obligation_id)
         if not obligation or obligation.user_id != auth_user_id:
             raise NotFoundError("Obligation not found")
+        if obligation.status != "active":
+            return await self.list_periods(auth_user_id, obligation_id)
 
         engine = PeriodEngine(self.repository.session)
-        await engine.sync_periods(obligation, datetime.now().date())
+        await engine.sync_periods(obligation, financial_date())
 
         await self.evaluate_lifecycle(obligation_id)
         return await self.list_periods(auth_user_id, obligation_id)
 
     async def skip_period(self, auth_user_id: UUID, period_id: UUID) -> ObligationPeriodRead:
-        period = await self.repository.session.execute(
-            select(ObligationPeriod).where(ObligationPeriod.id == period_id)
-        )
-        period = period.scalar_one_or_none()
-        if not period:
+        stmt_peek = select(ObligationPeriod).where(ObligationPeriod.id == period_id)
+        period_peek = (await self.repository.session.execute(stmt_peek)).scalar_one_or_none()
+        if not period_peek:
             raise NotFoundError("Period not found")
+        obl_id = getattr(period_peek, "obligation_id", period_peek)
 
-        obligation = await self.repository.get_by_id(period.obligation_id)
+        obligation = await self.repository.get_by_id_for_update(obl_id)
+        if not isinstance(obligation, Obligation):
+            obligation = await self.repository.get_by_id(obl_id)
         if not obligation or obligation.user_id != auth_user_id:
             raise NotFoundError("Obligation not found")
+        if obligation.status != "active":
+            raise ObligationInactiveError()
+
+        stmt = (
+            select(ObligationPeriod)
+            .where(
+                ObligationPeriod.id == period_id, ObligationPeriod.obligation_id == obligation.id
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        period = (await self.repository.session.execute(stmt)).scalar_one_or_none()
+        if not period:
+            raise NotFoundError("Period not found")
 
         engine = PeriodEngine(self.repository.session)
         skipped = await engine.skip_period(period_id)
@@ -197,9 +217,25 @@ class ObligationService:
     async def define_amount(
         self, auth_user_id: UUID, period_id: UUID, payload: ObligationPeriodAmountUpdate
     ) -> ObligationPeriodRead:
+        stmt_peek = select(ObligationPeriod).where(ObligationPeriod.id == period_id)
+        period_peek = (await self.repository.session.execute(stmt_peek)).scalar_one_or_none()
+        if not period_peek:
+            raise NotFoundError("Period not found")
+        obl_id = getattr(period_peek, "obligation_id", period_peek)
+
+        obligation = await self.repository.get_by_id_for_update(obl_id)
+        if not isinstance(obligation, Obligation):
+            obligation = await self.repository.get_by_id(obl_id)
+        if not obligation or obligation.user_id != auth_user_id:
+            raise NotFoundError("Obligation not found")
+        if obligation.status != "active":
+            raise ObligationInactiveError()
+
         stmt = (
             select(ObligationPeriod)
-            .where(ObligationPeriod.id == period_id)
+            .where(
+                ObligationPeriod.id == period_id, ObligationPeriod.obligation_id == obligation.id
+            )
             .with_for_update()
             .execution_options(populate_existing=True)
         )
@@ -207,22 +243,22 @@ class ObligationService:
         if not period:
             raise NotFoundError("Period not found")
 
-        obligation = await self.repository.get_by_id(period.obligation_id)
-        if not obligation or obligation.user_id != auth_user_id:
-            raise NotFoundError("Obligation not found")
-
         if obligation.payment_mode not in ("variable", "variable_amount"):
-            raise ValueError("Only variable obligations can define amount")
+            raise ObligationDomainError(
+                "Only variable obligations can define amount", "period_not_variable"
+            )
 
         if period.status in ("paid", "skipped", "cancelled"):
-            raise ValueError(f"Cannot change amount for period in status {period.status}")
+            raise ObligationDomainError("Period cannot be changed", "period_not_payable")
 
         if payload.amount < period.paid_amount:
-            raise ValueError("Amount cannot be less than already paid amount")
+            raise ObligationDomainError(
+                "Amount cannot be less than already paid amount", "amount_below_paid_amount"
+            )
 
         period.amount = payload.amount
         if period.status == "pending_amount_definition":
-            if period.due_date < datetime.now().date():
+            if period.due_date < financial_date():
                 period.status = "overdue"
             else:
                 period.status = "pending_payment"
@@ -246,15 +282,30 @@ class ObligationService:
         account_curr = account_currency.upper()
         obligation_curr = obligation_currency.upper()
 
+        max_amount = Decimal("9999999999999.99")
+        cents_quantum = Decimal("0.01")
+
         if payload_amount is not None:
             if not payload_amount.is_finite() or payload_amount <= Decimal("0"):
                 raise ObligationInvalidAmountError("Payment amount must be finite and positive")
+            if payload_amount > max_amount:
+                raise ObligationInvalidAmountError("Payment amount exceeds maximum limit")
+            if payload_amount.quantize(cents_quantum) != payload_amount:
+                raise ObligationInvalidAmountError(
+                    "Payment amount must have at most 2 decimal places"
+                )
             applied_amount = payload_amount
         else:
             if not required_obligation_amount.is_finite() or required_obligation_amount <= Decimal(
                 "0"
             ):
                 raise ObligationInvalidAmountError("Required amount must be finite and positive")
+            if required_obligation_amount > max_amount:
+                raise ObligationInvalidAmountError("Required amount exceeds maximum limit")
+            if required_obligation_amount.quantize(cents_quantum) != required_obligation_amount:
+                raise ObligationInvalidAmountError(
+                    "Required amount must have at most 2 decimal places"
+                )
             applied_amount = required_obligation_amount
 
         if account_curr == obligation_curr:
@@ -272,6 +323,12 @@ class ObligationService:
             raise ObligationBelowMinimumAmountError(
                 "Conversion resulted in zero or below-minimum source amount"
             )
+        if source_amount > max_amount:
+            raise ObligationInvalidAmountError("Converted source amount exceeds maximum limit")
+        if source_amount.quantize(cents_quantum) != source_amount:
+            raise ObligationInvalidAmountError(
+                "Converted source amount must have at most 2 decimal places"
+            )
 
         return source_amount, applied_amount, fx_rate, rate_source, rate_timestamp
 
@@ -287,6 +344,8 @@ class ObligationService:
         obligation = await self.repository.get_by_id(period.obligation_id)
         if not obligation or obligation.user_id != auth_user_id:
             raise NotFoundError("Obligation not found")
+        if obligation.status != "active":
+            raise ObligationInactiveError()
 
         if period.status == "pending_amount_definition":
             raise ObligationPeriodAmountRequiredError()
@@ -305,6 +364,16 @@ class ObligationService:
         account = await self.account_repo.get_by_id(payload.account_id)
         if not account or account.user_id != auth_user_id:
             raise NotFoundError("Account not found")
+        if not account.is_active:
+            raise ObligationAccountInactiveError("Account is inactive")
+        if (
+            account.balance is None
+            or not account.balance.is_finite()
+            or account.balance < Decimal("0")
+        ):
+            raise ObligationDomainError(
+                "Account balance is invalid or unavailable", error_code="account_unavailable"
+            )
 
         source_currency = account.currency
         (
@@ -320,7 +389,16 @@ class ObligationService:
         if applied_amount > remaining_balance:
             raise ObligationPaymentExceedsBalanceError(remaining=str(remaining_balance))
 
-        can_pay = account.balance >= source_amount
+        from app.goals.repository import GoalRepository
+
+        goal_repo = GoalRepository(self.repository.session)
+        reserved_amount = await goal_repo.calculate_reserved_by_account(account.id, auth_user_id)
+        if not reserved_amount.is_finite() or reserved_amount < Decimal("0"):
+            raise ObligationDomainError(
+                "Inconsistent reservation state", error_code="inconsistent_reservation_state"
+            )
+        available_balance = account.balance - reserved_amount
+        can_pay = available_balance >= source_amount
 
         quote_expires_at = datetime.now() if fx_rate != Decimal("1.0") else None
 
@@ -624,6 +702,8 @@ class ObligationService:
     ) -> list[ObligationPaymentRead]:
         # 1. Lock root Obligation
         obligation = await self.repository.get_by_id_for_update(obligation_id)
+        if not isinstance(obligation, Obligation):
+            obligation = await self.repository.get_by_id(obligation_id)
         if not obligation or obligation.user_id != auth_user_id:
             raise NotFoundError("Obligation not found")
 
@@ -645,7 +725,27 @@ class ObligationService:
 
         # 4. Sync periods to ensure we have the latest generated periods
         engine = PeriodEngine(self.repository.session)
-        await engine.sync_periods(obligation, datetime.now().date())
+        await engine.sync_periods(obligation, financial_date())
+
+        # 4b. Check if oldest unpaid period requires amount definition (stops FIFO)
+        stmt_oldest = (
+            select(ObligationPeriod)
+            .where(
+                ObligationPeriod.obligation_id == obligation.id,
+                ObligationPeriod.status.notin_(["paid", "skipped", "cancelled"]),
+            )
+            .order_by(
+                ObligationPeriod.due_date.asc(),
+                ObligationPeriod.sequence_number.asc(),
+                ObligationPeriod.created_at.asc(),
+            )
+            .limit(1)
+        )
+        oldest_period = (await self.repository.session.execute(stmt_oldest)).scalars().first()
+        if oldest_period and (
+            oldest_period.amount is None or oldest_period.status == "pending_amount_definition"
+        ):
+            raise ObligationPeriodAmountRequiredError()
 
         # 5. Get all unpaid periods for this obligation
         stmt = (

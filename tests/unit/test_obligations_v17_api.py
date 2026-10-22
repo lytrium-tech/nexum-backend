@@ -967,7 +967,13 @@ async def test_skip_period_success(mock_db):
 
         from datetime import date
 
-        mock_obl = Obligation(id=obs_id, currency="COP", amount_type="fixed")
+        mock_obl = Obligation(
+            id=obs_id,
+            currency="COP",
+            amount_type="fixed",
+            status="active",
+            user_id=uuid.UUID(settings.DEV_USER_ID),
+        )
         mock_period = ObligationPeriod(
             id=period_id,
             obligation_id=obs_id,
@@ -1010,7 +1016,13 @@ async def test_cancel_period_success(mock_db):
 
         from datetime import date
 
-        mock_obl = Obligation(id=obs_id, currency="COP", amount_type="fixed")
+        mock_obl = Obligation(
+            id=obs_id,
+            currency="COP",
+            amount_type="fixed",
+            status="active",
+            user_id=uuid.UUID(settings.DEV_USER_ID),
+        )
         mock_period = ObligationPeriod(
             id=period_id,
             obligation_id=obs_id,
@@ -1054,7 +1066,13 @@ async def test_refresh_overdue_periods(mock_db):
         obs_id = uuid.uuid4()
         period_id = uuid.uuid4()
 
-        mock_obl = Obligation(id=obs_id, currency="COP", amount_type="fixed")
+        mock_obl = Obligation(
+            id=obs_id,
+            currency="COP",
+            amount_type="fixed",
+            status="active",
+            user_id=uuid.UUID(settings.DEV_USER_ID),
+        )
         mock_period = ObligationPeriod(
             id=period_id,
             obligation_id=obs_id,

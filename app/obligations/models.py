@@ -89,6 +89,47 @@ class ObligationPeriod(Base):
             return None
         return self.amount - self.paid_amount
 
+    @property
+    def is_current_period(self) -> bool:
+        from app.core.financial_time import financial_date
+
+        start = getattr(self, "start_date", None)
+        end = getattr(self, "end_date", None)
+        if start is None or end is None:
+            return bool(getattr(self, "is_current", False))
+        today = financial_date()
+        return start <= today <= end
+
+    @property
+    def is_future_period(self) -> bool:
+        from app.core.financial_time import financial_date
+
+        start = getattr(self, "start_date", None)
+        if start is None:
+            return False
+        today = financial_date()
+        return start > today
+
+    @property
+    def is_overdue(self) -> bool:
+        from app.core.financial_time import financial_date
+
+        status = getattr(self, "status", None)
+        if status in ("paid", "skipped", "cancelled"):
+            return False
+        due = getattr(self, "due_date", None)
+        if due is None:
+            return False
+        today = financial_date()
+        return due < today
+
+    @property
+    def requires_amount_definition(self) -> bool:
+        status = getattr(self, "status", None)
+        if status in ("paid", "skipped", "cancelled"):
+            return False
+        return status == "pending_amount_definition" or getattr(self, "amount", None) is None
+
     __table_args__ = (
         UniqueConstraint("obligation_id", "period_key", name="uq_obligation_period_key"),
         CheckConstraint("paid_amount >= 0", name="chk_paid_amount_positive"),
@@ -145,9 +186,15 @@ class ExchangeRate(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     is_stale: Mapped[bool | None] = mapped_column(Boolean, server_default="false", nullable=True)
-    metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, server_default="{}" , nullable=True)
-    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=True)
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=True)
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column(
+        "metadata", JSONB, server_default="{}", nullable=True
+    )
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=True
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=True
+    )
 
 
 class FXQuote(Base):
@@ -165,6 +212,12 @@ class FXQuote(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, server_default="{}", nullable=True)
-    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=True)
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=True)
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column(
+        "metadata", JSONB, server_default="{}", nullable=True
+    )
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=True
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=True
+    )

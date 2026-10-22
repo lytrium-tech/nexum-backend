@@ -115,9 +115,13 @@ class ObligationAccountUnavailableError(ObligationDomainError):
         super().__init__(message=message, error_code="account_unavailable")
 
 
-class ObligationIdempotencyConflictDomainError(ObligationDomainError):
+class ObligationIdempotencyConflictDomainError(ConflictError, ObligationDomainError):
+    status_code = status.HTTP_409_CONFLICT
+    error_code = "idempotency_conflict"
+
     def __init__(self, message: str = "Idempotency conflict"):
         super().__init__(message=message, error_code="idempotency_conflict")
+        self.status_code = status.HTTP_409_CONFLICT
 
 
 class ObligationCurrencyMismatchError(ObligationDomainError):

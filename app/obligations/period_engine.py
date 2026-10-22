@@ -1,10 +1,12 @@
 import calendar
 from datetime import date, timedelta
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.obligations.exceptions import ObligationDomainError
 from app.obligations.models import Obligation, ObligationPeriod
 
 
@@ -50,8 +52,11 @@ def calculate_period_bounds(
         p_end_day = calendar.monthrange(p_start.year, p_start.month)[1]
         p_end = date(p_start.year, p_start.month, p_end_day)
 
-        actual_due_day = min(due_day, p_end_day)
-        p_due = date(p_start.year, p_start.month, actual_due_day)
+        target_due_month = add_months(first_due.replace(day=1), (sequence_number - 1) * interval)
+        actual_due_day = min(
+            due_day, calendar.monthrange(target_due_month.year, target_due_month.month)[1]
+        )
+        p_due = date(target_due_month.year, target_due_month.month, actual_due_day)
         return p_start, p_end, p_due
 
     elif freq == "yearly":
@@ -59,8 +64,9 @@ def calculate_period_bounds(
         p_start = date(target_year, 1, 1)
         p_end = date(target_year, 12, 31)
 
-        p_due_day = min(due_day, calendar.monthrange(target_year, due_month)[1])
-        p_due = date(target_year, due_month, p_due_day)
+        target_due_year = first_due.year + ((sequence_number - 1) * interval)
+        p_due_day = min(due_day, calendar.monthrange(target_due_year, due_month)[1])
+        p_due = date(target_due_year, due_month, p_due_day)
         return p_start, p_end, p_due
 
     elif freq == "weekly":
@@ -100,20 +106,26 @@ class PeriodEngine:
         Generates current and next periods.
         Updates 'overdue' statuses for past unpaid periods.
         """
-        # First, refresh overdue
+        if obligation.status != "active":
+            return
+
         await self.refresh_overdue(obligation.id, current_date)
 
-        if obligation.status != "active":
+        if not obligation.start_date:
             return
 
         current_seq = self._find_sequence_for_date(obligation, current_date)
 
-        max_seq = 1 if obligation.frequency == "one_time" else current_seq + 1
+        max_seq = (
+            1
+            if (obligation.frequency == "one_time" or obligation.type == "one_time")
+            else current_seq + 1
+        )
 
         if obligation.end_count:
             max_seq = min(max_seq, obligation.end_count)
 
-        for seq in range(current_seq, max_seq + 1):
+        for seq in range(1, max_seq + 1):
             if obligation.end_date:
                 # Si el periodo de inicio es mayor que el end_date, paramos.
                 p_start, _, _ = calculate_period_bounds(obligation, seq)
@@ -124,7 +136,7 @@ class PeriodEngine:
     async def refresh_overdue(self, obligation_id: UUID, current_date: date) -> None:
         stmt = select(ObligationPeriod).where(
             ObligationPeriod.obligation_id == obligation_id,
-            ObligationPeriod.status == "pending_payment",
+            ObligationPeriod.status.in_(["pending_payment", "partially_paid"]),
             ObligationPeriod.due_date < current_date,
         )
         result = await self.session.execute(stmt)
@@ -139,6 +151,8 @@ class PeriodEngine:
 
         if not period:
             raise ValueError("Period not found")
+        if (period.paid_amount or Decimal("0")) > 0:
+            raise ObligationDomainError("Cannot skip a period with payments", "period_has_payments")
         if period.status in ("paid", "skipped", "cancelled"):
             raise ValueError(f"Cannot skip period in status {period.status}")
 
@@ -147,7 +161,7 @@ class PeriodEngine:
         return period
 
     def _find_sequence_for_date(self, obligation: Obligation, d: date) -> int:
-        if d < obligation.start_date:
+        if not obligation.start_date or d < obligation.start_date:
             return 1
 
         interval = obligation.interval_count or 1

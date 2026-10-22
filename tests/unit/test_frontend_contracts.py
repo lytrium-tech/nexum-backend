@@ -1,4 +1,3 @@
-import json
 import uuid
 from decimal import Decimal
 
@@ -72,7 +71,7 @@ def test_snapshot_truth_contract():
 
 def test_openapi_contract_v15_v17():
     from app.main import app
-    
+
     spec = app.openapi()
 
     schemas = spec.get("components", {}).get("schemas", {})
@@ -104,16 +103,19 @@ def test_openapi_contract_v15_v17():
     assert "ObligationV17Response" in schemas
     assert "ObligationPeriodV17Response" in schemas
     assert "ObligationPaymentV17Response" in schemas
-    assert "EmptyStateResponse" in schemas
+    collection = spec["paths"]["/api/v1.7/obligations/{obligation_id}/periods"]["get"]["responses"][
+        "200"
+    ]["content"]["application/json"]["schema"]
+    assert collection["type"] == "array"
     assert "ApiErrorResponse" in schemas
     assert "ObligationV17CreateRequest" in schemas
 
     # Routes Validation
     paths = spec.get("paths", {})
-    
+
     # Check V1.5 routes still exist
     assert "/api/v1/obligations" in paths
-    
+
     # Check V1.7 routes exist
     assert "/api/v1.7/obligations" in paths
     assert "/api/v1.7/obligations/{obligation_id}" in paths

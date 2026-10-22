@@ -70,6 +70,7 @@ class ObligationRepository:
             .select_from(Obligation)
             .join(ObligationPeriod, Obligation.id == ObligationPeriod.obligation_id)
             .where(Obligation.user_id == user_id)
+            .where(Obligation.status == "active")
             .where(ObligationPeriod.status.in_(["overdue", "pending_payment", "partially_paid"]))
             .where(ObligationPeriod.amount.is_not(None))
             .group_by(Obligation.currency)

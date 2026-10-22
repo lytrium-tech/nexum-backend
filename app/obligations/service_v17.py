@@ -6,18 +6,23 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.financial_time import financial_date
+from app.ledger.models import FinancialEvent
 from app.ledger.repository import LedgerRepository
 from app.ledger.schemas import LedgerEventCreate
 from app.ledger.service import LedgerService
-from app.obligations.enums_v17 import AmountType, ObligationStatus, PeriodStatus
+from app.obligations.enums_v17 import AmountType, ObligationStatus, ObligationType, PeriodStatus
 from app.obligations.models import Obligation, ObligationPayment, ObligationPeriod
 from app.obligations.schemas_v17 import (
     ObligationFIFOPaymentCreateRequest,
     ObligationPaymentPreviewV17Request,
     ObligationPaymentPreviewV17Response,
+    ObligationPaymentsV17ListResponse,
+    ObligationPaymentV17Response,
     ObligationPeriodAmountDefineRequest,
     ObligationPeriodPaymentCreateRequest,
     ObligationV17CreateRequest,
+    ObligationV17UpdateRequest,
 )
 from app.obligations.settlement import (
     build_idempotency_fingerprint,
@@ -54,9 +59,16 @@ class ObligationV17Service:
         """
         Creates a minimal V1.7 obligation and its initial period.
         """
-        legacy_type = "one_time" if data.obligation_type == "one_time" else "indefinite"
-        legacy_payment_mode = data.amount_type.value
+        if data.obligation_type == ObligationType.one_time:
+            legacy_type = "one_time"
+        elif data.end_count:
+            legacy_type = "end_count"
+        elif data.end_date:
+            legacy_type = "end_date"
+        else:
+            legacy_type = "indefinite"
 
+        legacy_payment_mode = data.amount_type.value
         due_day = data.first_due_date.day
         due_month = data.first_due_date.month
 
@@ -64,6 +76,7 @@ class ObligationV17Service:
             id=uuid.uuid4(),
             user_id=user_id,
             name=data.name,
+            description=data.description,
             currency=data.currency,
             type=legacy_type,
             frequency=data.frequency.value,
@@ -90,6 +103,133 @@ class ObligationV17Service:
         await self.session.flush()
 
         return new_obligation, initial_period
+
+    async def evaluate_lifecycle(self, obligation_id: uuid.UUID) -> Obligation | None:
+        stmt = (
+            select(Obligation)
+            .where(Obligation.id == obligation_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        obligation = (await self.session.execute(stmt)).scalars().first()
+        if not obligation or obligation.status != ObligationStatus.active.value:
+            return obligation
+
+        if obligation.type == "indefinite":
+            return obligation
+
+        stmt_periods = (
+            select(ObligationPeriod)
+            .where(ObligationPeriod.obligation_id == obligation_id)
+            .order_by(ObligationPeriod.sequence_number.asc())
+        )
+        periods = list((await self.session.execute(stmt_periods)).scalars().all())
+        if not periods:
+            return obligation
+
+        if obligation.type == "one_time":
+            if all(p.status in ("paid", "skipped", "cancelled") for p in periods):
+                obligation.status = ObligationStatus.completed.value
+
+        elif obligation.type == "end_count":
+            req_count = obligation.end_count
+            if req_count and len(periods) >= req_count:
+                req_periods = [p for p in periods if p.sequence_number <= req_count]
+                if len(req_periods) == req_count and all(
+                    p.status in ("paid", "skipped", "cancelled") for p in req_periods
+                ):
+                    obligation.status = ObligationStatus.completed.value
+
+        elif obligation.type == "end_date":
+            if obligation.end_date and all(
+                p.status in ("paid", "skipped", "cancelled") for p in periods
+            ):
+                last_p = max(periods, key=lambda p: p.sequence_number)
+                from app.obligations.period_engine import calculate_period_bounds
+
+                next_start, _, _ = calculate_period_bounds(obligation, last_p.sequence_number + 1)
+                if next_start > obligation.end_date:
+                    obligation.status = ObligationStatus.completed.value
+
+        return obligation
+
+    async def update_obligation(
+        self, user_id: uuid.UUID, obligation_id: uuid.UUID, data: ObligationV17UpdateRequest
+    ) -> Obligation:
+        stmt = (
+            select(Obligation)
+            .where(Obligation.id == obligation_id, Obligation.user_id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        obligation = (await self.session.execute(stmt)).scalars().first()
+        if not obligation:
+            raise HTTPException(status_code=404, detail="obligation_not_found")
+
+        # Cannot reopen completed or cancelled
+        if obligation.status in (
+            ObligationStatus.completed.value,
+            ObligationStatus.cancelled.value,
+        ):
+            if data.status is not None and data.status.value != obligation.status:
+                raise HTTPException(
+                    status_code=422,
+                    detail="cannot_reopen_completed_or_cancelled_obligation",
+                )
+
+        if data.status is not None:
+            new_status = data.status.value
+            if new_status not in ("active", "archived", "cancelled"):
+                raise HTTPException(status_code=422, detail="invalid_status_transition")
+            obligation.status = new_status
+
+        fields_set = getattr(data, "model_fields_set", set())
+
+        if "name" in fields_set and data.name is not None:
+            obligation.name = data.name
+
+        if "description" in fields_set:
+            obligation.description = data.description
+
+        if "metadata_" in fields_set or "metadata" in fields_set:
+            obligation.metadata_ = data.metadata_ if data.metadata_ is not None else {}
+
+        if data.base_amount is not None:
+            if obligation.amount_type != AmountType.fixed.value and obligation.payment_mode not in (
+                "fixed",
+                "partial_allowed",
+                "fixed_full_payment",
+            ):
+                raise HTTPException(status_code=422, detail="base_amount_only_allowed_for_fixed")
+
+            obligation.base_amount = data.base_amount
+
+            # Fixed base update affects FUTURE (period.start_date > canonical today),
+            # OPEN, completely UNPAID materialized periods
+            today = financial_date()
+            stmt_future_periods = (
+                select(ObligationPeriod)
+                .where(
+                    ObligationPeriod.obligation_id == obligation.id,
+                    ObligationPeriod.start_date > today,
+                    ObligationPeriod.status.in_(
+                        [PeriodStatus.pending_payment.value, PeriodStatus.overdue.value]
+                    ),
+                    (ObligationPeriod.paid_amount == Decimal("0"))
+                    | (ObligationPeriod.paid_amount.is_(None)),
+                )
+                .with_for_update()
+            )
+            future_periods = (await self.session.execute(stmt_future_periods)).scalars().all()
+            for p in future_periods:
+                if p.start_date > today and (
+                    p.paid_amount is None or p.paid_amount == Decimal("0")
+                ):
+                    p.amount = data.base_amount
+
+        obligation.updated_at = datetime.now(UTC)
+        await self.session.flush()
+        return obligation
 
     def _create_initial_period(self, obligation: Obligation) -> ObligationPeriod:
         """
@@ -198,6 +338,9 @@ class ObligationV17Service:
                     skipped_count += 1
                 elif status == PeriodStatus.pending_amount_definition.value:
                     pending_count += 1
+                    today_can = financial_date()
+                    if p.due_date < today_can:
+                        overdue_count += 1
 
                 is_payable = status in (
                     PeriodStatus.pending_payment.value,
@@ -264,9 +407,22 @@ class ObligationV17Service:
                     "currency": ob.currency,
                     "frequency": ob.frequency,
                     "amount": ob.base_amount or Decimal("0"),
-                    "amount_type": ob.amount_type or "variable",
-                    "obligation_type": "recurring" if ob.type == "indefinite" else "one_time",
+                    "amount_type": ob.amount_type
+                    or (
+                        "fixed"
+                        if ob.payment_mode in ("fixed", "partial_allowed", "fixed_full_payment")
+                        else "variable"
+                    ),
+                    "obligation_type": "one_time" if ob.type == "one_time" else "recurring",
                     "status": ob.status or "active",
+                    "start_date": ob.start_date,
+                    "first_due_date": ob.first_due_date,
+                    "due_day": ob.due_day,
+                    "due_month": ob.due_month,
+                    "interval_count": ob.interval_count or 1,
+                    "end_date": ob.end_date,
+                    "end_count": ob.end_count,
+                    "metadata": getattr(ob, "metadata_", getattr(ob, "metadata", {})),
                     "created_at": ob.created_at,
                     "updated_at": ob.updated_at,
                     "relevant_period": relevant_period,
@@ -296,10 +452,7 @@ class ObligationV17Service:
             return None
 
         # Auto-refresh before listing periods
-        try:
-            await self.refresh_overdue_periods(user_id, obligation_id, commit=False)
-        except Exception:
-            pass
+        await self.refresh_overdue_periods(user_id, obligation_id, commit=False)
 
         stmt = (
             select(ObligationPeriod)
@@ -328,15 +481,35 @@ class ObligationV17Service:
         data: ObligationPeriodAmountDefineRequest,
     ) -> ObligationPeriod:
         """Define the amount for a variable period in pending_amount_definition status."""
-        obligation = await self.get_obligation(user_id, obligation_id)
+        stmt_obl = (
+            select(Obligation)
+            .where(Obligation.id == obligation_id, Obligation.user_id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        obligation = (await self.session.execute(stmt_obl)).scalars().first()
         if not obligation:
             raise HTTPException(status_code=404, detail="obligation_not_found")
+        if obligation.status != ObligationStatus.active.value:
+            raise HTTPException(status_code=400, detail="obligation_inactive")
 
-        period = await self.get_period(obligation_id, period_id)
+        stmt_period = (
+            select(ObligationPeriod)
+            .where(
+                ObligationPeriod.obligation_id == obligation_id,
+                ObligationPeriod.id == period_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        period = (await self.session.execute(stmt_period)).scalars().first()
         if not period:
             raise HTTPException(status_code=404, detail="period_not_found")
 
-        if obligation.amount_type != AmountType.variable.value:
+        if (
+            obligation.amount_type != AmountType.variable.value
+            and obligation.payment_mode != "variable"
+        ):
             raise HTTPException(status_code=422, detail="period_not_variable")
 
         if period.status != PeriodStatus.pending_amount_definition.value:
@@ -363,63 +536,129 @@ class ObligationV17Service:
         period_id: uuid.UUID,
         data: "ObligationPaymentPreviewV17Request",
     ) -> "ObligationPaymentPreviewV17Response":
-        """Preview a specific period payment."""
+        """Preview a specific period payment with canonical settlement and availability checks without debit."""
         obligation = await self.get_obligation(user_id, obligation_id)
         if not obligation:
             raise HTTPException(status_code=404, detail="obligation_not_found")
+        if obligation.status != ObligationStatus.active.value:
+            raise HTTPException(status_code=400, detail="obligation_inactive")
 
         period = await self.get_period(obligation_id, period_id)
         if not period:
             raise HTTPException(status_code=404, detail="period_not_found")
+        if period.amount is None or period.status == PeriodStatus.pending_amount_definition.value:
+            raise HTTPException(status_code=422, detail="period_amount_not_defined")
+        if period.status not in (
+            PeriodStatus.pending_payment.value,
+            PeriodStatus.partially_paid.value,
+            PeriodStatus.overdue.value,
+        ):
+            raise HTTPException(status_code=422, detail="period_not_payable")
 
         account = await self.account_repo.get_by_id(data.source_account_id)
         if not account or account.user_id != user_id:
             raise HTTPException(status_code=404, detail="account_not_found")
+        if not account.is_active:
+            raise HTTPException(status_code=400, detail="account_inactive")
+        if account.balance is None or not account.balance.is_finite() or account.balance < 0:
+            raise HTTPException(status_code=400, detail="account_unavailable")
 
         applied_amount = data.amount
+        paid_amt = period.paid_amount or Decimal("0")
+        remaining_amount = period.amount - paid_amt
+        if applied_amount > remaining_amount:
+            raise HTTPException(status_code=422, detail="payment_exceeds_remaining_amount")
 
-        if account.currency == obligation.currency:
-            source_amount = applied_amount
-            fx_rate = Decimal("1.0")
-            rate_timestamp = None
+        from app.obligations.settlement import resolve_settlement
+
+        if account.currency == obligation.currency or data.quote_id or data.rate_snapshot_id:
+            settlement = await resolve_settlement(
+                session=self.session,
+                user_id=user_id,
+                obligation=obligation,
+                account=account,
+                requested_amount=applied_amount,
+                requested_currency=data.currency,
+                requested_source_currency=data.source_currency,
+                requested_source_amount=None,
+                quote_id=data.quote_id,
+                rate_snapshot_id=data.rate_snapshot_id,
+            )
+            source_amount = settlement.source_amount
+            fx_rate = settlement.fx_rate
+            rate_timestamp = settlement.rate_timestamp
             quote_expires_at = None
-            quote_id = None
+            quote_id = settlement.quote_id
+            if quote_id:
+                from app.obligations.models import FXQuote
+
+                stmt_q = select(FXQuote).where(FXQuote.id == quote_id)
+                q_obj = (await self.session.execute(stmt_q)).scalars().first()
+                if q_obj:
+                    quote_expires_at = q_obj.expires_at
         else:
-            from app.core.currency import get_fx_rate, round_to_minimum_unit
+            from app.core.currency import get_fx_rate
             from app.fx.provider import StaticFxRateProvider
             from app.fx.service import FXService
 
             fx_info = await get_fx_rate(account.currency, obligation.currency)
-            fx_rate = fx_info["fx_rate"]
-            rate_timestamp = fx_info["rate_timestamp"]
-
-            source_amount = round_to_minimum_unit(applied_amount / fx_rate, account.currency)
+            fx_rate_val = fx_info["fx_rate"]
 
             provider = StaticFxRateProvider(
                 rates={
-                    f"{account.currency.upper()}_{obligation.currency.upper()}": fx_rate,
+                    f"{account.currency.upper()}_{obligation.currency.upper()}": fx_rate_val,
                     f"{obligation.currency.upper()}_{account.currency.upper()}": Decimal("1.0")
-                    / fx_rate,
+                    / fx_rate_val,
                 }
             )
             fx_service = FXService(provider=provider, session=self.session)
             fx_service.quote_validity_minutes = 1.5
-            quote = await fx_service.create_quote(
+            quote = await fx_service.create_quote_for_target(
                 user_id=user_id,
                 source_currency=account.currency,
                 target_currency=obligation.currency,
-                source_amount=source_amount,
+                target_amount=applied_amount,
+                commit=False,
             )
-
+            settlement = await resolve_settlement(
+                session=self.session,
+                user_id=user_id,
+                obligation=obligation,
+                account=account,
+                requested_amount=applied_amount,
+                requested_currency=data.currency,
+                requested_source_currency=data.source_currency,
+                requested_source_amount=None,
+                quote_id=quote.quote_id,
+                rate_snapshot_id=None,
+            )
+            source_amount = settlement.source_amount
+            fx_rate = settlement.fx_rate
+            rate_timestamp = settlement.rate_timestamp or fx_info.get("rate_timestamp")
             quote_expires_at = quote.expires_at
             quote_id = quote.quote_id
+
+        # Availability check without debit
+        from app.goals.repository import GoalRepository
+
+        goal_repo = GoalRepository(self.session)
+        reserved_amount = await goal_repo.calculate_reserved_by_account(account.id, user_id)
+        if not reserved_amount.is_finite() or reserved_amount < Decimal("0"):
+            raise HTTPException(status_code=409, detail="inconsistent_reservation_state")
+        available_balance = account.balance - reserved_amount
+        if available_balance < source_amount:
+            raise HTTPException(status_code=400, detail="insufficient_balance")
 
         return ObligationPaymentPreviewV17Response(
             obligation_currency=obligation.currency,
             source_currency=account.currency,
             applied_amount=applied_amount,
             source_amount=source_amount,
-            fx_rate=fx_rate if fx_rate != Decimal("1.0") else None,
+            fx_rate=fx_rate
+            if fx_rate is not None
+            and fx_rate != Decimal("1.0")
+            and fx_rate != Decimal("1.00000000")
+            else None,
             rate_timestamp=rate_timestamp,
             quote_expires_at=quote_expires_at,
             quote_id=quote_id,
@@ -666,6 +905,7 @@ class ObligationV17Service:
                 "fingerprint": fingerprint,
                 "idempotency_key": data.idempotency_key,
                 "obligation_period_id": str(period.id),
+                "channel": "manual",
                 "fx_quote_id": str(settlement.quote_id) if settlement.quote_id else None,
                 "rate_snapshot_id": str(settlement.rate_snapshot_id)
                 if settlement.rate_snapshot_id
@@ -677,6 +917,22 @@ class ObligationV17Service:
                     {
                         "obligation_period_id": str(period.id),
                         "amount": str(settlement.applied_amount),
+                        "paid_before": str(period.paid_amount or Decimal("0")),
+                        "paid_after": str(
+                            (period.paid_amount or Decimal("0")) + settlement.applied_amount
+                        ),
+                        "amount_due_before": str(
+                            max(Decimal("0"), period.amount - (period.paid_amount or Decimal("0")))
+                        ),
+                        "amount_due_after": str(
+                            max(
+                                Decimal("0"),
+                                period.amount
+                                - (
+                                    (period.paid_amount or Decimal("0")) + settlement.applied_amount
+                                ),
+                            )
+                        ),
                     }
                 ],
             },
@@ -705,6 +961,20 @@ class ObligationV17Service:
             rate_snapshot_id=settlement.rate_snapshot_id,
             idempotency_key=data.idempotency_key,
         )
+        due_b = (
+            max(Decimal("0.00"), period.amount - paid_amt) if period.amount is not None else None
+        )
+        due_a = (
+            max(Decimal("0.00"), period.amount - (paid_amt + settlement.applied_amount))
+            if period.amount is not None
+            else None
+        )
+        payment.partial_context = {
+            "paid_before": paid_amt,
+            "paid_after": paid_amt + settlement.applied_amount,
+            "amount_due_before": due_b,
+            "amount_due_after": due_a,
+        }
         self.session.add(payment)
 
         period.paid_amount = paid_amt + settlement.applied_amount
@@ -985,10 +1255,32 @@ class ObligationV17Service:
             payment_date=data.payment_date,
         )
 
-        allocations_meta = [
-            {"obligation_period_id": str(p.id), "amount": str(slice_amt)}
-            for (p, _, slice_amt) in allocations
-        ]
+        # Pre-assign payment UUIDs so allocations_meta has payment_id
+        allocations_with_pay_id = []
+        for p, paid_amt, slice_amt in allocations:
+            allocations_with_pay_id.append((p, paid_amt, slice_amt, uuid.uuid4()))
+
+        allocations_meta = []
+        for p, paid_amt, slice_amt, pay_id in allocations_with_pay_id:
+            paid_before = paid_amt
+            paid_after = paid_amt + slice_amt
+            due_before = (
+                max(Decimal("0.00"), p.amount - paid_before) if p.amount is not None else None
+            )
+            due_after = (
+                max(Decimal("0.00"), p.amount - paid_after) if p.amount is not None else None
+            )
+            allocations_meta.append(
+                {
+                    "payment_id": str(pay_id),
+                    "obligation_period_id": str(p.id),
+                    "amount": str(slice_amt),
+                    "paid_before": str(paid_before),
+                    "paid_after": str(paid_after),
+                    "amount_due_before": str(due_before) if due_before is not None else None,
+                    "amount_due_after": str(due_after) if due_after is not None else None,
+                }
+            )
 
         event_create = LedgerEventCreate(
             user_id=user_id,
@@ -1003,6 +1295,7 @@ class ObligationV17Service:
             metadata={
                 "fingerprint": fingerprint,
                 "idempotency_key": data.idempotency_key,
+                "channel": "manual",
                 "strategy": strategy,
                 "fx_quote_id": str(settlement.quote_id) if settlement.quote_id else None,
                 "rate_snapshot_id": str(settlement.rate_snapshot_id)
@@ -1067,11 +1360,27 @@ class ObligationV17Service:
         period_id: uuid.UUID,
         commit: bool = True,
     ) -> ObligationPeriod:
-        obligation = await self.get_obligation(user_id, obligation_id)
+        stmt_obl = (
+            select(Obligation)
+            .where(Obligation.id == obligation_id, Obligation.user_id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        obligation = (await self.session.execute(stmt_obl)).scalars().first()
         if not obligation:
             raise HTTPException(status_code=404, detail="obligation_not_found")
+        if obligation.status != ObligationStatus.active.value:
+            raise HTTPException(status_code=400, detail="obligation_inactive")
 
-        period = await self.get_period(obligation_id, period_id)
+        stmt_period = (
+            select(ObligationPeriod)
+            .where(
+                ObligationPeriod.obligation_id == obligation_id, ObligationPeriod.id == period_id
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        period = (await self.session.execute(stmt_period)).scalars().first()
         if not period:
             raise HTTPException(status_code=404, detail="period_not_found")
 
@@ -1083,6 +1392,7 @@ class ObligationV17Service:
             raise HTTPException(status_code=422, detail="period_not_skippable")
 
         period.status = PeriodStatus.skipped.value
+        await self.evaluate_lifecycle(obligation_id)
         if commit:
             await self.session.commit()
             await self.session.refresh(period)
@@ -1101,11 +1411,27 @@ class ObligationV17Service:
         period_id: uuid.UUID,
         commit: bool = True,
     ) -> ObligationPeriod:
-        obligation = await self.get_obligation(user_id, obligation_id)
+        stmt_obl = (
+            select(Obligation)
+            .where(Obligation.id == obligation_id, Obligation.user_id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        obligation = (await self.session.execute(stmt_obl)).scalars().first()
         if not obligation:
             raise HTTPException(status_code=404, detail="obligation_not_found")
+        if obligation.status != ObligationStatus.active.value:
+            raise HTTPException(status_code=400, detail="obligation_inactive")
 
-        period = await self.get_period(obligation_id, period_id)
+        stmt_period = (
+            select(ObligationPeriod)
+            .where(
+                ObligationPeriod.obligation_id == obligation_id, ObligationPeriod.id == period_id
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        period = (await self.session.execute(stmt_period)).scalars().first()
         if not period:
             raise HTTPException(status_code=404, detail="period_not_found")
 
@@ -1122,6 +1448,7 @@ class ObligationV17Service:
             raise HTTPException(status_code=422, detail="period_not_cancellable")
 
         period.status = PeriodStatus.cancelled.value
+        await self.evaluate_lifecycle(obligation_id)
         if commit:
             await self.session.commit()
             await self.session.refresh(period)
@@ -1141,195 +1468,79 @@ class ObligationV17Service:
         obligation: Obligation | None = None,
     ) -> tuple[list[ObligationPeriod], int]:
         if obligation is None:
-            obligation = await self.get_obligation(user_id, obligation_id)
+            stmt_obl = (
+                select(Obligation)
+                .where(Obligation.id == obligation_id, Obligation.user_id == user_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            obligation = (await self.session.execute(stmt_obl)).scalars().first()
         if not obligation:
             raise HTTPException(status_code=404, detail="obligation_not_found")
-
-        from datetime import date
+        if obligation.status != ObligationStatus.active.value:
+            return [], 0
 
         from app.obligations.period_engine import PeriodEngine
 
-        today = date.today()
+        today = financial_date()
 
-        # 1. Update existing pending/partially_paid to overdue
-        stmt = select(ObligationPeriod).where(
-            ObligationPeriod.obligation_id == obligation_id,
-            ObligationPeriod.status.in_(
-                [
-                    PeriodStatus.pending_payment.value,
-                    PeriodStatus.partially_paid.value,
-                ]
-            ),
-            ObligationPeriod.due_date < today,
-        )
-        periods_result = await self.session.execute(stmt)
-        periods_to_update = periods_result.scalars().all()
-
-        updated_periods = []
-        for p in periods_to_update:
-            p.status = PeriodStatus.overdue.value
-            updated_periods.append(p)
-
-        if updated_periods:
-            if commit:
-                await self.session.commit()
-                for p in updated_periods:
-                    await self.session.refresh(p)
-            else:
-                await self.session.flush()
-
-        # 2. Generate missing periods up to today
+        # 1. Reuse canonical PeriodEngine.sync_periods for overdue refresh and gap generation
         engine = PeriodEngine(self.session)
-        if obligation.status == "active" and obligation.start_date:
-            current_seq = engine._find_sequence_for_date(obligation, today)
-            max_seq = 1 if obligation.frequency == "one_time" else current_seq + 1
-            if obligation.end_count:
-                max_seq = min(max_seq, obligation.end_count)
+        await engine.sync_periods(obligation, today)
 
-            from app.obligations.period_engine import calculate_period_bounds
+        # 2. Query overdue periods for response
+        stmt_overdue = (
+            select(ObligationPeriod)
+            .where(
+                ObligationPeriod.obligation_id == obligation_id,
+                ObligationPeriod.status == PeriodStatus.overdue.value,
+            )
+            .order_by(ObligationPeriod.sequence_number.asc())
+        )
+        updated_periods = list((await self.session.execute(stmt_overdue)).scalars().all())
 
-            for seq in range(current_seq, max_seq + 1):
-                if obligation.end_date:
-                    p_start, _, _ = calculate_period_bounds(obligation, seq)
-                    if p_start > obligation.end_date:
-                        break
-                new_period = await engine._ensure_period_exists(obligation, seq, today)
-                if (
-                    new_period
-                    and new_period.status == "overdue"
-                    and new_period not in updated_periods
-                ):
-                    updated_periods.append(new_period)
+        # 3. Evaluate bounded lifecycle without intermediate commit
+        await self.evaluate_lifecycle(obligation_id)
 
-            if commit:
-                await self.session.commit()
-            else:
-                await self.session.flush()
+        # 4. Final commit/flush
+        if commit:
+            await self.session.commit()
+            for p in updated_periods:
+                await self.session.refresh(p)
+        else:
+            await self.session.flush()
 
         return updated_periods, len(updated_periods)
 
     async def refresh_due_periods_for_user(self, user_id: uuid.UUID, commit: bool = True) -> None:
-        """Optimized batch refresh of overdue/missing periods for a user."""
-        from datetime import date
+        """Batch refresh of overdue/missing periods for a user in stable root-lock order."""
+        from app.obligations.period_engine import PeriodEngine
 
-        from sqlalchemy import update
-        from sqlalchemy.exc import IntegrityError
+        today = financial_date()
 
-        from app.obligations.period_engine import (
-            PeriodEngine,
-            calculate_period_bounds,
-            generate_period_key,
-        )
-
-        today = date.today()
-
-        # 1. Bulk update overdue for pending periods
-        stmt_update = (
-            update(ObligationPeriod)
+        # 1. Lock active obligations in stable ID order (prevents lock inversion/deadlocks)
+        stmt_obls = (
+            select(Obligation)
             .where(
-                ObligationPeriod.status.in_(
-                    [PeriodStatus.pending_payment.value, PeriodStatus.partially_paid.value]
-                ),
-                ObligationPeriod.due_date < today,
-                ObligationPeriod.obligation_id.in_(
-                    select(Obligation.id).where(
-                        Obligation.user_id == user_id, Obligation.status == "active"
-                    )
-                ),
+                Obligation.user_id == user_id,
+                Obligation.status == ObligationStatus.active.value,
             )
-            .values(status=PeriodStatus.overdue.value)
+            .order_by(Obligation.id.asc())
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
-        await self.session.execute(stmt_update)
-
-        # 2. Get active recurring obligations
-        stmt_active = select(Obligation).where(
-            Obligation.user_id == user_id,
-            Obligation.status == "active",
-            Obligation.frequency != "one_time",
-        )
-        active_obls = (await self.session.execute(stmt_active)).scalars().all()
-
+        active_obls = list((await self.session.execute(stmt_obls)).scalars().all())
         if not active_obls:
-            if commit:
-                await self.session.commit()
-            else:
-                await self.session.flush()
             return
 
-        # 3. Handle Gaps: Fetch ALL existing sequence numbers for these obligations
-        stmt_seqs = select(ObligationPeriod.obligation_id, ObligationPeriod.sequence_number).where(
-            ObligationPeriod.obligation_id.in_([o.id for o in active_obls])
-        )
-        existing_seqs_map = {}
-        for row in (await self.session.execute(stmt_seqs)).all():
-            if row.obligation_id not in existing_seqs_map:
-                existing_seqs_map[row.obligation_id] = set()
-            existing_seqs_map[row.obligation_id].add(row.sequence_number)
-
         engine = PeriodEngine(self.session)
-        new_periods = []
 
-        # 4. Calculate missing sequences
+        # 2. Sync periods and evaluate lifecycle for each active obligation
         for obligation in active_obls:
-            if not obligation.start_date:
-                continue
+            await engine.sync_periods(obligation, today)
+            await self.evaluate_lifecycle(obligation.id)
 
-            current_seq = engine._find_sequence_for_date(obligation, today)
-            max_seq = current_seq + 1
-            if obligation.end_count:
-                max_seq = min(max_seq, obligation.end_count)
-
-            existing_seqs = existing_seqs_map.get(obligation.id, set())
-
-            for seq in range(1, max_seq + 1):
-                if seq in existing_seqs:
-                    continue
-
-                if obligation.end_date:
-                    p_start, _, _ = calculate_period_bounds(obligation, seq)
-                    if p_start > obligation.end_date:
-                        break
-
-                p_start, p_end, p_due = calculate_period_bounds(obligation, seq)
-                p_key = generate_period_key(obligation.frequency, p_start, seq)
-
-                is_fixed = obligation.payment_mode in (
-                    "fixed",
-                    "partial_allowed",
-                    "fixed_full_payment",
-                )
-                amount = obligation.base_amount if is_fixed else None
-                status = "pending_payment" if is_fixed else "pending_amount_definition"
-
-                if status == "pending_payment" and p_due < today:
-                    status = "overdue"
-
-                new_period = ObligationPeriod(
-                    id=uuid.uuid4(),
-                    obligation_id=obligation.id,
-                    period_key=p_key,
-                    sequence_number=seq,
-                    start_date=p_start,
-                    end_date=p_end,
-                    due_date=p_due,
-                    amount=amount,
-                    currency=obligation.currency,
-                    paid_amount=0,
-                    status=status,
-                )
-                new_periods.append(new_period)
-
-        # 5. Insert safely with concurrency guard
-        if new_periods:
-            try:
-                async with self.session.begin_nested():
-                    self.session.add_all(new_periods)
-                    await self.session.flush()
-            except IntegrityError:
-                for p in new_periods:
-                    self.session.expunge(p)
-                pass
-
+        # 3. Final commit / flush without swallowed errors
         if commit:
             await self.session.commit()
         else:
@@ -1346,13 +1557,10 @@ class ObligationV17Service:
         )
 
         if not month:
-            month = date.today().strftime("%Y-%m")
+            month = financial_date().strftime("%Y-%m")
 
         # Perform optimized batch refresh
-        try:
-            await self.refresh_due_periods_for_user(user_id, commit=True)
-        except Exception:
-            pass
+        await self.refresh_due_periods_for_user(user_id, commit=True)
 
         year, m = map(int, month.split("-"))
         from calendar import monthrange
@@ -1364,6 +1572,7 @@ class ObligationV17Service:
             select(ObligationPeriod, Obligation)
             .join(Obligation, ObligationPeriod.obligation_id == Obligation.id)
             .where(Obligation.user_id == user_id)
+            .where(Obligation.status == ObligationStatus.active.value)
             .where(
                 ((ObligationPeriod.due_date >= first_day) & (ObligationPeriod.due_date <= last_day))
                 | (
@@ -1415,6 +1624,9 @@ class ObligationV17Service:
             elif status_val == PeriodStatus.pending_amount_definition.value:
                 status_counts.pending_amount_definition += 1
                 pending_def_count += 1
+                today_fin = financial_date()
+                if period.due_date < today_fin:
+                    overdue_count += 1
             elif status_val == PeriodStatus.skipped.value:
                 status_counts.skipped += 1
             elif status_val == PeriodStatus.cancelled.value:
@@ -1519,4 +1731,148 @@ class ObligationV17Service:
             risk_flags=risk_flags,
             narrative_facts=narrative_facts,
             generated_at=datetime.utcnow(),
+        )
+
+    def _map_payment_to_v17_response(
+        self, payment: ObligationPayment, event: "FinancialEvent | None" = None
+    ) -> ObligationPaymentV17Response:
+        partial_context = None
+        channel = "legacy" if payment.financial_event_id is None else "manual"
+        if event:
+            meta = _extract_event_metadata(event)
+            channel = meta.get("channel") or (
+                "legacy" if payment.financial_event_id is None else "manual"
+            )
+            allocations = meta.get("allocations", [])
+            for alloc in allocations:
+                if alloc.get("obligation_period_id") == str(payment.obligation_period_id):
+                    if "paid_before" in alloc and "paid_after" in alloc:
+                        due_b = alloc.get("amount_due_before")
+                        due_a = alloc.get("amount_due_after")
+                        partial_context = {
+                            "paid_before": Decimal(str(alloc["paid_before"])),
+                            "paid_after": Decimal(str(alloc["paid_after"])),
+                            "amount_due_before": Decimal(str(due_b)) if due_b is not None else None,
+                            "amount_due_after": Decimal(str(due_a)) if due_a is not None else None,
+                        }
+                    break
+
+        return ObligationPaymentV17Response(
+            id=payment.id,
+            obligation_id=payment.obligation_id,
+            obligation_period_id=payment.obligation_period_id,
+            user_id=payment.user_id,
+            account_id=payment.account_id,
+            amount=payment.amount,
+            currency=payment.currency,
+            source_amount=payment.source_amount,
+            source_currency=payment.source_currency,
+            fx_rate=payment.fx_rate,
+            rate_source=payment.rate_source,
+            rate_timestamp=payment.rate_timestamp,
+            paid_at=payment.paid_at,
+            quote_id=payment.quote_id,
+            rate_snapshot_id=payment.rate_snapshot_id,
+            idempotency_key=payment.idempotency_key,
+            financial_event_id=payment.financial_event_id,
+            channel=channel,
+            partial_context=partial_context,
+            created_at=payment.created_at,
+            updated_at=getattr(payment, "updated_at", payment.created_at),
+        )
+
+    async def get_payment(
+        self, user_id: uuid.UUID, payment_id: uuid.UUID
+    ) -> ObligationPaymentV17Response:
+        from app.ledger.models import FinancialEvent
+
+        stmt = select(ObligationPayment).where(ObligationPayment.id == payment_id)
+        payment = (await self.session.execute(stmt)).scalars().first()
+        if not payment:
+            raise HTTPException(status_code=404, detail="payment_not_found")
+
+        stmt_obl = select(Obligation).where(Obligation.id == payment.obligation_id)
+        obligation = (await self.session.execute(stmt_obl)).scalars().first()
+        if not obligation or obligation.user_id != user_id:
+            raise HTTPException(status_code=404, detail="payment_not_found")
+
+        if payment.user_id is not None and payment.user_id != obligation.user_id:
+            raise HTTPException(status_code=403, detail="forbidden")
+
+        event = None
+        if payment.financial_event_id:
+            event = await self.session.get(FinancialEvent, payment.financial_event_id)
+            if event and event.user_id != obligation.user_id:
+                raise HTTPException(status_code=403, detail="forbidden")
+
+        return self._map_payment_to_v17_response(payment, event)
+
+    async def list_payments_for_obligation(
+        self,
+        user_id: uuid.UUID,
+        obligation_id: uuid.UUID,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> ObligationPaymentsV17ListResponse:
+        from sqlalchemy import func
+
+        from app.ledger.models import FinancialEvent
+
+        stmt_obl = select(Obligation).where(
+            Obligation.id == obligation_id, Obligation.user_id == user_id
+        )
+        obligation = (await self.session.execute(stmt_obl)).scalars().first()
+        if not obligation:
+            raise HTTPException(status_code=404, detail="obligation_not_found")
+
+        limit = max(1, min(100, limit))
+        offset = max(0, offset)
+
+        stmt_conflict = (
+            select(ObligationPayment.id)
+            .where(
+                ObligationPayment.obligation_id == obligation_id,
+                ObligationPayment.user_id.is_not(None),
+                ObligationPayment.user_id != user_id,
+            )
+            .limit(1)
+        )
+        if (await self.session.execute(stmt_conflict)).scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="forbidden")
+
+        count_stmt = select(func.count(ObligationPayment.id)).where(
+            ObligationPayment.obligation_id == obligation_id
+        )
+        total = (await self.session.execute(count_stmt)).scalar() or 0
+
+        if total == 0:
+            return ObligationPaymentsV17ListResponse(items=[], total=0, limit=limit, offset=offset)
+
+        stmt = (
+            select(ObligationPayment)
+            .where(ObligationPayment.obligation_id == obligation_id)
+            .order_by(ObligationPayment.created_at.desc(), ObligationPayment.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        payments = list((await self.session.execute(stmt)).scalars().all())
+
+        event_ids = [p.financial_event_id for p in payments if p.financial_event_id]
+        events_by_id = {}
+        if event_ids:
+            ev_stmt = select(FinancialEvent).where(FinancialEvent.id.in_(event_ids))
+            events = (await self.session.execute(ev_stmt)).scalars().all()
+            events_by_id = {ev.id: ev for ev in events}
+
+        items = []
+        for p in payments:
+            if p.user_id is not None and p.user_id != obligation.user_id:
+                continue
+            ev = events_by_id.get(p.financial_event_id)
+            if ev is not None and ev.user_id != user_id:
+                raise HTTPException(status_code=403, detail="forbidden")
+            items.append(self._map_payment_to_v17_response(p, ev))
+
+        return ObligationPaymentsV17ListResponse(
+            items=items, total=total, limit=limit, offset=offset
         )

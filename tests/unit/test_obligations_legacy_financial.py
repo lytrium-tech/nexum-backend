@@ -815,7 +815,7 @@ async def test_legacy_below_minimum_amount_rejected(mock_get_fx):
 
     payload = ObligationPaymentCreate(
         account_id=account.id,
-        amount=Decimal("0.00001"),
+        amount=Decimal("0.01"),
     )
 
     with pytest.raises(ObligationBelowMinimumAmountError):

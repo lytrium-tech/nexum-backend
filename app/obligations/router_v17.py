@@ -6,14 +6,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db_session
+from app.core.financial_time import financial_date
 from app.core.uow import UnitOfWork
+from app.obligations.enums_v17 import PeriodStatus
 from app.obligations.schemas_v17 import (
     ApiErrorResponse,
-    EmptyStateResponse,
     ObligationFIFOPaymentCreateRequest,
     ObligationFIFOPaymentResultResponse,
     ObligationPaymentPreviewV17Request,
     ObligationPaymentPreviewV17Response,
+    ObligationPaymentsV17ListResponse,
     ObligationPaymentV17Response,
     ObligationPeriodAmountDefineRequest,
     ObligationPeriodPaymentCreateRequest,
@@ -25,6 +27,7 @@ from app.obligations.schemas_v17 import (
     ObligationV17CreateRequest,
     ObligationV17OverviewResponse,
     ObligationV17Response,
+    ObligationV17UpdateRequest,
 )
 from app.obligations.service_v17 import ObligationV17Service
 from app.users.dependencies import CurrentUserProfile
@@ -42,41 +45,132 @@ def check_v17_feature_flag():
 
 
 def _map_obligation(obligation) -> ObligationV17Response:
-    from datetime import datetime
+    from datetime import UTC, datetime
+    from decimal import Decimal
+
+    ob_type = "one_time" if obligation.type == "one_time" else "recurring"
+    amount_type = obligation.amount_type
+    if not amount_type:
+        amount_type = (
+            "fixed"
+            if obligation.payment_mode in ("fixed", "fixed_full_payment", "partial_allowed")
+            else "variable"
+        )
 
     return ObligationV17Response(
         id=obligation.id,
         user_id=obligation.user_id,
         name=obligation.name,
+        description=obligation.description,
         currency=obligation.currency,
         amount=obligation.base_amount or Decimal("0"),
         status=obligation.status or "active",
-        obligation_type="recurring" if obligation.type == "indefinite" else "one_time",
+        obligation_type=ob_type,
         frequency=obligation.frequency,
-        amount_type=obligation.amount_type or "variable",
-        created_at=obligation.created_at or datetime.utcnow(),
-        updated_at=obligation.updated_at or datetime.utcnow(),
+        amount_type=amount_type,
+        start_date=obligation.start_date,
+        first_due_date=obligation.first_due_date,
+        due_day=obligation.due_day,
+        due_month=obligation.due_month,
+        interval_count=obligation.interval_count or 1,
+        end_date=obligation.end_date,
+        end_count=obligation.end_count,
+        metadata_=getattr(obligation, "metadata_", getattr(obligation, "metadata", {})),
+        created_at=obligation.created_at or datetime.now(UTC),
+        updated_at=obligation.updated_at or datetime.now(UTC),
     )
 
 
 def _map_obligation_period(period) -> ObligationPeriodV17Response:
-    from datetime import datetime
+    from datetime import UTC, datetime
     from decimal import Decimal
 
-    amt = period.amount or Decimal("0")
-    paid = period.paid_amount or Decimal("0")
-    # For pending_amount_definition, amount could be None, but handled as 0 here which is fine since the schema requires a string/decimal
+    today = financial_date()
+    start_d = getattr(period, "start_date", None)
+    end_d = getattr(period, "end_date", None)
+    due_d = getattr(period, "due_date", None)
+    seq = getattr(period, "sequence_number", None)
+
+    # Derived temporal flags
+    if start_d is not None and end_d is not None:
+        is_curr = start_d <= today <= end_d
+        is_fut = start_d > today
+    else:
+        is_curr = bool(getattr(period, "is_current", False))
+        is_fut = False
+
+    raw_status = period.status
+    raw_amount = getattr(period, "amount", None)
+    raw_paid = getattr(period, "paid_amount", None)
+    paid = raw_paid if raw_paid is not None else Decimal("0")
+
+    is_closed = raw_status in (
+        PeriodStatus.paid.value,
+        PeriodStatus.skipped.value,
+        PeriodStatus.cancelled.value,
+    )
+
+    req_def = raw_status == PeriodStatus.pending_amount_definition.value or (
+        raw_amount is None and not is_closed
+    )
+
+    if is_closed or is_fut:
+        is_od = False
+    elif due_d is not None:
+        is_od = due_d < today
+    else:
+        is_od = False
+
+    amt = raw_amount if raw_amount is not None else Decimal("0")
+    amt_due = max(Decimal("0"), amt - paid) if raw_amount is not None else Decimal("0")
+
     return ObligationPeriodV17Response(
         id=period.id,
         obligation_id=period.obligation_id,
-        due_date=period.due_date,
-        status=period.status,
-        is_current=period.is_current,
+        due_date=due_d,
+        status=raw_status,
+        is_current=is_curr,
+        is_future=is_fut,
+        is_overdue=is_od,
+        requires_amount_definition=req_def,
         amount=amt,
-        amount_due=max(Decimal("0"), amt - paid),
+        amount_due=amt_due,
         amount_paid=paid,
-        created_at=period.created_at or datetime.utcnow(),
-        updated_at=period.updated_at or datetime.utcnow(),
+        start_date=start_d,
+        end_date=end_d,
+        sequence_number=seq,
+        period_sequence=seq,
+        currency=getattr(period, "currency", None),
+        created_at=getattr(period, "created_at", None) or datetime.now(UTC),
+        updated_at=getattr(period, "updated_at", None) or datetime.now(UTC),
+    )
+
+
+def _map_payment(payment) -> ObligationPaymentV17Response:
+    from datetime import UTC, datetime
+
+    return ObligationPaymentV17Response(
+        id=payment.id,
+        obligation_id=payment.obligation_id,
+        obligation_period_id=payment.obligation_period_id,
+        user_id=payment.user_id,
+        account_id=getattr(payment, "account_id", None),
+        amount=payment.amount,
+        currency=getattr(payment, "currency", None),
+        source_amount=getattr(payment, "source_amount", None),
+        source_currency=getattr(payment, "source_currency", None),
+        fx_rate=getattr(payment, "fx_rate", None),
+        rate_source=getattr(payment, "rate_source", None),
+        rate_timestamp=getattr(payment, "rate_timestamp", None),
+        paid_at=getattr(payment, "paid_at", None),
+        quote_id=payment.quote_id,
+        rate_snapshot_id=getattr(payment, "rate_snapshot_id", None),
+        idempotency_key=payment.idempotency_key,
+        financial_event_id=getattr(payment, "financial_event_id", None),
+        channel="manual",
+        partial_context=getattr(payment, "partial_context", None),
+        created_at=payment.created_at or datetime.now(UTC),
+        updated_at=getattr(payment, "updated_at", payment.created_at) or datetime.now(UTC),
     )
 
 
@@ -217,18 +311,69 @@ async def get_obligation_v17(
     return _map_obligation(obligation)
 
 
+@router.patch(
+    "/{obligation_id}",
+    response_model=ObligationV17Response,
+    responses={
+        400: {"model": ApiErrorResponse},
+        403: {"model": ApiErrorResponse},
+        404: {"model": ApiErrorResponse},
+        422: {"model": ApiErrorResponse},
+    },
+    summary="Update Obligation (V1.7)",
+    dependencies=[Depends(check_v17_feature_flag)],
+)
+async def update_obligation_v17(
+    obligation_id: UUID,
+    data: ObligationV17UpdateRequest,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+):
+    """
+    Actualiza campos mutables de una obligación (nombre, descripción, metadata, base_amount para fijas, estado).
+    """
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = ObligationV17Service(session)
+        obligation = await service.update_obligation(current_profile.id, obligation_id, data)
+    return _map_obligation(obligation)
+
+
+@router.get(
+    "/{obligation_id}/payments",
+    response_model=ObligationPaymentsV17ListResponse,
+    responses={403: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}},
+    summary="List payments for an obligation (V1.7)",
+    dependencies=[Depends(check_v17_feature_flag)],
+)
+async def list_obligation_payments_v17(
+    obligation_id: UUID,
+    current_profile: CurrentUserProfile,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """
+    Historial paginado de pagos para una obligación específica.
+    """
+    service = ObligationV17Service(session)
+    return await service.list_payments_for_obligation(
+        current_profile.id, obligation_id, limit=limit, offset=offset
+    )
+
+
 @router.get(
     "/{obligation_id}/periods",
-    response_model=list[ObligationPeriodV17Response] | EmptyStateResponse,
+    response_model=list[ObligationPeriodV17Response],
     responses={403: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}},
     summary="List V1.7 obligation periods",
     description="Lists all periods for a specific obligation using V1.7 read semantics.",
+    dependencies=[Depends(check_v17_feature_flag)],
 )
 async def get_obligation_periods_v17(
     obligation_id: UUID,
     current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
-    _: None = Depends(check_v17_feature_flag),
 ):
     """
     Lista de periodos de una obligación V1.7.
@@ -240,29 +385,9 @@ async def get_obligation_periods_v17(
         raise HTTPException(status_code=404, detail="Obligation not found")
 
     if not periods:
-        return EmptyStateResponse(message="No periods found", items=[])
+        return []
 
-    mapped_periods = []
-    for p in periods:
-        from datetime import datetime
-
-        mapped_periods.append(
-            ObligationPeriodV17Response(
-                id=p.id,
-                obligation_id=p.obligation_id,
-                due_date=p.due_date,
-                status=p.status,
-                is_current=p.is_current,
-                amount=p.amount or Decimal("0"),
-                amount_due=max(
-                    Decimal("0"), (p.amount or Decimal("0")) - (p.paid_amount or Decimal("0"))
-                ),
-                amount_paid=p.paid_amount or Decimal("0"),
-                created_at=p.created_at or datetime.utcnow(),
-                updated_at=p.updated_at or datetime.utcnow(),
-            )
-        )
-    return mapped_periods
+    return [_map_obligation_period(p) for p in periods]
 
 
 @router.patch(
@@ -294,29 +419,20 @@ async def define_period_amount_v17(
             current_profile.id, obligation_id, period_id, data
         )
 
-    from datetime import datetime
-
-    return ObligationPeriodV17Response(
-        id=period.id,
-        obligation_id=period.obligation_id,
-        due_date=period.due_date,
-        status=period.status,
-        is_current=period.is_current,
-        amount=period.amount or Decimal("0"),
-        amount_due=max(
-            Decimal("0"), (period.amount or Decimal("0")) - (period.paid_amount or Decimal("0"))
-        ),
-        amount_paid=period.paid_amount or Decimal("0"),
-        created_at=period.created_at or datetime.utcnow(),
-        updated_at=period.updated_at or datetime.utcnow(),
-    )
+    return _map_obligation_period(period)
 
 
 @router.post(
     "/{obligation_id}/periods/{period_id}/payments/preview",
     response_model=ObligationPaymentPreviewV17Response,
-    responses={404: {"model": ApiErrorResponse}, 422: {"model": ApiErrorResponse}},
+    responses={
+        400: {"model": ApiErrorResponse},
+        404: {"model": ApiErrorResponse},
+        409: {"model": ApiErrorResponse},
+        422: {"model": ApiErrorResponse},
+    },
     summary="Preview a specific period payment (V1.7)",
+    dependencies=[Depends(check_v17_feature_flag)],
 )
 async def preview_pay_period_v17(
     obligation_id: UUID,
@@ -324,15 +440,16 @@ async def preview_pay_period_v17(
     data: ObligationPaymentPreviewV17Request,
     current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
-    _: None = Depends(check_v17_feature_flag),
 ):
     """
     Simula o previsualiza un pago para un periodo específico, retornando el tipo de cambio y los montos exactos requeridos.
     """
-    service = ObligationV17Service(session)
-    return await service.pay_preview_specific_period(
-        current_profile.id, obligation_id, period_id, data
-    )
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = ObligationV17Service(session)
+        return await service.pay_preview_specific_period(
+            current_profile.id, obligation_id, period_id, data
+        )
 
 
 @router.post(
@@ -368,35 +485,8 @@ async def create_period_payment_v17(
             current_profile.id, obligation_id, period_id, data
         )
 
-    from datetime import datetime
-
-    payment_response = ObligationPaymentV17Response(
-        id=payment.id,
-        obligation_id=payment.obligation_id,
-        obligation_period_id=payment.obligation_period_id,
-        user_id=payment.user_id,
-        amount=payment.amount,
-        quote_id=payment.quote_id,
-        idempotency_key=payment.idempotency_key,
-        created_at=payment.created_at or datetime.utcnow(),
-        updated_at=payment.created_at or datetime.utcnow(),
-    )
-
-    period_response = ObligationPeriodV17Response(
-        id=period.id,
-        obligation_id=period.obligation_id,
-        due_date=period.due_date,
-        status=period.status,
-        is_current=period.is_current,
-        amount=period.amount or Decimal("0"),
-        amount_due=max(
-            Decimal("0"), (period.amount or Decimal("0")) - (period.paid_amount or Decimal("0"))
-        ),
-        amount_paid=period.paid_amount or Decimal("0"),
-        created_at=period.created_at or datetime.utcnow(),
-        updated_at=period.updated_at or datetime.utcnow(),
-    )
-
+    payment_response = _map_payment(payment)
+    period_response = _map_obligation_period(period)
     return ObligationPeriodPaymentResultResponse(payment=payment_response, period=period_response)
 
 
@@ -433,41 +523,8 @@ async def create_obligation_payment_fifo_v17(
             current_profile.id, obligation_id, data
         )
 
-    from datetime import datetime
-
-    payment_responses = [
-        ObligationPaymentV17Response(
-            id=pay.id,
-            obligation_id=pay.obligation_id,
-            obligation_period_id=pay.obligation_period_id,
-            user_id=pay.user_id,
-            amount=pay.amount,
-            quote_id=pay.quote_id,
-            idempotency_key=pay.idempotency_key,
-            created_at=pay.created_at or datetime.utcnow(),
-            updated_at=pay.created_at or datetime.utcnow(),
-        )
-        for pay in payments
-    ]
-
-    period_responses = [
-        ObligationPeriodV17Response(
-            id=p.id,
-            obligation_id=p.obligation_id,
-            due_date=p.due_date,
-            status=p.status,
-            is_current=p.is_current,
-            amount=p.amount or Decimal("0"),
-            amount_due=max(
-                Decimal("0"), (p.amount or Decimal("0")) - (p.paid_amount or Decimal("0"))
-            ),
-            amount_paid=p.paid_amount or Decimal("0"),
-            created_at=p.created_at or datetime.utcnow(),
-            updated_at=p.updated_at or datetime.utcnow(),
-        )
-        for p in periods
-    ]
-
+    payment_responses = [_map_payment(pay) for pay in payments]
+    period_responses = [_map_obligation_period(p) for p in periods]
     return ObligationFIFOPaymentResultResponse(
         payments=payment_responses,
         periods=period_responses,
@@ -502,41 +559,8 @@ async def pay_obligation_smart(
             current_profile.id, obligation_id, data
         )
 
-    from datetime import datetime
-
-    payment_responses = [
-        ObligationPaymentV17Response(
-            id=pay.id,
-            obligation_id=pay.obligation_id,
-            obligation_period_id=pay.obligation_period_id,
-            user_id=pay.user_id,
-            amount=pay.amount,
-            quote_id=pay.quote_id,
-            idempotency_key=pay.idempotency_key,
-            created_at=pay.created_at or datetime.utcnow(),
-            updated_at=pay.created_at or datetime.utcnow(),
-        )
-        for pay in payments
-    ]
-
-    period_responses = [
-        ObligationPeriodV17Response(
-            id=p.id,
-            obligation_id=p.obligation_id,
-            due_date=p.due_date,
-            status=p.status,
-            is_current=p.is_current,
-            amount=p.amount or Decimal("0"),
-            amount_due=max(
-                Decimal("0"), (p.amount or Decimal("0")) - (p.paid_amount or Decimal("0"))
-            ),
-            amount_paid=p.paid_amount or Decimal("0"),
-            created_at=p.created_at or datetime.utcnow(),
-            updated_at=p.updated_at or datetime.utcnow(),
-        )
-        for p in periods
-    ]
-
+    payment_responses = [_map_payment(pay) for pay in payments]
+    period_responses = [_map_obligation_period(p) for p in periods]
     return ObligationFIFOPaymentResultResponse(
         payments=payment_responses,
         periods=period_responses,
@@ -569,22 +593,7 @@ async def skip_obligation_period(
             period_id=period_id,
             commit=False,
         )
-    from datetime import datetime
-
-    return ObligationPeriodV17Response(
-        id=period.id,
-        obligation_id=period.obligation_id,
-        due_date=period.due_date,
-        status=period.status,
-        is_current=period.is_current,
-        amount=period.amount or Decimal("0"),
-        amount_due=max(
-            Decimal("0"), (period.amount or Decimal("0")) - (period.paid_amount or Decimal("0"))
-        ),
-        amount_paid=period.paid_amount or Decimal("0"),
-        created_at=period.created_at or datetime.utcnow(),
-        updated_at=period.updated_at or datetime.utcnow(),
-    )
+    return _map_obligation_period(period)
 
 
 @router.post(
@@ -610,22 +619,7 @@ async def cancel_obligation_period(
             period_id=period_id,
             commit=False,
         )
-    from datetime import datetime
-
-    return ObligationPeriodV17Response(
-        id=period.id,
-        obligation_id=period.obligation_id,
-        due_date=period.due_date,
-        status=period.status,
-        is_current=period.is_current,
-        amount=period.amount or Decimal("0"),
-        amount_due=max(
-            Decimal("0"), (period.amount or Decimal("0")) - (period.paid_amount or Decimal("0"))
-        ),
-        amount_paid=period.paid_amount or Decimal("0"),
-        created_at=period.created_at or datetime.utcnow(),
-        updated_at=period.updated_at or datetime.utcnow(),
-    )
+    return _map_obligation_period(period)
 
 
 @router.post(
@@ -650,25 +644,7 @@ async def refresh_overdue_periods(
             commit=False,
         )
 
-    from datetime import datetime
-
-    response_periods = [
-        ObligationPeriodV17Response(
-            id=p.id,
-            obligation_id=p.obligation_id,
-            due_date=p.due_date,
-            status=p.status,
-            is_current=p.is_current,
-            amount=p.amount or Decimal("0"),
-            amount_due=max(
-                Decimal("0"), (p.amount or Decimal("0")) - (p.paid_amount or Decimal("0"))
-            ),
-            amount_paid=p.paid_amount or Decimal("0"),
-            created_at=p.created_at or datetime.utcnow(),
-            updated_at=p.updated_at or datetime.utcnow(),
-        )
-        for p in updated_periods
-    ]
+    response_periods = [_map_obligation_period(p) for p in updated_periods]
 
     return ObligationPeriodRefreshOverdueResponse(
         updated_periods=response_periods, updated_count=count
@@ -681,13 +657,15 @@ async def refresh_overdue_periods(
     responses={403: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}},
     summary="Get V1.7 obligation payment by ID",
     description="Gets a specific obligation payment by ID using V1.7 read semantics.",
+    dependencies=[Depends(check_v17_feature_flag)],
 )
 async def get_obligation_payment_v17(
     payment_id: UUID,
+    current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
-    _: None = Depends(check_v17_feature_flag),
 ):
     """
     Obtiene un pago específico V1.7.
     """
-    raise HTTPException(status_code=404, detail="Payment not found")
+    service = ObligationV17Service(session)
+    return await service.get_payment(current_profile.id, payment_id)
