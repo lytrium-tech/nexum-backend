@@ -84,3 +84,27 @@ def test_fresh_empty_database_includes_v1_5_baseline_in_upgrade_path():
     assert all_revisions[1] == "v1_7_phase2_1"
     assert all_revisions[-1] == "obligations_v1_7_auto_payments"
     assert len(all_revisions) == 10
+
+
+def test_prior_head_to_new_head_upgrade_and_downgrade_resolution():
+    """Verify that upgrading from prior head (goals_v1_9_auto_contributions) to HEAD
+
+    resolves strictly to obligations_v1_7_auto_payments, and downgrading resolves back.
+    """
+    script_dir = get_script_directory()
+
+    # Upgrade step resolution
+    steps = script_dir._upgrade_revs(
+        destination="head", current_rev="goals_v1_9_auto_contributions"
+    )
+    upgrade_revisions = [step.revision.revision for step in steps]
+    assert len(upgrade_revisions) == 1
+    assert upgrade_revisions[0] == "obligations_v1_7_auto_payments"
+
+    # Downgrade step resolution
+    down_steps = script_dir._downgrade_revs(
+        destination="goals_v1_9_auto_contributions", current_rev="obligations_v1_7_auto_payments"
+    )
+    downgrade_revisions = [step.revision.revision for step in down_steps]
+    assert len(downgrade_revisions) == 1
+    assert downgrade_revisions[0] == "obligations_v1_7_auto_payments"

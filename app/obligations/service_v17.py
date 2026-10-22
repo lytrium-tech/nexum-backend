@@ -728,7 +728,11 @@ class ObligationV17Service:
             ObligationPayment.user_id == user_id,
             ObligationPayment.idempotency_key == data.idempotency_key,
         )
-        existing_pay_key = (await self.session.execute(stmt_pay_key)).scalars().first()
+        existing_pay_key = (
+            (await self.session.execute(stmt_pay_key)).scalars().first()
+            if override_command_id is None
+            else None
+        )
         if existing_pay_key:
             validate_idempotency_fingerprint(
                 None,
@@ -801,7 +805,11 @@ class ObligationV17Service:
             ObligationPayment.user_id == user_id,
             ObligationPayment.idempotency_key == data.idempotency_key,
         )
-        existing_pay_key = (await self.session.execute(stmt_pay_key)).scalars().first()
+        existing_pay_key = (
+            (await self.session.execute(stmt_pay_key)).scalars().first()
+            if override_command_id is None
+            else None
+        )
         if existing_pay_key:
             validate_idempotency_fingerprint(
                 None,

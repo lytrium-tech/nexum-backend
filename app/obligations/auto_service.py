@@ -223,10 +223,12 @@ class ObligationAutoPaymentService:
                     summary=summary,
                 )
             except Exception as exc:
+                cfg_id = config.id
+                obl_id = config.obligation_id
                 logger.error(
                     "auto_payment_config_processing_failed",
-                    config_id=str(config.id),
-                    obligation_id=str(config.obligation_id),
+                    config_id=str(cfg_id),
+                    obligation_id=str(obl_id),
                     error_type=type(exc).__name__,
                 )
                 summary.technical_failures += 1
@@ -240,6 +242,8 @@ class ObligationAutoPaymentService:
                     now_utc=now_utc,
                     next_canonical_day=next_canonical_day,
                     session_factory=session_factory,
+                    config_id=cfg_id,
+                    obligation_id=obl_id,
                 )
 
         return summary
@@ -576,7 +580,6 @@ class ObligationAutoPaymentService:
             source_account_id=account.id,
             source_currency=account.currency,
             rate_snapshot_id=rate_snapshot_id,
-            idempotency_key=f"auto:{obligation.id}:{period.id}",
         )
         payment, _ = await self.v17_service.pay_specific_period(
             user_id=config.user_id,
@@ -619,8 +622,13 @@ class ObligationAutoPaymentService:
         next_canonical_day: datetime,
         session_factory: Any | None,
         period_id: UUID | None = None,
+        *,
+        config_id: UUID | None = None,
+        obligation_id: UUID | None = None,
     ) -> None:
-        attempt_key = f"{config.id}:{period_id or 'none'}:{canonical_today.isoformat()}"
+        target_config_id = config_id if config_id is not None else config.id
+        target_obligation_id = obligation_id if obligation_id is not None else config.obligation_id
+        attempt_key = f"{target_config_id}:{period_id or 'none'}:{canonical_today.isoformat()}"
         run_id = uuid.uuid5(uuid.NAMESPACE_OID, f"auto_run:{attempt_key}")
 
         session_ctx = None
@@ -635,7 +643,7 @@ class ObligationAutoPaymentService:
             # 1. Lock config in fresh transaction
             cfg_stmt = (
                 select(ObligationAutoPaymentConfig)
-                .where(ObligationAutoPaymentConfig.id == config.id)
+                .where(ObligationAutoPaymentConfig.id == target_config_id)
                 .with_for_update()
             )
             fresh_config = (await fresh_session.execute(cfg_stmt)).scalars().first()
@@ -644,7 +652,7 @@ class ObligationAutoPaymentService:
 
             # 2. Check for concurrent winner or existing run for this attempt
             winner_stmt = select(ObligationAutoPaymentRun).where(
-                ObligationAutoPaymentRun.config_id == config.id,
+                ObligationAutoPaymentRun.config_id == target_config_id,
                 ObligationAutoPaymentRun.canonical_date == canonical_today,
             )
             existing_runs = (await fresh_session.execute(winner_stmt)).scalars().all()
@@ -657,8 +665,8 @@ class ObligationAutoPaymentService:
 
             failed_run = ObligationAutoPaymentRun(
                 id=run_id,
-                config_id=config.id,
-                obligation_id=config.obligation_id,
+                config_id=target_config_id,
+                obligation_id=target_obligation_id,
                 obligation_period_id=period_id,
                 attempt_key=attempt_key,
                 canonical_date=canonical_today,

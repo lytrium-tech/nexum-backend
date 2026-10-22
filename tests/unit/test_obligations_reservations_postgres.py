@@ -11,14 +11,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.accounts.models import Account
-from app.goals.enums import GoalTransactionType
-from app.goals.models import Goal, GoalTransaction
+from app.accounts.repository import AccountRepository
+from app.cash.exceptions import InsufficientFundsError
+from app.goals.repository import GoalRepository
+from app.goals.schemas import GoalContributionCreate
+from app.goals.service import GoalService
 from app.ledger.enums import Direction, EventType
 from app.ledger.models import FinancialEvent
+from app.ledger.repository import LedgerRepository
 from app.ledger.service import generate_period_for_bogota
 from app.obligations.enums_v17 import PeriodStatus
 from app.obligations.models import (
+    Obligation,
     ObligationPayment,
+    ObligationPeriod,
 )
 from app.obligations.schemas_v17 import (
     ObligationFIFOPaymentCreateRequest,
@@ -26,7 +32,11 @@ from app.obligations.schemas_v17 import (
 )
 from app.obligations.service import ObligationService
 from app.obligations.service_v17 import ObligationV17Service
-from tests.unit.postgres_helpers import GateFixture
+from tests.unit.postgres_helpers import (
+    GateFixture,
+    get_session_backend_pid,
+    wait_for_blocked,
+)
 
 
 def get_db_url():
@@ -497,8 +507,7 @@ async def test_pg12_ledger_failure_after_debit(session: AsyncSession, fixture: G
     assert len(pay_count) == 0
 
 
-# --- PG13 — CONCURRENT DOUBLE SPEND ---
-# --- PG13 — CONCURRENT DOUBLE SPEND DETERMINISTIC (SPECIFIC PERIOD) ---
+# --- PG13 — CONCURRENT DOUBLE SPEND (SPECIFIC PERIOD) ---
 @pytest.mark.asyncio
 async def test_pg13_concurrent_double_spend(engine, fixture: GateFixture):
     fixture.account.balance = Decimal("1000")
@@ -513,54 +522,113 @@ async def test_pg13_concurrent_double_spend(engine, fixture: GateFixture):
         amount=Decimal("400"), source_account_id=fixture.account.id, idempotency_key="req2-key"
     )
 
-    worker2_preloaded = asyncio.Event()
-    worker1_committed = asyncio.Event()
+    worker1_locked = asyncio.Event()
+    worker1_proceed = asyncio.Event()
+    worker1_pid_val: list[int] = []
+    worker2_pid_ready = asyncio.Event()
+    worker2_pid_val: list[int] = []
 
     async def worker1():
-        await asyncio.wait_for(worker2_preloaded.wait(), timeout=60.0)
         async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with async_session() as s:
-            svc = ObligationV17Service(s)
+        async with async_session() as s1:
+            pid1 = await get_session_backend_pid(s1)
+            worker1_pid_val.append(pid1)
+            # Hold lock on Obligation root (canonical root -> period -> account lock hierarchy)
+            stmt = select(Obligation).where(Obligation.id == obl.id).with_for_update()
+            await s1.execute(stmt)
+            worker1_locked.set()
+
+            # Wait until observer confirms worker2 is physically blocked on our PID
+            await asyncio.wait_for(worker1_proceed.wait(), timeout=10.0)
+
+            svc = ObligationV17Service(s1)
             try:
                 await svc.pay_specific_period(fixture.user.id, obl.id, periods[0].id, req1)
-                await s.commit()
-                worker1_committed.set()
+                await s1.commit()
                 return True
             except HTTPException:
-                worker1_committed.set()
+                await s1.rollback()
                 return False
 
     async def worker2():
+        await asyncio.wait_for(worker1_locked.wait(), timeout=10.0)
         async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with async_session() as s:
-            svc = ObligationV17Service(s)
-            preloaded_acc = await svc.account_repo.get_by_id(fixture.account.id)
-            assert preloaded_acc.balance == Decimal("1000")
-            worker2_preloaded.set()
+        async with async_session() as s2:
+            pid2 = await get_session_backend_pid(s2)
+            worker2_pid_val.append(pid2)
+            worker2_pid_ready.set()
 
-            await asyncio.wait_for(worker1_committed.wait(), timeout=60.0)
-
+            svc = ObligationV17Service(s2)
             try:
                 await svc.pay_specific_period(fixture.user.id, obl.id, periods[1].id, req2)
-                await s.commit()
+                await s2.commit()
                 return True
             except HTTPException as e:
                 assert e.status_code == 400
                 assert e.detail == "insufficient_balance"
+                await s2.rollback()
                 return False
 
-    results = await asyncio.gather(worker1(), worker2())
+    async def observer():
+        await asyncio.wait_for(worker2_pid_ready.wait(), timeout=10.0)
+        pid2 = worker2_pid_val[0]
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as s3:
+            await wait_for_blocked(
+                s3, blocked_pid=pid2, blocking_pid=worker1_pid_val[0], timeout=5.0
+            )
+            worker1_proceed.set()
 
-    assert results[0] is True
-    assert results[1] is False
+    task1 = asyncio.create_task(worker1())
+    task2 = asyncio.create_task(worker2())
+    task_obs = asyncio.create_task(observer())
 
+    res1, res2, _ = await asyncio.gather(task1, task2, task_obs)
+    assert res1 is True
+    assert res2 is False
+
+    # Observe final state from a fresh third session
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with async_session() as s:
         acc = await s.get(Account, fixture.account.id)
         assert acc.balance == Decimal("600")
 
+        p0 = await s.get(ObligationPeriod, periods[0].id)
+        p1 = await s.get(ObligationPeriod, periods[1].id)
+        assert p0.paid_amount == Decimal("400")
+        assert p0.status == PeriodStatus.paid.value
+        assert p1.paid_amount == Decimal("0")
+        assert p1.status == PeriodStatus.pending_payment.value
 
-# --- PG13b — CONCURRENT FIFO DOUBLE SPEND DETERMINISTIC ---
+        payments = (
+            (
+                await s.execute(
+                    select(ObligationPayment).where(ObligationPayment.user_id == fixture.user_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(payments) == 1
+        assert payments[0].amount == Decimal("400")
+
+        events = (
+            (
+                await s.execute(
+                    select(FinancialEvent).where(
+                        FinancialEvent.user_id == fixture.user_id,
+                        FinancialEvent.event_type == EventType.OBLIGATION_PAYMENT.value,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(events) == 1
+        assert events[0].amount == Decimal("400")
+
+
+# --- PG13b — CONCURRENT FIFO DOUBLE SPEND (GENUINE OVERLAP) ---
 @pytest.mark.asyncio
 async def test_pg13b_concurrent_fifo_double_spend(engine, fixture: GateFixture):
     fixture.account.balance = Decimal("1000")
@@ -579,57 +647,100 @@ async def test_pg13b_concurrent_fifo_double_spend(engine, fixture: GateFixture):
         idempotency_key="fifo-req2-key",
     )
 
-    worker2_preloaded = asyncio.Event()
-    worker1_committed = asyncio.Event()
+    worker1_locked = asyncio.Event()
+    worker1_proceed = asyncio.Event()
+    worker1_pid_val: list[int] = []
+    worker2_pid_ready = asyncio.Event()
+    worker2_pid_val: list[int] = []
 
     async def worker1():
-        await asyncio.wait_for(worker2_preloaded.wait(), timeout=60.0)
         async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with async_session() as s:
-            svc = ObligationV17Service(s)
+        async with async_session() as s1:
+            pid1 = await get_session_backend_pid(s1)
+            worker1_pid_val.append(pid1)
+            # Hold lock on Obligation root (canonical root -> period -> account lock hierarchy)
+            stmt = select(Obligation).where(Obligation.id == obl.id).with_for_update()
+            await s1.execute(stmt)
+            worker1_locked.set()
+
+            await asyncio.wait_for(worker1_proceed.wait(), timeout=10.0)
+
+            svc = ObligationV17Service(s1)
             try:
                 await svc.pay_obligation_fifo(fixture.user.id, obl.id, req1)
-                await s.commit()
-                worker1_committed.set()
+                await s1.commit()
                 return True
             except HTTPException:
-                worker1_committed.set()
+                await s1.rollback()
                 return False
 
     async def worker2():
+        await asyncio.wait_for(worker1_locked.wait(), timeout=10.0)
         async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with async_session() as s:
-            svc = ObligationV17Service(s)
-            preloaded_acc = await svc.account_repo.get_by_id(fixture.account.id)
-            assert preloaded_acc.balance == Decimal("1000")
-            worker2_preloaded.set()
+        async with async_session() as s2:
+            pid2 = await get_session_backend_pid(s2)
+            worker2_pid_val.append(pid2)
+            worker2_pid_ready.set()
 
-            await asyncio.wait_for(worker1_committed.wait(), timeout=60.0)
-
+            svc = ObligationV17Service(s2)
             try:
                 await svc.pay_obligation_fifo(fixture.user.id, obl.id, req2)
-                await s.commit()
+                await s2.commit()
                 return True
             except HTTPException as e:
                 assert e.status_code == 400
                 assert e.detail == "insufficient_balance"
+                await s2.rollback()
                 return False
 
-    results = await asyncio.gather(worker1(), worker2())
+    async def observer():
+        await asyncio.wait_for(worker2_pid_ready.wait(), timeout=10.0)
+        pid2 = worker2_pid_val[0]
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as s3:
+            await wait_for_blocked(
+                s3, blocked_pid=pid2, blocking_pid=worker1_pid_val[0], timeout=5.0
+            )
+            worker1_proceed.set()
 
-    assert results[0] is True
-    assert results[1] is False
+    task1 = asyncio.create_task(worker1())
+    task2 = asyncio.create_task(worker2())
+    task_obs = asyncio.create_task(observer())
+
+    res1, res2, _ = await asyncio.gather(task1, task2, task_obs)
+    assert res1 is True
+    assert res2 is False
 
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with async_session() as s:
         acc = await s.get(Account, fixture.account.id)
         assert acc.balance == Decimal("600")
 
+        p0 = await s.get(ObligationPeriod, periods[0].id)
+        p1 = await s.get(ObligationPeriod, periods[1].id)
+        assert p0.paid_amount == Decimal("400")
+        assert p0.status == PeriodStatus.paid.value
+        assert p1.paid_amount == Decimal("0")
+        assert p1.status == PeriodStatus.pending_payment.value
+
+        payments = (
+            (
+                await s.execute(
+                    select(ObligationPayment).where(ObligationPayment.user_id == fixture.user_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(payments) == 1
+        assert payments[0].amount == Decimal("400")
+
 
 # --- PG13c — DIRECT STALE IDENTITY MAP REFRESH TEST ---
 @pytest.mark.asyncio
 async def test_pg13c_stale_identity_map_refresh(engine, fixture: GateFixture):
     fixture.account.balance = Decimal("1000")
+    obl, periods = await fixture.add_obligation(Decimal("500"), periods=1)
     await fixture.commit()
 
     from app.accounts.repository import AccountRepository
@@ -643,15 +754,30 @@ async def test_pg13c_stale_identity_map_refresh(engine, fixture: GateFixture):
         async with async_session() as s2:
             repo2 = AccountRepository(s2)
             acc2 = await repo2.get_by_id_for_update(fixture.account.id)
-            await repo2.update_balance(acc2, Decimal("-400"))
+            await repo2.update_balance(acc2, Decimal("-600"))
             await s2.commit()
 
-        acc_locked = await repo1.get_by_id_for_update(fixture.account.id)
-        assert acc_locked.balance == Decimal("600")
-        assert acc_preloaded.balance == Decimal("600")
+        # s1 attempts to pay 500; populate_existing refreshes balance to 400 < 500
+        svc1 = ObligationV17Service(s1)
+        req = ObligationPeriodPaymentCreateRequest(
+            amount=Decimal("500"),
+            source_account_id=fixture.account.id,
+            idempotency_key="stale-test-key",
+        )
+        with pytest.raises(HTTPException) as exc:
+            await svc1.pay_specific_period(fixture.user.id, obl.id, periods[0].id, req)
+
+        assert exc.value.status_code == 400
+        assert exc.value.detail == "insufficient_balance"
+
+    async with async_session() as s3:
+        acc = await s3.get(Account, fixture.account.id)
+        assert acc.balance == Decimal("400")
+        p = await s3.get(ObligationPeriod, periods[0].id)
+        assert p.paid_amount == Decimal("0")
 
 
-# --- PG13d — CONCURRENT SMART PAYMENT DOUBLE SPEND DETERMINISTIC ---
+# --- PG13d — CONCURRENT SMART PAYMENT DOUBLE SPEND (GENUINE OVERLAP) ---
 @pytest.mark.asyncio
 async def test_pg13d_concurrent_smart_double_spend(engine, fixture: GateFixture):
     fixture.account.balance = Decimal("1000")
@@ -670,157 +796,392 @@ async def test_pg13d_concurrent_smart_double_spend(engine, fixture: GateFixture)
         idempotency_key="smart-req2-key",
     )
 
-    worker2_preloaded = asyncio.Event()
-    worker1_committed = asyncio.Event()
+    worker1_locked = asyncio.Event()
+    worker1_proceed = asyncio.Event()
+    worker1_pid_val: list[int] = []
+    worker2_pid_ready = asyncio.Event()
+    worker2_pid_val: list[int] = []
 
     async def worker1():
-        await asyncio.wait_for(worker2_preloaded.wait(), timeout=60.0)
         async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with async_session() as s:
-            svc = ObligationV17Service(s)
+        async with async_session() as s1:
+            pid1 = await get_session_backend_pid(s1)
+            worker1_pid_val.append(pid1)
+            # Hold lock on Obligation root (canonical root -> period -> account lock hierarchy)
+            stmt = select(Obligation).where(Obligation.id == obl.id).with_for_update()
+            await s1.execute(stmt)
+            worker1_locked.set()
+
+            await asyncio.wait_for(worker1_proceed.wait(), timeout=10.0)
+
+            svc = ObligationV17Service(s1)
             try:
                 await svc.pay_obligation_smart(fixture.user.id, obl.id, req1)
-                await s.commit()
-                worker1_committed.set()
+                await s1.commit()
                 return True
             except HTTPException:
-                worker1_committed.set()
+                await s1.rollback()
                 return False
 
     async def worker2():
+        await asyncio.wait_for(worker1_locked.wait(), timeout=10.0)
         async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with async_session() as s:
-            svc = ObligationV17Service(s)
-            preloaded_acc = await svc.account_repo.get_by_id(fixture.account.id)
-            assert preloaded_acc.balance == Decimal("1000")
-            worker2_preloaded.set()
+        async with async_session() as s2:
+            pid2 = await get_session_backend_pid(s2)
+            worker2_pid_val.append(pid2)
+            worker2_pid_ready.set()
 
-            await asyncio.wait_for(worker1_committed.wait(), timeout=60.0)
-
+            svc = ObligationV17Service(s2)
             try:
                 await svc.pay_obligation_smart(fixture.user.id, obl.id, req2)
-                await s.commit()
+                await s2.commit()
                 return True
             except HTTPException as e:
                 assert e.status_code == 400
                 assert e.detail == "insufficient_balance"
+                await s2.rollback()
                 return False
 
-    results = await asyncio.gather(worker1(), worker2())
+    async def observer():
+        await asyncio.wait_for(worker2_pid_ready.wait(), timeout=10.0)
+        pid2 = worker2_pid_val[0]
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as s3:
+            await wait_for_blocked(
+                s3, blocked_pid=pid2, blocking_pid=worker1_pid_val[0], timeout=5.0
+            )
+            worker1_proceed.set()
 
-    assert results[0] is True
-    assert results[1] is False
+    task1 = asyncio.create_task(worker1())
+    task2 = asyncio.create_task(worker2())
+    task_obs = asyncio.create_task(observer())
+
+    res1, res2, _ = await asyncio.gather(task1, task2, task_obs)
+    assert res1 is True
+    assert res2 is False
 
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with async_session() as s:
         acc = await s.get(Account, fixture.account.id)
         assert acc.balance == Decimal("600")
 
+        p0 = await s.get(ObligationPeriod, periods[0].id)
+        assert p0.paid_amount == Decimal("400")
+        assert p0.status == PeriodStatus.paid.value
 
-# --- PG14 — CONCURRENT GOAL RESERVATION VS OBLIGATION DETERMINISTIC ---
+
+# --- PG13e — CONCURRENT SPECIFIC VS FIFO DOUBLE SPEND ---
 @pytest.mark.asyncio
-async def test_pg14_concurrent_goal_reservation_vs_obligation(engine, fixture: GateFixture):
+async def test_pg13e_concurrent_specific_vs_fifo_double_spend(engine, fixture: GateFixture):
     fixture.account.balance = Decimal("1000")
-    await fixture.add_goal_reservation(Decimal("200"))
-    obl, periods = await fixture.add_obligation(Decimal("400"))
+    await fixture.add_goal_reservation(Decimal("400"))
+    obl, periods = await fixture.add_obligation(Decimal("400"), periods=2)
     await fixture.commit()
 
-    req = ObligationPeriodPaymentCreateRequest(
-        amount=Decimal("400"), source_account_id=fixture.account.id, idempotency_key="test-key"
+    req_specific = ObligationPeriodPaymentCreateRequest(
+        amount=Decimal("400"),
+        source_account_id=fixture.account.id,
+        idempotency_key="spec-vs-fifo-spec",
+    )
+    req_fifo = ObligationFIFOPaymentCreateRequest(
+        amount=Decimal("400"),
+        source_account_id=fixture.account.id,
+        idempotency_key="spec-vs-fifo-fifo",
     )
 
-    payment_preloaded = asyncio.Event()
-    goal_committed = asyncio.Event()
+    worker1_locked = asyncio.Event()
+    worker1_proceed = asyncio.Event()
+    worker1_pid_val: list[int] = []
+    worker2_pid_ready = asyncio.Event()
+    worker2_pid_val: list[int] = []
 
-    async def worker_payment():
+    async def worker1():
         async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with async_session() as s:
-            svc = ObligationV17Service(s)
-            preloaded_acc = await svc.account_repo.get_by_id(fixture.account.id)
-            assert preloaded_acc.balance == Decimal("1000")
-            payment_preloaded.set()
+        async with async_session() as s1:
+            pid1 = await get_session_backend_pid(s1)
+            worker1_pid_val.append(pid1)
+            # Hold lock on Obligation root (canonical root -> period -> account lock hierarchy)
+            stmt = select(Obligation).where(Obligation.id == obl.id).with_for_update()
+            await s1.execute(stmt)
+            worker1_locked.set()
 
-            await asyncio.wait_for(goal_committed.wait(), timeout=60.0)
+            await asyncio.wait_for(worker1_proceed.wait(), timeout=10.0)
 
+            svc = ObligationV17Service(s1)
             try:
-                await svc.pay_specific_period(fixture.user.id, obl.id, periods[0].id, req)
-                await s.commit()
+                await svc.pay_specific_period(fixture.user.id, obl.id, periods[0].id, req_specific)
+                await s1.commit()
+                return True
+            except HTTPException:
+                await s1.rollback()
+                return False
+
+    async def worker2():
+        await asyncio.wait_for(worker1_locked.wait(), timeout=10.0)
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as s2:
+            pid2 = await get_session_backend_pid(s2)
+            worker2_pid_val.append(pid2)
+            worker2_pid_ready.set()
+
+            svc = ObligationV17Service(s2)
+            try:
+                await svc.pay_obligation_fifo(fixture.user.id, obl.id, req_fifo)
+                await s2.commit()
                 return True
             except HTTPException as e:
                 assert e.status_code == 400
                 assert e.detail == "insufficient_balance"
+                await s2.rollback()
                 return False
 
-    async def worker_goal():
-        await asyncio.wait_for(payment_preloaded.wait(), timeout=60.0)
+    async def observer():
+        await asyncio.wait_for(worker2_pid_ready.wait(), timeout=10.0)
+        pid2 = worker2_pid_val[0]
         async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with async_session() as s:
+        async with async_session() as s3:
+            await wait_for_blocked(
+                s3, blocked_pid=pid2, blocking_pid=worker1_pid_val[0], timeout=5.0
+            )
+            worker1_proceed.set()
+
+    task1 = asyncio.create_task(worker1())
+    task2 = asyncio.create_task(worker2())
+    task_obs = asyncio.create_task(observer())
+
+    res1, res2, _ = await asyncio.gather(task1, task2, task_obs)
+    assert res1 is True
+    assert res2 is False
+
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with async_session() as s:
+        acc = await s.get(Account, fixture.account.id)
+        assert acc.balance == Decimal("600")
+        p0 = await s.get(ObligationPeriod, periods[0].id)
+        assert p0.paid_amount == Decimal("400")
+
+
+# --- PG14a — CONCURRENT GOAL RESERVATION WINNER VS OBLIGATION LOSER ---
+@pytest.mark.asyncio
+async def test_pg14a_concurrent_goal_winner_vs_obligation_loser(engine, fixture: GateFixture):
+    fixture.account.balance = Decimal("1000")
+    g, tx = await fixture.add_goal_reservation(Decimal("200"))
+    obl, periods = await fixture.add_obligation(Decimal("500"))
+    await fixture.commit()
+
+    req_payment = ObligationPeriodPaymentCreateRequest(
+        amount=Decimal("500"),
+        source_account_id=fixture.account.id,
+        idempotency_key="goal-win-pay-lose",
+    )
+    goal_payload = GoalContributionCreate(
+        account_id=fixture.account.id,
+        amount=Decimal("500"),
+    )
+
+    worker1_locked = asyncio.Event()
+    worker1_proceed = asyncio.Event()
+    worker1_pid_val: list[int] = []
+    worker2_pid_ready = asyncio.Event()
+    worker2_pid_val: list[int] = []
+
+    async def worker_goal_winner():
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as s1:
+            pid1 = await get_session_backend_pid(s1)
+            worker1_pid_val.append(pid1)
+            # Hold lock on account
+            stmt = select(Account).where(Account.id == fixture.account.id).with_for_update()
+            await s1.execute(stmt)
+            worker1_locked.set()
+
+            await asyncio.wait_for(worker1_proceed.wait(), timeout=10.0)
+
+            goal_svc = GoalService(
+                repository=GoalRepository(s1),
+                account_repo=AccountRepository(s1),
+                ledger_repo=LedgerRepository(s1),
+            )
             try:
-                stmt = select(Account).where(Account.id == fixture.account.id).with_for_update()
-                res = await s.execute(stmt)
-                acc = res.scalars().first()
-
-                from app.goals.repository import GoalRepository
-
-                repo = GoalRepository(s)
-                reserved = await repo.calculate_reserved_by_account(acc.id, fixture.user.id)
-                available = acc.balance - reserved
-                if available < Decimal("500"):
-                    goal_committed.set()
-                    return False
-
-                goal = Goal(
-                    id=uuid.uuid4(),
-                    user_id=fixture.user_id,
-                    name=f"Gate Goal {uuid.uuid4()}",
-                    target_amount=Decimal("1000"),
-                    current_amount=Decimal("500"),
-                    currency="USD",
-                    status="active",
+                await goal_svc.create_contribution(
+                    auth_user_id=fixture.user.id,
+                    goal_id=g.id,
+                    payload=goal_payload,
+                    idempotency_key=str(uuid.uuid4()),
                 )
-                fe = FinancialEvent(
-                    id=uuid.uuid4(),
-                    user_id=fixture.user_id,
-                    account_id=acc.id,
-                    event_type="goal_contribution",
-                    direction="outflow",
-                    amount=Decimal("500"),
-                    currency="USD",
-                    command_id=uuid.uuid4(),
-                )
-                s.add_all([goal, fe])
-                await s.flush()
-
-                tx = GoalTransaction(
-                    id=uuid.uuid4(),
-                    goal_id=goal.id,
-                    user_id=fixture.user_id,
-                    account_id=acc.id,
-                    event_id=fe.id,
-                    transaction_type=GoalTransactionType.allocation.value,
-                    applied_amount=Decimal("500"),
-                    source_amount=Decimal("500"),
-                    source_currency="USD",
-                    goal_currency="USD",
-                )
-                s.add(tx)
-                await s.commit()
-                goal_committed.set()
+                await s1.commit()
                 return True
             except Exception:
-                import traceback
-
-                traceback.print_exc()
-                await s.rollback()
-                goal_committed.set()
+                await s1.rollback()
                 return False
 
-    results = await asyncio.gather(worker_payment(), worker_goal())
+    async def worker_obligation_loser():
+        await asyncio.wait_for(worker1_locked.wait(), timeout=10.0)
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as s2:
+            pid2 = await get_session_backend_pid(s2)
+            worker2_pid_val.append(pid2)
+            worker2_pid_ready.set()
 
-    # Goal succeeds first with 500 reservation (total reserved becomes 700)
-    # Payment sees available 1000 - 700 = 300 < 400 and fails
-    assert results[1] is True  # Goal succeeded
-    assert results[0] is False  # Payment failed
+            svc = ObligationV17Service(s2)
+            try:
+                await svc.pay_specific_period(fixture.user.id, obl.id, periods[0].id, req_payment)
+                await s2.commit()
+                return True
+            except HTTPException as e:
+                assert e.status_code == 400
+                assert e.detail == "insufficient_balance"
+                await s2.rollback()
+                return False
+
+    async def observer():
+        await asyncio.wait_for(worker2_pid_ready.wait(), timeout=10.0)
+        pid2 = worker2_pid_val[0]
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as s3:
+            await wait_for_blocked(
+                s3, blocked_pid=pid2, blocking_pid=worker1_pid_val[0], timeout=5.0
+            )
+            worker1_proceed.set()
+
+    task1 = asyncio.create_task(worker_goal_winner())
+    task2 = asyncio.create_task(worker_obligation_loser())
+    task_obs = asyncio.create_task(observer())
+
+    res_goal, res_obl, _ = await asyncio.gather(task1, task2, task_obs)
+    assert res_goal is True
+    assert res_obl is False
+
+    # Observe from third session
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with async_session() as s3:
+        acc = await s3.get(Account, fixture.account.id)
+        assert acc.balance == Decimal("1000")
+        goal_repo = GoalRepository(s3)
+        reserved = await goal_repo.calculate_reserved_by_account(
+            fixture.account.id, fixture.user.id
+        )
+        assert reserved == Decimal("700")  # 200 initial + 500 contributed
+
+        p0 = await s3.get(ObligationPeriod, periods[0].id)
+        assert p0.paid_amount == Decimal("0")
+        assert p0.status == PeriodStatus.pending_payment.value
+
+        obl_payments = (
+            (
+                await s3.execute(
+                    select(ObligationPayment).where(ObligationPayment.user_id == fixture.user_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(obl_payments) == 0
+
+
+# --- PG14b — CONCURRENT OBLIGATION WINNER VS GOAL LOSER ---
+@pytest.mark.asyncio
+async def test_pg14b_concurrent_obligation_winner_vs_goal_loser(engine, fixture: GateFixture):
+    fixture.account.balance = Decimal("1000")
+    g, tx = await fixture.add_goal_reservation(Decimal("200"))
+    obl, periods = await fixture.add_obligation(Decimal("500"))
+    await fixture.commit()
+
+    req_payment = ObligationPeriodPaymentCreateRequest(
+        amount=Decimal("500"),
+        source_account_id=fixture.account.id,
+        idempotency_key="obl-win-goal-lose",
+    )
+    goal_payload = GoalContributionCreate(
+        account_id=fixture.account.id,
+        amount=Decimal("500"),
+    )
+
+    worker1_locked = asyncio.Event()
+    worker1_proceed = asyncio.Event()
+    worker1_pid_val: list[int] = []
+    worker2_pid_ready = asyncio.Event()
+    worker2_pid_val: list[int] = []
+
+    async def worker_obligation_winner():
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as s1:
+            pid1 = await get_session_backend_pid(s1)
+            worker1_pid_val.append(pid1)
+            stmt = select(Account).where(Account.id == fixture.account.id).with_for_update()
+            await s1.execute(stmt)
+            worker1_locked.set()
+
+            await asyncio.wait_for(worker1_proceed.wait(), timeout=10.0)
+
+            svc = ObligationV17Service(s1)
+            try:
+                await svc.pay_specific_period(fixture.user.id, obl.id, periods[0].id, req_payment)
+                await s1.commit()
+                return True
+            except HTTPException:
+                await s1.rollback()
+                return False
+
+    async def worker_goal_loser():
+        await asyncio.wait_for(worker1_locked.wait(), timeout=10.0)
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as s2:
+            pid2 = await get_session_backend_pid(s2)
+            worker2_pid_val.append(pid2)
+            worker2_pid_ready.set()
+
+            goal_svc = GoalService(
+                repository=GoalRepository(s2),
+                account_repo=AccountRepository(s2),
+                ledger_repo=LedgerRepository(s2),
+            )
+            try:
+                await goal_svc.create_contribution(
+                    auth_user_id=fixture.user.id,
+                    goal_id=g.id,
+                    payload=goal_payload,
+                    idempotency_key=str(uuid.uuid4()),
+                )
+                await s2.commit()
+                return True
+            except (InsufficientFundsError, HTTPException):
+                await s2.rollback()
+                return False
+
+    async def observer():
+        await asyncio.wait_for(worker2_pid_ready.wait(), timeout=10.0)
+        pid2 = worker2_pid_val[0]
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as s3:
+            await wait_for_blocked(
+                s3, blocked_pid=pid2, blocking_pid=worker1_pid_val[0], timeout=5.0
+            )
+            worker1_proceed.set()
+
+    task1 = asyncio.create_task(worker_obligation_winner())
+    task2 = asyncio.create_task(worker_goal_loser())
+    task_obs = asyncio.create_task(observer())
+
+    res_obl, res_goal, _ = await asyncio.gather(task1, task2, task_obs)
+    assert res_obl is True
+    assert res_goal is False
+
+    # Observe from third session
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with async_session() as s3:
+        acc = await s3.get(Account, fixture.account.id)
+        assert acc.balance == Decimal("500")  # 1000 - 500 debited
+
+        goal_repo = GoalRepository(s3)
+        reserved = await goal_repo.calculate_reserved_by_account(
+            fixture.account.id, fixture.user.id
+        )
+        assert reserved == Decimal("200")  # Unchanged
+
+        p0 = await s3.get(ObligationPeriod, periods[0].id)
+        assert p0.paid_amount == Decimal("500")
+        assert p0.status == PeriodStatus.paid.value
 
 
 # --- PG15 — DEADLOCK TIMEOUT/CHECK ---
@@ -945,3 +1306,104 @@ async def test_pg21_legacy_v1_5(session: AsyncSession, fixture: GateFixture):
         await service.pay_specific_period(fixture.user.id, periods[0].id, req)
 
     assert "Insufficient balance" in str(exc.value)
+
+
+# --- PG22 — IDEMPOTENCY KEY WITH LITERAL SPECIAL CHARACTERS ---
+@pytest.mark.asyncio
+async def test_pg22_idempotency_key_literal_special_characters(
+    engine, session: AsyncSession, fixture: GateFixture
+):
+    fixture.account.balance = Decimal("1000.00")
+    obl, periods = await fixture.add_obligation(Decimal("300.00"), periods=1)
+    await fixture.commit()
+
+    special_key = "idemp%literal_test%wildcard_123"
+    service = ObligationV17Service(session)
+    req = ObligationPeriodPaymentCreateRequest(
+        amount=Decimal("300.00"),
+        source_account_id=fixture.account.id,
+        idempotency_key=special_key,
+    )
+
+    # 1. First execution
+    payment1, _ = await service.pay_specific_period(fixture.user.id, obl.id, periods[0].id, req)
+    await session.commit()
+    assert payment1.amount == Decimal("300.00")
+
+    # 2. Replay with exact same special key returns identical payment
+    payment2, _ = await service.pay_specific_period(fixture.user.id, obl.id, periods[0].id, req)
+    assert payment2.id == payment1.id
+
+    # 3. Third session verifies balance debited only once and single payment row exists
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with async_session() as s3:
+        acc = await s3.get(Account, fixture.account.id)
+        assert acc.balance == Decimal("700.00")
+
+        payments = (
+            (
+                await s3.execute(
+                    select(ObligationPayment).where(ObligationPayment.user_id == fixture.user_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(payments) == 1
+        assert payments[0].idempotency_key == special_key
+
+
+# --- PG23 — AUTHORITATIVE FX QUOTE SETTLEMENT ---
+@pytest.mark.asyncio
+async def test_pg23_authoritative_fx_quote_settlement(
+    engine, session: AsyncSession, fixture: GateFixture
+):
+    fixture.account.balance = Decimal("1000.00")
+    obl, periods = await fixture.add_obligation(Decimal("500.00"), currency="EUR", periods=1)
+    quote = await fixture.add_fx_quote(
+        target_amount=Decimal("500.00"),
+        source_amount=Decimal("625.00"),
+        rate=Decimal("0.8"),
+        from_currency="USD",
+        to_currency="EUR",
+    )
+    await fixture.commit()
+
+    service = ObligationV17Service(session)
+    req = ObligationPeriodPaymentCreateRequest(
+        amount=Decimal("500.00"),
+        source_account_id=fixture.account.id,
+        quote_id=quote.id,
+        idempotency_key="fx-authoritative-quote-key",
+    )
+
+    payment, period = await service.pay_specific_period(fixture.user.id, obl.id, periods[0].id, req)
+    await session.commit()
+
+    assert payment.amount == Decimal("500.00")
+    assert payment.source_amount == Decimal("625.00")
+
+    # Verify from third session: exact source debit, payment, and financial event
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with async_session() as s3:
+        acc = await s3.get(Account, fixture.account.id)
+        assert acc.balance == Decimal("375.00")  # 1000.00 - 625.00 exactly
+
+        p0 = await s3.get(ObligationPeriod, periods[0].id)
+        assert p0.paid_amount == Decimal("500.00")
+        assert p0.status == PeriodStatus.paid.value
+
+        payments = (
+            (
+                await s3.execute(
+                    select(ObligationPayment).where(ObligationPayment.user_id == fixture.user_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(payments) == 1
+        assert payments[0].source_amount == Decimal("625.00")
+        assert payments[0].amount == Decimal("500.00")
+        assert payments[0].currency == "EUR"
+        assert payments[0].source_currency == "USD"

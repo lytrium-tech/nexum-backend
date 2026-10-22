@@ -1,7 +1,8 @@
+import asyncio
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.models import Account
@@ -26,8 +27,45 @@ class GateCleanupError(RuntimeError):
 
     def __init__(self, errors: list[tuple[str, Exception]]):
         self.errors = errors
-        details = "; ".join(f"[{stage}] {type(err).__name__}: {str(err)}" for stage, err in errors)
+        details = "; ".join(f"[{stage}] {type(err).__name__}" for stage, err in errors)
         super().__init__(f"GateFixture cleanup failed across {len(errors)} stage(s): {details}")
+
+
+async def get_session_backend_pid(session: AsyncSession) -> int:
+    """Return the PostgreSQL server backend PID for this session connection."""
+    res = await session.execute(text("SELECT pg_backend_pid()"))
+    return int(res.scalar_one())
+
+
+async def wait_for_blocked(
+    observer_session: AsyncSession,
+    blocked_pid: int,
+    blocking_pid: int | None = None,
+    timeout: float = 5.0,
+    interval: float = 0.05,
+) -> bool:
+    """Poll pg_stat_activity and pg_blocking_pids until blocked_pid is confirmed waiting on a lock.
+
+    Returns True when lock blockage is physically verified in PostgreSQL.
+    Raises TimeoutError if blocked_pid is not observed waiting within timeout.
+    """
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        if blocking_pid is not None:
+            stmt = text("SELECT :blocking_pid = ANY(pg_blocking_pids(:blocked_pid))")
+            res = await observer_session.execute(
+                stmt, {"blocked_pid": blocked_pid, "blocking_pid": blocking_pid}
+            )
+            is_blocked = bool(res.scalar())
+        else:
+            stmt = text("SELECT coalesce(array_length(pg_blocking_pids(:blocked_pid), 1), 0) > 0")
+            res = await observer_session.execute(stmt, {"blocked_pid": blocked_pid})
+            is_blocked = bool(res.scalar())
+
+        if is_blocked:
+            return True
+        await asyncio.sleep(interval)
+    raise TimeoutError(f"PID {blocked_pid} was not observed blocked on lock within {timeout}s")
 
 
 class GateFixture:
@@ -49,7 +87,8 @@ class GateFixture:
             name="Gate Account",
         )
         self.account_id = self.account.id
-        self.has_auto_payment = False
+        self.has_auto_payment = True
+        self.created_exchange_rate_ids: set[uuid.UUID] = set()
 
     async def commit(self):
         self.session.add(self.user)
@@ -170,7 +209,7 @@ class GateFixture:
         return quote
 
     async def add_exchange_rate(
-        self, base_currency="USD", quote_currency="EUR", rate=Decimal("1.0")
+        self, base_currency="USD", quote_currency="EUR", rate=Decimal("1.0"), provider="gate_test"
     ):
         from datetime import UTC, datetime, timedelta
 
@@ -179,13 +218,17 @@ class GateFixture:
             base_currency=base_currency,
             quote_currency=quote_currency,
             rate=rate,
-            provider="gate_test",
+            provider=provider,
             fetched_at=datetime.now(UTC),
             expires_at=datetime.now(UTC) + timedelta(minutes=5),
         )
         self.session.add(er)
         await self.session.flush()
+        self.created_exchange_rate_ids.add(er.id)
         return er
+
+    def track_exchange_rate(self, exchange_rate_id: uuid.UUID) -> None:
+        self.created_exchange_rate_ids.add(exchange_rate_id)
 
     async def add_auto_payment_config(
         self,
@@ -222,52 +265,53 @@ class GateFixture:
             errors.append(("initial_rollback", exc))
 
         uid = self.user_id
-        stages = []
-        if getattr(self, "has_auto_payment", False):
-            stages.extend(
-                [
-                    (
-                        "obligation_auto_payment_runs",
-                        delete(ObligationAutoPaymentRun).where(
-                            ObligationAutoPaymentRun.obligation_id.in_(
-                                select(Obligation.id).where(Obligation.user_id == uid)
-                            )
-                        ),
+        stages = [
+            (
+                "obligation_auto_payment_runs",
+                delete(ObligationAutoPaymentRun).where(
+                    ObligationAutoPaymentRun.obligation_id.in_(
+                        select(Obligation.id).where(Obligation.user_id == uid)
+                    )
+                ),
+            ),
+            (
+                "obligation_auto_payment_configs",
+                delete(ObligationAutoPaymentConfig).where(
+                    ObligationAutoPaymentConfig.user_id == uid
+                ),
+            ),
+            (
+                "goal_transactions",
+                delete(GoalTransaction).where(GoalTransaction.user_id == uid),
+            ),
+            (
+                "obligation_payments",
+                delete(ObligationPayment).where(ObligationPayment.user_id == uid),
+            ),
+            (
+                "obligation_periods",
+                delete(ObligationPeriod).where(
+                    ObligationPeriod.obligation_id.in_(
+                        select(Obligation.id).where(Obligation.user_id == uid)
+                    )
+                ),
+            ),
+            ("obligations", delete(Obligation).where(Obligation.user_id == uid)),
+            ("financial_events", delete(FinancialEvent).where(FinancialEvent.user_id == uid)),
+            ("goals", delete(Goal).where(Goal.user_id == uid)),
+            ("accounts", delete(Account).where(Account.user_id == uid)),
+            ("fx_quotes", delete(FXQuote).where(FXQuote.user_id == uid)),
+        ]
+        if self.created_exchange_rate_ids:
+            stages.append(
+                (
+                    "exchange_rates",
+                    delete(ExchangeRate).where(
+                        ExchangeRate.id.in_(list(self.created_exchange_rate_ids))
                     ),
-                    (
-                        "obligation_auto_payment_configs",
-                        delete(ObligationAutoPaymentConfig).where(
-                            ObligationAutoPaymentConfig.user_id == uid
-                        ),
-                    ),
-                ]
+                )
             )
-        stages.extend(
-            [
-                (
-                    "goal_transactions",
-                    delete(GoalTransaction).where(GoalTransaction.user_id == uid),
-                ),
-                (
-                    "obligation_payments",
-                    delete(ObligationPayment).where(ObligationPayment.user_id == uid),
-                ),
-                (
-                    "obligation_periods",
-                    delete(ObligationPeriod).where(
-                        ObligationPeriod.obligation_id.in_(
-                            select(Obligation.id).where(Obligation.user_id == uid)
-                        )
-                    ),
-                ),
-                ("obligations", delete(Obligation).where(Obligation.user_id == uid)),
-                ("financial_events", delete(FinancialEvent).where(FinancialEvent.user_id == uid)),
-                ("goals", delete(Goal).where(Goal.user_id == uid)),
-                ("accounts", delete(Account).where(Account.user_id == uid)),
-                ("fx_quotes", delete(FXQuote).where(FXQuote.user_id == uid)),
-                ("users", delete(User).where(User.id == uid)),
-            ]
-        )
+        stages.append(("users", delete(User).where(User.id == uid)))
 
         has_delete_error = False
         for stage_name, stmt in stages:
@@ -286,6 +330,95 @@ class GateFixture:
                     await self.session.rollback()
                 except Exception as rb_exc:
                     errors.append(("post_commit_rollback", rb_exc))
+
+            if not errors:
+                # Residue verification: confirm zero synthetic records remain for this fixture
+                residue_checks = [
+                    ("users", select(func.count()).select_from(User).where(User.id == uid)),
+                    (
+                        "accounts",
+                        select(func.count()).select_from(Account).where(Account.user_id == uid),
+                    ),
+                    ("goals", select(func.count()).select_from(Goal).where(Goal.user_id == uid)),
+                    (
+                        "goal_transactions",
+                        select(func.count())
+                        .select_from(GoalTransaction)
+                        .where(GoalTransaction.user_id == uid),
+                    ),
+                    (
+                        "financial_events",
+                        select(func.count())
+                        .select_from(FinancialEvent)
+                        .where(FinancialEvent.user_id == uid),
+                    ),
+                    (
+                        "obligations",
+                        select(func.count())
+                        .select_from(Obligation)
+                        .where(Obligation.user_id == uid),
+                    ),
+                    (
+                        "obligation_periods",
+                        select(func.count())
+                        .select_from(ObligationPeriod)
+                        .where(
+                            ObligationPeriod.obligation_id.in_(
+                                select(Obligation.id).where(Obligation.user_id == uid)
+                            )
+                        ),
+                    ),
+                    (
+                        "obligation_payments",
+                        select(func.count())
+                        .select_from(ObligationPayment)
+                        .where(ObligationPayment.user_id == uid),
+                    ),
+                    (
+                        "obligation_auto_payment_configs",
+                        select(func.count())
+                        .select_from(ObligationAutoPaymentConfig)
+                        .where(ObligationAutoPaymentConfig.user_id == uid),
+                    ),
+                    (
+                        "obligation_auto_payment_runs",
+                        select(func.count())
+                        .select_from(ObligationAutoPaymentRun)
+                        .where(
+                            ObligationAutoPaymentRun.obligation_id.in_(
+                                select(Obligation.id).where(Obligation.user_id == uid)
+                            )
+                        ),
+                    ),
+                    (
+                        "fx_quotes",
+                        select(func.count()).select_from(FXQuote).where(FXQuote.user_id == uid),
+                    ),
+                ]
+                if self.created_exchange_rate_ids:
+                    residue_checks.append(
+                        (
+                            "exchange_rates",
+                            select(func.count())
+                            .select_from(ExchangeRate)
+                            .where(ExchangeRate.id.in_(list(self.created_exchange_rate_ids))),
+                        )
+                    )
+
+                for table_name, count_stmt in residue_checks:
+                    try:
+                        count_val = (await self.session.execute(count_stmt)).scalar_one()
+                        if count_val > 0:
+                            errors.append(
+                                (
+                                    f"residue_{table_name}",
+                                    RuntimeError(
+                                        f"Synthetic residue detected: {table_name}={count_val} row(s) remain"
+                                    ),
+                                )
+                            )
+                    except Exception as exc:
+                        errors.append((f"check_residue_{table_name}", exc))
         else:
             try:
                 await self.session.rollback()
@@ -345,6 +478,13 @@ async def cleanup_all_gate_users(session: AsyncSession):
             ("goals", delete(Goal).where(Goal.user_id.in_(uids))),
             ("accounts", delete(Account).where(Account.user_id.in_(uids))),
             ("fx_quotes", delete(FXQuote).where(FXQuote.user_id.in_(uids))),
+            (
+                "exchange_rates",
+                delete(ExchangeRate).where(
+                    ExchangeRate.provider.like("gate_test%")
+                    | (ExchangeRate.provider == "gate_test")
+                ),
+            ),
             ("users", delete(User).where(User.id.in_(uids))),
         ]
 
@@ -365,16 +505,57 @@ async def cleanup_all_gate_users(session: AsyncSession):
                     await session.rollback()
                 except Exception as rb_exc:
                     errors.append(("post_commit_rollback", rb_exc))
+
+            if not errors:
+                # Residue check across gate-test users and exchange rates
+                residue_checks = [
+                    (
+                        "gate_test_users",
+                        select(func.count())
+                        .select_from(User)
+                        .where(User.email.like("gate-test-%")),
+                    ),
+                    (
+                        "gate_test_exchange_rates",
+                        select(func.count())
+                        .select_from(ExchangeRate)
+                        .where(
+                            ExchangeRate.provider.like("gate_test%")
+                            | (ExchangeRate.provider == "gate_test")
+                        ),
+                    ),
+                ]
+                for check_name, count_stmt in residue_checks:
+                    try:
+                        count_val = (await session.execute(count_stmt)).scalar_one()
+                        if count_val > 0:
+                            errors.append(
+                                (
+                                    f"residue_{check_name}",
+                                    RuntimeError(
+                                        f"Residue detected after global cleanup: {check_name}={count_val}"
+                                    ),
+                                )
+                            )
+                    except Exception as exc:
+                        errors.append((f"check_{check_name}", exc))
         else:
             try:
                 await session.rollback()
             except Exception as rb_exc:
                 errors.append(("error_rollback", rb_exc))
-    elif not errors:
+    else:
+        # Also clean up any lingering gate_test exchange rates
         try:
+            await session.execute(
+                delete(ExchangeRate).where(
+                    ExchangeRate.provider.like("gate_test%")
+                    | (ExchangeRate.provider == "gate_test")
+                )
+            )
             await session.commit()
         except Exception as exc:
-            errors.append(("commit", exc))
+            errors.append(("exchange_rates_cleanup", exc))
 
     if errors:
         raise GateCleanupError(errors)
