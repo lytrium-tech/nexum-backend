@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -11,10 +12,21 @@ from app.core.currency import (
     round_to_minimum_unit,
 )
 from app.core.errors import NotFoundError
+from app.ledger.models import FinancialEvent
 from app.ledger.repository import LedgerRepository
 from app.ledger.schemas import LedgerEventCreate
 from app.ledger.service import LedgerService
 from app.obligations.exceptions import (
+    ObligationAccountInactiveError,
+    ObligationAccountUnavailableError,
+    ObligationBelowMinimumAmountError,
+    ObligationCurrencyMismatchError,
+    ObligationDomainError,
+    ObligationIdempotencyConflictDomainError,
+    ObligationInactiveError,
+    ObligationInconsistentReservationError,
+    ObligationInsufficientBalanceError,
+    ObligationInvalidAmountError,
     ObligationPaymentExceedsBalanceError,
     ObligationPeriodAmountRequiredError,
 )
@@ -31,6 +43,28 @@ from app.obligations.schemas import (
     ObligationPeriodRead,
     ObligationRead,
 )
+from app.obligations.settlement import reconcile_fifo_source_allocations
+
+
+def _parse_source_message_id(source_message_id: Any) -> UUID | None:
+    if not source_message_id:
+        return None
+    if isinstance(source_message_id, UUID):
+        return source_message_id
+    try:
+        return UUID(str(source_message_id))
+    except (ValueError, AttributeError):
+        return uuid.uuid5(uuid.NAMESPACE_OID, str(source_message_id))
+
+
+def _get_event_metadata(event: Any) -> dict:
+    meta = getattr(event, "metadata_", None)
+    if isinstance(meta, dict):
+        return meta
+    meta = getattr(event, "metadata", None)
+    if isinstance(meta, dict):
+        return meta
+    return {}
 
 
 class ObligationService:
@@ -49,7 +83,7 @@ class ObligationService:
 
     async def get_obligation(self, auth_user_id: UUID, obligation_id: UUID) -> ObligationRead:
         obligation = await self.repository.get_by_id(obligation_id)
-        if not obligation:
+        if not obligation or obligation.user_id != auth_user_id:
             raise NotFoundError("Obligation not found")
         return ObligationRead.model_validate(obligation)
 
@@ -163,7 +197,12 @@ class ObligationService:
     async def define_amount(
         self, auth_user_id: UUID, period_id: UUID, payload: ObligationPeriodAmountUpdate
     ) -> ObligationPeriodRead:
-        stmt = select(ObligationPeriod).where(ObligationPeriod.id == period_id).with_for_update()
+        stmt = (
+            select(ObligationPeriod)
+            .where(ObligationPeriod.id == period_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         period = (await self.repository.session.execute(stmt)).scalar_one_or_none()
         if not period:
             raise NotFoundError("Period not found")
@@ -204,29 +243,35 @@ class ObligationService:
         payload_amount: Decimal | None,
         required_obligation_amount: Decimal,
     ) -> tuple[Decimal, Decimal, Decimal, str | None, datetime | None]:
-        if account_currency == obligation_currency:
-            if payload_amount is None:
-                source_amount = required_obligation_amount
-                applied_amount = required_obligation_amount
-            else:
-                source_amount = payload_amount
-                applied_amount = payload_amount
+        account_curr = account_currency.upper()
+        obligation_curr = obligation_currency.upper()
+
+        if payload_amount is not None:
+            if not payload_amount.is_finite() or payload_amount <= Decimal("0"):
+                raise ObligationInvalidAmountError("Payment amount must be finite and positive")
+            applied_amount = payload_amount
+        else:
+            if not required_obligation_amount.is_finite() or required_obligation_amount <= Decimal(
+                "0"
+            ):
+                raise ObligationInvalidAmountError("Required amount must be finite and positive")
+            applied_amount = required_obligation_amount
+
+        if account_curr == obligation_curr:
+            source_amount = applied_amount
             return source_amount, applied_amount, Decimal("1.0"), None, None
 
         # Cross currency
-        fx_info = await get_fx_rate(account_currency, obligation_currency)
+        fx_info = await get_fx_rate(account_curr, obligation_curr)
         fx_rate = fx_info["fx_rate"]
         rate_source = fx_info["rate_source"]
         rate_timestamp = fx_info["rate_timestamp"]
 
-        if payload_amount is None:
-            # We know exactly how much obligation currency we need
-            applied_amount = required_obligation_amount
-            source_amount = round_to_minimum_unit(applied_amount / fx_rate, account_currency)
-        else:
-            # User specified applied amount in obligation currency
-            applied_amount = payload_amount
-            source_amount = round_to_minimum_unit(applied_amount / fx_rate, account_currency)
+        source_amount = round_to_minimum_unit(applied_amount / fx_rate, account_curr)
+        if not source_amount.is_finite() or source_amount <= Decimal("0"):
+            raise ObligationBelowMinimumAmountError(
+                "Conversion resulted in zero or below-minimum source amount"
+            )
 
         return source_amount, applied_amount, fx_rate, rate_source, rate_timestamp
 
@@ -246,11 +291,16 @@ class ObligationService:
         if period.status == "pending_amount_definition":
             raise ObligationPeriodAmountRequiredError()
         if period.status in ("paid", "skipped", "cancelled"):
-            raise ValueError("Period is not in a payable state")
+            raise ObligationDomainError(
+                "Period is not in a payable state", error_code="period_not_payable"
+            )
 
         remaining_balance = period.remaining_amount
         if remaining_balance is None:
-            raise ValueError("Period has no remaining amount to calculate preview")
+            raise ObligationDomainError(
+                "Period has no remaining amount to calculate preview",
+                error_code="period_not_payable",
+            )
 
         account = await self.account_repo.get_by_id(payload.account_id)
         if not account or account.user_id != auth_user_id:
@@ -271,7 +321,6 @@ class ObligationService:
             raise ObligationPaymentExceedsBalanceError(remaining=str(remaining_balance))
 
         can_pay = account.balance >= source_amount
-        # Note: Do not throw error for insufficient funds in preview, just set can_pay to False
 
         quote_expires_at = datetime.now() if fx_rate != Decimal("1.0") else None
 
@@ -292,36 +341,178 @@ class ObligationService:
             can_pay=can_pay,
         )
 
+    async def _check_source_message_replay(
+        self,
+        auth_user_id: UUID,
+        payload: ObligationPaymentCreate,
+        expected_obligation_id: UUID,
+        expected_period_id: UUID | None,
+        strategy: str,
+    ) -> list[ObligationPayment] | None:
+        sm_uuid = _parse_source_message_id(payload.source_message_id)
+        if not sm_uuid:
+            return None
+
+        # Query across obligations by user + source_message_id
+        stmt = (
+            select(FinancialEvent)
+            .where(
+                FinancialEvent.user_id == auth_user_id,
+                FinancialEvent.source_message_id == sm_uuid,
+            )
+            .order_by(FinancialEvent.created_at.asc())
+        )
+        events = list((await self.repository.session.execute(stmt)).scalars().all())
+        if not events:
+            return None
+
+        event_ids = [e.id for e in events]
+        stmt_pay = (
+            select(ObligationPayment)
+            .where(ObligationPayment.financial_event_id.in_(event_ids))
+            .order_by(ObligationPayment.created_at.asc())
+        )
+        payments = list((await self.repository.session.execute(stmt_pay)).scalars().all())
+        if not payments:
+            raise ObligationIdempotencyConflictDomainError(
+                "Incomplete receipt for source_message_id"
+            )
+
+        first_event = events[0]
+        meta = _get_event_metadata(first_event)
+        fp = meta.get("fingerprint")
+
+        # 1. Target obligation check
+        if any(p.obligation_id != expected_obligation_id for p in payments):
+            raise ObligationIdempotencyConflictDomainError(
+                "source_message_id replay obligation mismatch"
+            )
+
+        # 2. Source account check
+        if any(p.account_id != payload.account_id for p in payments):
+            raise ObligationIdempotencyConflictDomainError(
+                "source_message_id replay account mismatch"
+            )
+
+        # 3. Strategy & period check
+        if strategy == "specific_period":
+            if any(p.obligation_period_id != expected_period_id for p in payments):
+                raise ObligationIdempotencyConflictDomainError(
+                    "source_message_id replay period mismatch"
+                )
+            if fp and fp.get("strategy") and fp.get("strategy") != "specific_period":
+                raise ObligationIdempotencyConflictDomainError(
+                    "source_message_id replay strategy mismatch"
+                )
+        elif strategy == "fifo":
+            if fp and fp.get("strategy") and fp.get("strategy") != "fifo":
+                raise ObligationIdempotencyConflictDomainError(
+                    "source_message_id replay strategy mismatch"
+                )
+
+        # 4. Amount / Mode check
+        current_mode = "full_remaining" if payload.amount is None else "explicit"
+        if fp and "mode" in fp:
+            if fp["mode"] != current_mode:
+                raise ObligationIdempotencyConflictDomainError(
+                    "source_message_id replay mode mismatch"
+                )
+            if current_mode == "explicit":
+                stored_req_amount = Decimal(str(fp["requested_amount"]))
+                if stored_req_amount != payload.amount:
+                    raise ObligationIdempotencyConflictDomainError(
+                        "source_message_id replay amount mismatch"
+                    )
+        else:
+            # Conservative historical check: compare payload.amount to stored applied payment amount(s)
+            if payload.amount is not None:
+                if strategy == "specific_period":
+                    if payments[0].amount != payload.amount:
+                        raise ObligationIdempotencyConflictDomainError(
+                            "source_message_id replay amount mismatch"
+                        )
+                elif strategy == "fifo":
+                    total_applied = sum((p.amount for p in payments), Decimal("0"))
+                    if total_applied != payload.amount:
+                        raise ObligationIdempotencyConflictDomainError(
+                            "source_message_id replay amount mismatch"
+                        )
+
+        return payments
+
     async def pay_specific_period(
         self, auth_user_id: UUID, period_id: UUID, payload: ObligationPaymentCreate
     ) -> ObligationPaymentRead:
-        # 1. Load Period
-        stmt = select(ObligationPeriod).where(ObligationPeriod.id == period_id).with_for_update()
+        # 1. Plain read Period to identify owner/root without locking out of order
+        stmt_pre = select(ObligationPeriod).where(ObligationPeriod.id == period_id)
+        result_pre = await self.repository.session.execute(stmt_pre)
+        pre_period = result_pre.scalar_one_or_none()
+        if not pre_period:
+            raise NotFoundError("Period not found")
+
+        # 2. Lock root Obligation
+        obligation = await self.repository.get_by_id_for_update(pre_period.obligation_id)
+        if not obligation or obligation.user_id != auth_user_id:
+            raise NotFoundError("Obligation not found")
+
+        # 3. Replay check for source_message_id BEFORE current balance/account state/FX checks
+        replay_payments = await self._check_source_message_replay(
+            auth_user_id=auth_user_id,
+            payload=payload,
+            expected_obligation_id=pre_period.obligation_id,
+            expected_period_id=period_id,
+            strategy="specific_period",
+        )
+        if replay_payments:
+            await self.evaluate_lifecycle(pre_period.obligation_id)
+            return ObligationPaymentRead.model_validate(replay_payments[0])
+
+        # 4. Strict lifecycle check
+        if obligation.status != "active":
+            raise ObligationInactiveError()
+
+        # 5. Lock fresh Period (root -> Period -> Account lock order)
+        stmt = (
+            select(ObligationPeriod)
+            .where(ObligationPeriod.id == period_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         result = await self.repository.session.execute(stmt)
         period = result.scalar_one_or_none()
         if not period:
             raise NotFoundError("Period not found")
 
-        # 2. Load Obligation
-        obligation = await self.repository.get_by_id(period.obligation_id)
-        if not obligation or obligation.user_id != auth_user_id:
-            raise NotFoundError("Obligation not found")
-
-        # 3. Validations
         if period.status == "pending_amount_definition":
             raise ObligationPeriodAmountRequiredError()
         if period.status in ("paid", "skipped", "cancelled"):
-            raise ValueError("Period is not in a payable state")
+            raise ObligationDomainError(
+                "Period is not in a payable state", error_code="period_not_payable"
+            )
 
         remaining_balance = period.amount - period.paid_amount
 
-        # 4. Load Account
-        account = await self.account_repo.get_by_id_for_update(payload.account_id)
+        # 6. Lock Account (fresh after waits)
+        account = await self.account_repo.get_by_id_for_update(
+            payload.account_id, include_inactive=True
+        )
         if not account or account.user_id != auth_user_id:
             raise NotFoundError("Account not found")
+        if not account.is_active:
+            raise ObligationAccountInactiveError("Account is inactive")
+        if (
+            account.balance is None
+            or not account.balance.is_finite()
+            or account.balance < Decimal("0")
+        ):
+            raise ObligationAccountUnavailableError("Account balance unavailable")
 
-        # 5. Determine FX and Amounts
-        source_currency = payload.currency or account.currency
+        # 7. Validate source currency hint if supplied
+        if payload.currency and payload.currency.upper() != account.currency.upper():
+            raise ObligationCurrencyMismatchError("Source currency hint mismatch")
+
+        # 8. Determine FX and Amounts
+        source_currency = account.currency
         (
             source_amount,
             applied_amount,
@@ -335,11 +526,43 @@ class ObligationService:
         if applied_amount > remaining_balance:
             raise ObligationPaymentExceedsBalanceError(remaining=str(remaining_balance))
 
-        # 6. Check Balance
-        if account.balance < source_amount:
-            raise ValueError("Insufficient balance")
+        # 9. Check Canonical Availability (No Goal mutation)
+        from app.goals.repository import GoalRepository
 
-        # 7. Create Financial Event
+        goal_repo = GoalRepository(self.repository.session)
+        reserved_amount = await goal_repo.calculate_reserved_by_account(account.id, auth_user_id)
+        if not reserved_amount.is_finite() or reserved_amount < Decimal("0"):
+            raise ObligationInconsistentReservationError("Inconsistent reservation state")
+        available_balance = account.balance - reserved_amount
+
+        if available_balance < source_amount:
+            raise ObligationInsufficientBalanceError("Insufficient balance")
+
+        # 10. Debit Account EXACTLY ONCE before Ledger write(s), flush NO commit/rollback
+        await self.account_repo.update_balance(account, -source_amount)
+        await self.repository.session.flush()
+
+        # 11. Create Financial Event
+        sm_uuid = _parse_source_message_id(payload.source_message_id)
+        command_id = (
+            uuid.uuid5(
+                uuid.NAMESPACE_OID,
+                f"legacy_pay:{auth_user_id}:{sm_uuid}",
+            )
+            if sm_uuid
+            else None
+        )
+
+        fingerprint = {
+            "strategy": "specific_period",
+            "obligation_id": str(obligation.id),
+            "period_id": str(period.id),
+            "account_id": str(account.id),
+            "mode": "full_remaining" if payload.amount is None else "explicit",
+            "requested_amount": str(payload.amount) if payload.amount is not None else None,
+            "currency": obligation.currency,
+        }
+
         event_payload = LedgerEventCreate(
             user_id=auth_user_id,
             event_type="obligation_payment",
@@ -347,9 +570,11 @@ class ObligationService:
             amount=source_amount,
             currency=source_currency,
             account_id=account.id,
-            source_message_id=payload.source_message_id,
+            source_message_id=sm_uuid,
             raw_message=payload.raw_message,
+            command_id=command_id,
             metadata={
+                "fingerprint": fingerprint,
                 "obligation_id": str(obligation.id),
                 "obligation_period_id": str(period.id),
                 "fx_rate": str(fx_rate),
@@ -360,36 +585,36 @@ class ObligationService:
             },
         )
         result = await self.ledger_service.record_event(event_payload)
-        event, is_retry = result.event, result.idempotent
+        if result.idempotent:
+            raise ObligationIdempotencyConflictDomainError("Idempotency conflict in ledger")
+        event = result.event
 
-        # 8. Update Period
-        if not is_retry:
-            period.paid_amount += applied_amount
-            if period.paid_amount >= period.amount:
-                period.status = "paid"
-            else:
-                period.status = "partially_paid"
-
-            payment = ObligationPayment(
-                id=uuid.uuid4(),
-                obligation_id=obligation.id,
-                obligation_period_id=period.id,
-                account_id=account.id,
-                financial_event_id=event.id,
-                amount=applied_amount,
-                currency=obligation.currency,
-                source_amount=source_amount,
-                source_currency=source_currency,
-                fx_rate=fx_rate if fx_rate != Decimal("1.0") else None,
-                rate_source=rate_source,
-                rate_timestamp=rate_timestamp,
-                paid_at=datetime.now(),
-                created_at=datetime.now(),
-            )
-            self.repository.session.add(payment)
+        # 12. Update Period & Record Payment
+        period.paid_amount += applied_amount
+        if period.paid_amount >= period.amount:
+            period.status = "paid"
         else:
-            stmt = select(ObligationPayment).where(ObligationPayment.financial_event_id == event.id)
-            payment = (await self.repository.session.execute(stmt)).scalar_one()
+            period.status = "partially_paid"
+
+        payment = ObligationPayment(
+            id=uuid.uuid4(),
+            user_id=auth_user_id,
+            obligation_id=obligation.id,
+            obligation_period_id=period.id,
+            account_id=account.id,
+            financial_event_id=event.id,
+            amount=applied_amount,
+            currency=obligation.currency,
+            source_amount=source_amount,
+            source_currency=source_currency,
+            fx_rate=fx_rate if fx_rate != Decimal("1.0") else None,
+            rate_source=rate_source,
+            rate_timestamp=rate_timestamp,
+            paid_at=datetime.now(),
+            created_at=datetime.now(),
+        )
+        self.repository.session.add(payment)
+        await self.repository.session.flush()
 
         await self.evaluate_lifecycle(obligation.id)
         return ObligationPaymentRead.model_validate(payment)
@@ -397,15 +622,32 @@ class ObligationService:
     async def pay_obligation_fifo(
         self, auth_user_id: UUID, obligation_id: UUID, payload: ObligationPaymentCreate
     ) -> list[ObligationPaymentRead]:
-        obligation = await self.repository.get_by_id(obligation_id)
+        # 1. Lock root Obligation
+        obligation = await self.repository.get_by_id_for_update(obligation_id)
         if not obligation or obligation.user_id != auth_user_id:
             raise NotFoundError("Obligation not found")
 
-        # 1. Sync periods to ensure we have the latest generated periods
+        # 2. Replay check for source_message_id BEFORE current balance/account state/FX checks
+        replay_payments = await self._check_source_message_replay(
+            auth_user_id=auth_user_id,
+            payload=payload,
+            expected_obligation_id=obligation_id,
+            expected_period_id=None,
+            strategy="fifo",
+        )
+        if replay_payments:
+            await self.evaluate_lifecycle(obligation_id)
+            return [ObligationPaymentRead.model_validate(p) for p in replay_payments]
+
+        # 3. Strict lifecycle check
+        if obligation.status != "active":
+            raise ObligationInactiveError()
+
+        # 4. Sync periods to ensure we have the latest generated periods
         engine = PeriodEngine(self.repository.session)
         await engine.sync_periods(obligation, datetime.now().date())
 
-        # 2. Get all unpaid periods for this obligation
+        # 5. Get all unpaid periods for this obligation
         stmt = (
             select(ObligationPeriod)
             .where(
@@ -413,23 +655,38 @@ class ObligationService:
                 ObligationPeriod.status.in_(["overdue", "pending_payment", "partially_paid"]),
             )
             .order_by(
-                # overdue first, then ordered by sequence_number
                 ObligationPeriod.status != "overdue",
                 ObligationPeriod.sequence_number,
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         result = await self.repository.session.execute(stmt)
-        periods = result.scalars().all()
+        periods = list(result.scalars().all())
 
-        total_debt = sum(p.amount - p.paid_amount for p in periods)
+        total_debt = sum((p.amount - p.paid_amount for p in periods), Decimal("0"))
 
-        # 3. Load Account
-        account = await self.account_repo.get_by_id_for_update(payload.account_id)
+        # 6. Load Account
+        account = await self.account_repo.get_by_id_for_update(
+            payload.account_id, include_inactive=True
+        )
         if not account or account.user_id != auth_user_id:
             raise NotFoundError("Account not found")
+        if not account.is_active:
+            raise ObligationAccountInactiveError("Account is inactive")
+        if (
+            account.balance is None
+            or not account.balance.is_finite()
+            or account.balance < Decimal("0")
+        ):
+            raise ObligationAccountUnavailableError("Account balance unavailable")
 
-        source_currency = payload.currency or account.currency
+        # 7. Validate source currency hint if supplied
+        if payload.currency and payload.currency.upper() != account.currency.upper():
+            raise ObligationCurrencyMismatchError("Source currency hint mismatch")
+
+        # 8. Determine FX and Amounts
+        source_currency = account.currency
         (
             source_amount,
             applied_amount,
@@ -443,36 +700,74 @@ class ObligationService:
         if applied_amount > total_debt:
             raise ObligationPaymentExceedsBalanceError(remaining=str(total_debt))
 
-        if account.balance < source_amount:
-            raise ValueError("Insufficient balance")
+        # 9. Precompute valid source allocations BEFORE debit
+        allocations: list[tuple[ObligationPeriod, Decimal, Decimal]] = []
+        remaining_to_apply = applied_amount
+
+        for period in periods:
+            if remaining_to_apply <= Decimal("0"):
+                break
+            period_remaining = period.amount - period.paid_amount
+            if period_remaining <= Decimal("0"):
+                continue
+            apply_to_period = min(period_remaining, remaining_to_apply)
+            allocations.append((period, period.paid_amount, apply_to_period))
+            remaining_to_apply -= apply_to_period
+
+        if not allocations or remaining_to_apply > Decimal("0"):
+            raise ObligationPaymentExceedsBalanceError(remaining=str(total_debt))
+
+        source_slices = reconcile_fifo_source_allocations(source_amount, allocations)
+
+        # 10. Check Canonical Availability (No Goal mutation)
+        from app.goals.repository import GoalRepository
+
+        goal_repo = GoalRepository(self.repository.session)
+        reserved_amount = await goal_repo.calculate_reserved_by_account(account.id, auth_user_id)
+        if not reserved_amount.is_finite() or reserved_amount < Decimal("0"):
+            raise ObligationInconsistentReservationError("Inconsistent reservation state")
+        available_balance = account.balance - reserved_amount
+
+        if available_balance < source_amount:
+            raise ObligationInsufficientBalanceError("Insufficient balance")
+
+        # 11. Debit Account EXACTLY ONCE before Ledger write(s), flush NO commit/rollback
+        await self.account_repo.update_balance(account, -source_amount)
+        await self.repository.session.flush()
+
+        # 12. Create Ledger Events & Payments atomically
+        sm_uuid = _parse_source_message_id(payload.source_message_id)
+        base_command_id = (
+            uuid.uuid5(
+                uuid.NAMESPACE_OID,
+                f"legacy_pay:{auth_user_id}:{sm_uuid}",
+            )
+            if sm_uuid
+            else None
+        )
 
         payments_created = []
-        remaining_to_apply = applied_amount
-        remaining_source = source_amount
 
-        for i, period in enumerate(periods):
-            if remaining_to_apply <= 0:
-                break
+        for i, ((period, _, apply_to_period), source_to_period) in enumerate(
+            zip(allocations, source_slices)
+        ):
+            command_id = (
+                base_command_id
+                if i == 0
+                else (uuid.uuid5(base_command_id, f"allocation_{i}") if base_command_id else None)
+            )
 
-            period_remaining = period.amount - period.paid_amount
-            if period_remaining <= 0:
-                continue
+            fingerprint = {
+                "strategy": "fifo",
+                "obligation_id": str(obligation.id),
+                "period_id": str(period.id),
+                "account_id": str(account.id),
+                "mode": "full_remaining" if payload.amount is None else "explicit",
+                "requested_amount": str(payload.amount) if payload.amount is not None else None,
+                "currency": obligation.currency,
+                "fifo_index": i,
+            }
 
-            apply_to_period = min(period_remaining, remaining_to_apply)
-
-            # calculate source amount proportional to applied amount
-            # If it's the last period we are applying to, we just use the rest of the source_amount to avoid rounding issues
-            if remaining_to_apply == apply_to_period:
-                source_to_period = remaining_source
-            else:
-                if fx_rate == Decimal("1.0"):
-                    source_to_period = apply_to_period
-                else:
-                    source_to_period = round_to_minimum_unit(
-                        apply_to_period / fx_rate, source_currency
-                    )
-
-            # Create event for each chunk
             event_payload = LedgerEventCreate(
                 user_id=auth_user_id,
                 event_type="obligation_payment",
@@ -480,9 +775,11 @@ class ObligationService:
                 amount=source_to_period,
                 currency=source_currency,
                 account_id=account.id,
-                source_message_id=payload.source_message_id,
+                source_message_id=sm_uuid,
                 raw_message=payload.raw_message,
+                command_id=command_id,
                 metadata={
+                    "fingerprint": fingerprint,
                     "obligation_id": str(obligation.id),
                     "obligation_period_id": str(period.id),
                     "fx_rate": str(fx_rate),
@@ -493,50 +790,38 @@ class ObligationService:
                     "fifo_index": str(i),
                 },
             )
-            # Give a unique command ID based on period id if multiple payments in same message
-            if payload.source_message_id:
-                event_payload.command_id = f"cmd_pay_{payload.source_message_id}_{period.id}"
 
             result = await self.ledger_service.record_event(event_payload)
-            event, is_retry = result.event, result.idempotent
+            if result.idempotent:
+                raise ObligationIdempotencyConflictDomainError("Idempotency conflict in ledger")
+            event = result.event
 
-            if not is_retry:
-                period.paid_amount += apply_to_period
-                if period.paid_amount >= period.amount:
-                    period.status = "paid"
-                else:
-                    period.status = "partially_paid"
-
-                payment = ObligationPayment(
-                    id=uuid.uuid4(),
-                    obligation_id=obligation.id,
-                    obligation_period_id=period.id,
-                    account_id=account.id,
-                    financial_event_id=event.id,
-                    amount=apply_to_period,
-                    currency=obligation.currency,
-                    source_amount=source_to_period,
-                    source_currency=source_currency,
-                    fx_rate=fx_rate if fx_rate != Decimal("1.0") else None,
-                    rate_source=rate_source,
-                    rate_timestamp=rate_timestamp,
-                    paid_at=datetime.now(),
-                    created_at=datetime.now(),
-                )
-                self.repository.session.add(payment)
-                payments_created.append(payment)
+            period.paid_amount += apply_to_period
+            if period.paid_amount >= period.amount:
+                period.status = "paid"
             else:
-                stmt = select(ObligationPayment).where(
-                    ObligationPayment.financial_event_id == event.id
-                )
-                payment = (await self.repository.session.execute(stmt)).scalar_one()
-                payments_created.append(payment)
+                period.status = "partially_paid"
 
-            remaining_to_apply -= apply_to_period
-            remaining_source -= source_to_period
+            payment = ObligationPayment(
+                id=uuid.uuid4(),
+                user_id=auth_user_id,
+                obligation_id=obligation.id,
+                obligation_period_id=period.id,
+                account_id=account.id,
+                financial_event_id=event.id,
+                amount=apply_to_period,
+                currency=obligation.currency,
+                source_amount=source_to_period,
+                source_currency=source_currency,
+                fx_rate=fx_rate if fx_rate != Decimal("1.0") else None,
+                rate_source=rate_source,
+                rate_timestamp=rate_timestamp,
+                paid_at=datetime.now(),
+                created_at=datetime.now(),
+            )
+            self.repository.session.add(payment)
+            payments_created.append(payment)
 
-            # Since ledger_service flushes, no need to manually flush inside loop if we don't need IDs immediately,
-            # but ledger does need it.
-
+        await self.repository.session.flush()
         await self.evaluate_lifecycle(obligation.id)
         return [ObligationPaymentRead.model_validate(p) for p in payments_created]

@@ -132,11 +132,14 @@ class ObligationPeriodPaymentCreateRequest(BaseModel):
     rate_snapshot_id: UUID | None = None
 
     @model_validator(mode="after")
-    def validate_currency(self) -> "ObligationPeriodPaymentCreateRequest":
+    def validate_currency_and_amount(self) -> "ObligationPeriodPaymentCreateRequest":
         if self.currency:
             self.currency = self.currency.upper()
         if self.source_currency:
             self.source_currency = self.source_currency.upper()
+        if self.amount is not None:
+            if not self.amount.is_finite() or self.amount <= Decimal("0"):
+                raise ValueError("amount must be positive and finite")
         return self
 
 
@@ -158,11 +161,14 @@ class ObligationFIFOPaymentCreateRequest(BaseModel):
     rate_snapshot_id: UUID | None = None
 
     @model_validator(mode="after")
-    def validate_currency(self) -> "ObligationFIFOPaymentCreateRequest":
+    def validate_currency_and_amount(self) -> "ObligationFIFOPaymentCreateRequest":
         if self.currency:
             self.currency = self.currency.upper()
         if self.source_currency:
             self.source_currency = self.source_currency.upper()
+        if self.amount is not None:
+            if not self.amount.is_finite() or self.amount <= Decimal("0"):
+                raise ValueError("amount must be positive and finite")
         return self
 
 
@@ -235,6 +241,7 @@ class ObligationPaymentPreviewV17Request(BaseModel):
     source_account_id: UUID
     amount: Decimal = Field(gt=0)
 
+
 class ObligationPaymentPreviewV17Response(BaseModel):
     obligation_currency: str
     source_currency: str
@@ -245,6 +252,7 @@ class ObligationPaymentPreviewV17Response(BaseModel):
     quote_expires_at: datetime | None = None
     quote_id: UUID | None = None
 
+
 class ObligationV17ActionState(BaseModel):
     can_pay: bool
     requires_amount_definition: bool
@@ -254,6 +262,7 @@ class ObligationV17ActionState(BaseModel):
     payable_period_count: int
     payable_total_amount: str
 
+
 class ObligationV17PeriodCounts(BaseModel):
     payable: int
     overdue: int
@@ -261,6 +270,7 @@ class ObligationV17PeriodCounts(BaseModel):
     paid: int
     cancelled: int
     skipped: int
+
 
 class ObligationV17OverviewResponse(ObligationV17Response):
     relevant_period: ObligationPeriodV17Response | None

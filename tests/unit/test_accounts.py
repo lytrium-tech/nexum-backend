@@ -1,6 +1,6 @@
 import uuid
-from decimal import Decimal
 from datetime import datetime
+from decimal import Decimal
 from unittest.mock import AsyncMock
 
 import pytest
@@ -11,9 +11,8 @@ from app.accounts.models import Account
 from app.accounts.repository import AccountRepository
 from app.accounts.schemas import AccountCreate, AccountUpdate, BalanceAdjustmentCreate
 from app.accounts.service import AccountService
-from app.users.service import UserService
+from app.ledger.enums import Direction
 from app.ledger.repository import LedgerRepository
-from app.ledger.enums import Direction, EventType
 
 
 @pytest.fixture
@@ -82,28 +81,32 @@ async def test_update_account_success(service, mock_repo):
     user_id = uuid.uuid4()
     account_id = uuid.uuid4()
     acc = Account(
-        id=account_id, 
-        user_id=user_id, 
-        name="Old Name", 
-        type="bank", 
-        currency="COP", 
-        balance=Decimal("0"), 
+        id=account_id,
+        user_id=user_id,
+        name="Old Name",
+        type="bank",
+        currency="COP",
+        balance=Decimal("0"),
         is_active=True,
         created_at=datetime.now(),
-        updated_at=datetime.now()
+        updated_at=datetime.now(),
     )
     mock_repo.get_by_id.return_value = acc
     mock_repo.check_name_exists.return_value = False
 
-    res = await service.update_account(user_id, account_id, AccountUpdate(name="New Name", type=AccountType.WALLET))
-    
+    res = await service.update_account(
+        user_id, account_id, AccountUpdate(name="New Name", type=AccountType.WALLET)
+    )
+
     assert res.name == "New Name"
     assert res.type == AccountType.WALLET
     mock_repo.session.flush.assert_called_once()
 
+
 @pytest.mark.asyncio
 async def test_update_account_forbidden_fields():
     from pydantic import ValidationError
+
     with pytest.raises(ValidationError):
         AccountUpdate(name="New Name", is_active=False)
     with pytest.raises(ValidationError):
@@ -117,15 +120,15 @@ async def test_archive_account(service, mock_repo):
     user_id = uuid.uuid4()
     account_id = uuid.uuid4()
     acc = Account(
-        id=account_id, 
-        user_id=user_id, 
-        name="Name", 
-        type="bank", 
-        currency="COP", 
-        balance=Decimal("0"), 
+        id=account_id,
+        user_id=user_id,
+        name="Name",
+        type="bank",
+        currency="COP",
+        balance=Decimal("0"),
         is_active=True,
         created_at=datetime.now(),
-        updated_at=datetime.now()
+        updated_at=datetime.now(),
     )
     mock_repo.get_by_id.return_value = acc
 
@@ -139,15 +142,15 @@ async def test_restore_account(service, mock_repo):
     user_id = uuid.uuid4()
     account_id = uuid.uuid4()
     acc = Account(
-        id=account_id, 
-        user_id=user_id, 
-        name="Name", 
-        type="bank", 
-        currency="COP", 
-        balance=Decimal("0"), 
+        id=account_id,
+        user_id=user_id,
+        name="Name",
+        type="bank",
+        currency="COP",
+        balance=Decimal("0"),
         is_active=False,
         created_at=datetime.now(),
-        updated_at=datetime.now()
+        updated_at=datetime.now(),
     )
     mock_repo.get_by_id.return_value = acc
 
@@ -169,21 +172,23 @@ async def test_balance_adjustment(service, mock_repo, mock_ledger_repo):
     user_id = uuid.uuid4()
     account_id = uuid.uuid4()
     acc = Account(
-        id=account_id, 
-        user_id=user_id, 
-        name="Name", 
-        type="bank", 
-        currency="COP", 
-        balance=Decimal("100"), 
+        id=account_id,
+        user_id=user_id,
+        name="Name",
+        type="bank",
+        currency="COP",
+        balance=Decimal("100"),
         is_active=True,
         created_at=datetime.now(),
-        updated_at=datetime.now()
+        updated_at=datetime.now(),
     )
     mock_repo.get_by_id_for_update.return_value = acc
 
-    payload = BalanceAdjustmentCreate(target_balance=Decimal("150"), reason="Test reason", idempotency_key=uuid.uuid4())
+    payload = BalanceAdjustmentCreate(
+        target_balance=Decimal("150"), reason="Test reason", idempotency_key=uuid.uuid4()
+    )
     res = await service.create_balance_adjustment(user_id, account_id, payload)
-    
+
     assert res.balance == Decimal("150")
     assert acc.balance == Decimal("150")
     mock_ledger_repo.insert_event.assert_called_once()
@@ -193,3 +198,23 @@ async def test_balance_adjustment(service, mock_repo, mock_ledger_repo):
     event_create = args[0]
     assert event_create.amount == Decimal("50")
     assert event_create.direction == Direction.INFLOW
+
+
+@pytest.mark.asyncio
+async def test_account_repository_get_by_id_for_update_has_populate_existing():
+    from unittest.mock import MagicMock
+
+    mock_session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    mock_session.execute.return_value = mock_result
+
+    repo = AccountRepository(mock_session)
+    account_id = uuid.uuid4()
+
+    await repo.get_by_id_for_update(account_id)
+
+    mock_session.execute.assert_called_once()
+    stmt = mock_session.execute.call_args[0][0]
+    assert stmt.get_execution_options().get("populate_existing") is True
+    assert stmt._for_update_arg is not None

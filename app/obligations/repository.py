@@ -19,7 +19,10 @@ class ObligationRepository:
 
     async def get_by_id_for_update(self, obligation_id: UUID) -> Obligation | None:
         result = await self.session.execute(
-            select(Obligation).where(Obligation.id == obligation_id).with_for_update()
+            select(Obligation)
+            .where(Obligation.id == obligation_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 

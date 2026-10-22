@@ -324,7 +324,8 @@ def redact_secrets(text: str, secrets: Sequence[str]) -> str:
     res = text
     for sec in secrets:
         if sec and len(sec) >= 3:
-            res = res.replace(sec, "***REDACTED***")
+            for representation in {sec, urllib.parse.quote(sec, safe="")}:
+                res = res.replace(representation, "***REDACTED***")
     return res
 
 
@@ -373,8 +374,7 @@ def verify_pve_leaf_cert(
         pass
 
     cn_names: list[str] = [
-        str(attr.value).lower()
-        for attr in cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+        str(attr.value).lower() for attr in cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
     ]
 
     expected_host_lower = expected_hostname.lower()
@@ -1102,9 +1102,7 @@ def cmd_run(
 
             # Configure exact test database URL into minimal child environment (URL-encoded password)
             encoded_pass = urllib.parse.quote(db_pass, safe="")
-            test_db_url = (
-                f"postgresql+asyncpg://{config.db_user}:{encoded_pass}@127.0.0.1:{local_port}/{config.db_name}"
-            )
+            test_db_url = f"postgresql+asyncpg://{config.db_user}:{encoded_pass}@127.0.0.1:{local_port}/{config.db_name}"
             test_env["ARGOS_DATABASE_URL"] = test_db_url
             test_env["DATABASE_URL"] = test_db_url
             print(
@@ -1117,13 +1115,16 @@ def cmd_run(
 
         if exit_code == 0:
             print("Release Gate: Test command completed successfully (exit code 0).")
+            evidence = redact_secrets(
+                "\n".join(filter(None, [proc.stdout, proc.stderr])),
+                [db_pass, config.pve_token_secret],
+            )
+            if evidence.strip():
+                print("--- Sanitized Success Evidence (Bounded) ---")
+                print("\n".join(evidence.strip().splitlines()[-30:]))
         else:
-            sanitized_out = redact_secrets(
-                proc.stdout or "", [db_pass, config.pve_token_secret]
-            )
-            sanitized_err = redact_secrets(
-                proc.stderr or "", [db_pass, config.pve_token_secret]
-            )
+            sanitized_out = redact_secrets(proc.stdout or "", [db_pass, config.pve_token_secret])
+            sanitized_err = redact_secrets(proc.stderr or "", [db_pass, config.pve_token_secret])
             lines = (sanitized_err or sanitized_out).strip().splitlines()
             tail_evidence = "\n".join(lines[-20:]) if lines else "No output recorded."
             print(

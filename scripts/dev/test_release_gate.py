@@ -338,7 +338,9 @@ def test_pve_network_stream_verifies_pin_on_live_tls_handshake():
     mock_raw_stream = MagicMock()
     mock_raw_stream.start_tls.return_value = mock_tls_stream
 
-    stream = PveNetworkStream(mock_raw_stream, expected_pin=pin, expected_hostname="vulcano.home.arpa")
+    stream = PveNetworkStream(
+        mock_raw_stream, expected_pin=pin, expected_hostname="vulcano.home.arpa"
+    )
     res = stream.start_tls(ssl_context=MagicMock(), server_hostname="vulcano.home.arpa")
     assert res == mock_tls_stream
     mock_ssl_obj.getpeercert.assert_called_once_with(True)
@@ -505,16 +507,13 @@ def test_ssh_tunnel_wait_ready_fails_when_port_cannot_be_bound():
 # --- 8. RUN WRAPPER & CHILD ENVIRONMENT ISOLATION & OUTPUT CAPTURE ---
 
 
-def test_cmd_run_sets_up_tunnel_and_cleans_up_on_success():
+def test_cmd_run_sets_up_tunnel_and_cleans_up_on_success(capsys):
     config = make_clean_config()
     mock_client = MagicMock()
     mock_client.get_status.return_value = "running"
     mock_client.wait_for_status.return_value = True
 
     mock_runner = MagicMock()
-    mock_runner.return_value = subprocess.CompletedProcess(
-        args=["pytest"], returncode=0, stdout="test success", stderr=""
-    )
 
     mock_tunnel = MagicMock()
     mock_tunnel.wait_ready.return_value = True
@@ -522,6 +521,12 @@ def test_cmd_run_sets_up_tunnel_and_cleans_up_on_success():
 
     raw_password = "mypassword!@#$%"
     encoded_pass = urllib.parse.quote(raw_password, safe="")
+    mock_runner.return_value = subprocess.CompletedProcess(
+        args=["pytest"],
+        returncode=0,
+        stdout=f"test success {raw_password}",
+        stderr=f"3 passed {encoded_pass}",
+    )
 
     with patch("scripts.dev.release_gate.wait_for_ssh_ready", return_value=True):
         with patch("scripts.dev.release_gate.validate_remote_gate", return_value=(True, "OK")):
@@ -545,6 +550,12 @@ def test_cmd_run_sets_up_tunnel_and_cleans_up_on_success():
                 )
 
     assert ret == 0
+    output = capsys.readouterr().out
+    assert "Success Evidence" in output
+    assert "3 passed" in output
+    assert raw_password not in output
+    assert encoded_pass not in output
+    assert "***REDACTED***" in output
     # Tunnel started and stopped
     mock_tunnel.start.assert_called_once()
     mock_tunnel.stop.assert_called_once()

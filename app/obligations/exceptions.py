@@ -62,13 +62,74 @@ class ObligationDuplicateError(ConflictError, ValueError):
 
     error_code = "obligation_duplicate"
 
+
 class ObligationPeriodAmountRequiredError(ConflictError):
     error_code = "OBLIGATION_PERIOD_AMOUNT_REQUIRED"
     message = "Cannot pay a variable period until its amount is defined."
 
+
 class ObligationPaymentExceedsBalanceError(ConflictError):
     error_code = "OBLIGATION_PAYMENT_EXCEEDS_REMAINING_BALANCE"
-    
+
     def __init__(self, remaining: str = ""):
-        message = f"Payment exceeds remaining balance. {remaining}" if remaining else "Payment exceeds remaining balance."
+        message = (
+            f"Payment exceeds remaining balance. {remaining}"
+            if remaining
+            else "Payment exceeds remaining balance."
+        )
         super().__init__(message=message)
+
+
+class ObligationIdempotencyConflictError(HTTPException):
+    def __init__(self, detail: str = "idempotency_conflict") -> None:
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=detail,
+        )
+
+
+class ObligationDomainError(ValidationError, ValueError):
+    """Domain error for obligation business invariants, inheriting ValueError for legacy compatibility."""
+
+    def __init__(self, message: str, error_code: str):
+        super().__init__(message=message, error_code=error_code)
+
+
+class ObligationInsufficientBalanceError(ObligationDomainError):
+    def __init__(self, message: str = "Insufficient balance"):
+        super().__init__(message=message, error_code="insufficient_balance")
+
+
+class ObligationInconsistentReservationError(ObligationDomainError):
+    def __init__(self, message: str = "Inconsistent reservation state"):
+        super().__init__(message=message, error_code="inconsistent_reservation_state")
+
+
+class ObligationAccountInactiveError(ObligationDomainError):
+    def __init__(self, message: str = "Account is inactive"):
+        super().__init__(message=message, error_code="account_inactive")
+
+
+class ObligationAccountUnavailableError(ObligationDomainError):
+    def __init__(self, message: str = "Account balance unavailable"):
+        super().__init__(message=message, error_code="account_unavailable")
+
+
+class ObligationIdempotencyConflictDomainError(ObligationDomainError):
+    def __init__(self, message: str = "Idempotency conflict"):
+        super().__init__(message=message, error_code="idempotency_conflict")
+
+
+class ObligationCurrencyMismatchError(ObligationDomainError):
+    def __init__(self, message: str = "Currency mismatch"):
+        super().__init__(message=message, error_code="currency_mismatch")
+
+
+class ObligationBelowMinimumAmountError(ObligationDomainError):
+    def __init__(self, message: str = "Below minimum amount"):
+        super().__init__(message=message, error_code="below_minimum_amount")
+
+
+class ObligationInvalidAmountError(ObligationDomainError):
+    def __init__(self, message: str = "Invalid amount"):
+        super().__init__(message=message, error_code="invalid_amount")

@@ -17,7 +17,9 @@ from app.obligations.service import ObligationService
 
 @pytest.fixture
 def mock_repo():
-    return AsyncMock()
+    repo = AsyncMock()
+    repo.get_by_id_for_update = repo.get_by_id
+    return repo
 
 
 @pytest.fixture
@@ -25,7 +27,11 @@ def mock_account_repo():
     repo = AsyncMock()
     # default account setup
     acc = Account(
-        id=uuid.uuid4(), user_id=uuid.uuid4(), currency="COP", balance=Decimal("10000.00")
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        currency="COP",
+        balance=Decimal("10000.00"),
+        is_active=True,
     )
     repo.get_by_id_for_update.return_value = acc
     return repo
@@ -78,8 +84,18 @@ async def test_pay_specific_period_partial(service, base_user_id, mock_repo, moc
     )
     mock_res = MagicMock()
     mock_res.scalar_one_or_none.return_value = period
-    mock_repo.session.execute.return_value = mock_res
-    obligation = Obligation(id=period.obligation_id, user_id=base_user_id, currency="COP")
+    mock_repo.session.execute.side_effect = lambda stmt, *a, **kw: (
+        MagicMock(scalar_one_or_none=MagicMock(return_value=0))
+        if "goal_transactions" in str(stmt).lower()
+        else (
+            MagicMock(scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None))))
+            if "from obligation_payments" in str(stmt).lower()
+            else mock_res
+        )
+    )
+    obligation = Obligation(
+        id=period.obligation_id, user_id=base_user_id, currency="COP", status="active"
+    )
     mock_repo.get_by_id.return_value = obligation
 
     service._calculate_fx_and_amounts.return_value = (
@@ -113,8 +129,18 @@ async def test_pay_specific_period_full(service, base_user_id, mock_repo, mock_a
     )
     mock_res = MagicMock()
     mock_res.scalar_one_or_none.return_value = period
-    mock_repo.session.execute.return_value = mock_res
-    obligation = Obligation(id=period.obligation_id, user_id=base_user_id, currency="COP")
+    mock_repo.session.execute.side_effect = lambda stmt, *a, **kw: (
+        MagicMock(scalar_one_or_none=MagicMock(return_value=0))
+        if "goal_transactions" in str(stmt).lower()
+        else (
+            MagicMock(scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None))))
+            if "from obligation_payments" in str(stmt).lower()
+            else mock_res
+        )
+    )
+    obligation = Obligation(
+        id=period.obligation_id, user_id=base_user_id, currency="COP", status="active"
+    )
     mock_repo.get_by_id.return_value = obligation
 
     service._calculate_fx_and_amounts.return_value = (
@@ -148,9 +174,17 @@ async def test_pay_specific_period_overpayment_rejected(
     )
     mock_res = MagicMock()
     mock_res.scalar_one_or_none.return_value = period
-    mock_repo.session.execute.return_value = mock_res
+    mock_repo.session.execute.side_effect = lambda stmt, *a, **kw: (
+        MagicMock(scalar_one_or_none=MagicMock(return_value=0))
+        if "goal_transactions" in str(stmt).lower()
+        else (
+            MagicMock(scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None))))
+            if "from obligation_payments" in str(stmt).lower()
+            else mock_res
+        )
+    )
     mock_repo.get_by_id.return_value = Obligation(
-        id=period.obligation_id, user_id=base_user_id, currency="COP"
+        id=period.obligation_id, user_id=base_user_id, currency="COP", status="active"
     )
 
     service._calculate_fx_and_amounts.return_value = (
@@ -178,9 +212,17 @@ async def test_pay_specific_period_blocks_variable_undefined(
     )
     mock_res = MagicMock()
     mock_res.scalar_one_or_none.return_value = period
-    mock_repo.session.execute.return_value = mock_res
+    mock_repo.session.execute.side_effect = lambda stmt, *a, **kw: (
+        MagicMock(scalar_one_or_none=MagicMock(return_value=0))
+        if "goal_transactions" in str(stmt).lower()
+        else (
+            MagicMock(scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None))))
+            if "from obligation_payments" in str(stmt).lower()
+            else mock_res
+        )
+    )
     mock_repo.get_by_id.return_value = Obligation(
-        id=period.obligation_id, user_id=base_user_id, currency="COP"
+        id=period.obligation_id, user_id=base_user_id, currency="COP", status="active"
     )
 
     payload = ObligationPaymentCreate(account_id=acc.id, amount=Decimal("50.00"), currency="COP")
@@ -195,7 +237,7 @@ async def test_pay_fifo_pays_overdue_before_current(
     acc = mock_account_repo.get_by_id_for_update.return_value
     acc.user_id = base_user_id
 
-    obligation = Obligation(id=uuid.uuid4(), user_id=base_user_id, currency="COP")
+    obligation = Obligation(id=uuid.uuid4(), user_id=base_user_id, currency="COP", status="active")
     mock_repo.get_by_id.return_value = obligation
 
     # Two periods: one overdue (seq 1), one pending (seq 2)
@@ -222,7 +264,17 @@ async def test_pay_fifo_pays_overdue_before_current(
         # Mock the result of the periods query
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [p1, p2]
-        mock_repo.session.execute.return_value = mock_result
+        mock_repo.session.execute.side_effect = lambda stmt, *a, **kw: (
+            MagicMock(scalar_one_or_none=MagicMock(return_value=0))
+            if "goal_transactions" in str(stmt).lower()
+            else (
+                MagicMock(
+                    scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+                )
+                if "from obligation_payments" in str(stmt).lower()
+                else mock_result
+            )
+        )
 
         # Calculate FX returns 150 for applied
         service._calculate_fx_and_amounts.return_value = (
@@ -252,7 +304,7 @@ async def test_pay_fifo_rejects_overpayment(service, base_user_id, mock_repo, mo
     acc = mock_account_repo.get_by_id_for_update.return_value
     acc.user_id = base_user_id
 
-    obligation = Obligation(id=uuid.uuid4(), user_id=base_user_id, currency="COP")
+    obligation = Obligation(id=uuid.uuid4(), user_id=base_user_id, currency="COP", status="active")
     mock_repo.get_by_id.return_value = obligation
 
     p1 = ObligationPeriod(
@@ -268,7 +320,17 @@ async def test_pay_fifo_rejects_overpayment(service, base_user_id, mock_repo, mo
 
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [p1]
-        mock_repo.session.execute.return_value = mock_result
+        mock_repo.session.execute.side_effect = lambda stmt, *a, **kw: (
+            MagicMock(scalar_one_or_none=MagicMock(return_value=0))
+            if "goal_transactions" in str(stmt).lower()
+            else (
+                MagicMock(
+                    scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+                )
+                if "from obligation_payments" in str(stmt).lower()
+                else mock_result
+            )
+        )
 
         # Total debt is 100, but applied amount is 150
         service._calculate_fx_and_amounts.return_value = (
@@ -299,7 +361,7 @@ async def test_pay_full_with_null_amount_calculates_balance(
     acc.user_id = base_user_id
     acc.currency = "COP"
 
-    obligation = Obligation(id=uuid.uuid4(), user_id=base_user_id, currency="COP")
+    obligation = Obligation(id=uuid.uuid4(), user_id=base_user_id, currency="COP", status="active")
     mock_repo.get_by_id.return_value = obligation
 
     p1 = ObligationPeriod(
@@ -314,7 +376,17 @@ async def test_pay_full_with_null_amount_calculates_balance(
         MockEngine.return_value.sync_periods = AsyncMock()
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [p1]
-        mock_repo.session.execute.return_value = mock_result
+        mock_repo.session.execute.side_effect = lambda stmt, *a, **kw: (
+            MagicMock(scalar_one_or_none=MagicMock(return_value=0))
+            if "goal_transactions" in str(stmt).lower()
+            else (
+                MagicMock(
+                    scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+                )
+                if "from obligation_payments" in str(stmt).lower()
+                else mock_result
+            )
+        )
 
         payload = ObligationPaymentCreate(account_id=acc.id, amount=None)
         await real_service.pay_obligation_fifo(base_user_id, obligation.id, payload)
@@ -342,7 +414,7 @@ async def test_pay_cross_currency_cop_to_usd(
     acc.currency = "COP"
     acc.balance = Decimal("100000.00")
 
-    obligation = Obligation(id=uuid.uuid4(), user_id=base_user_id, currency="USD")
+    obligation = Obligation(id=uuid.uuid4(), user_id=base_user_id, currency="USD", status="active")
     mock_repo.get_by_id.return_value = obligation
 
     p1 = ObligationPeriod(
@@ -363,13 +435,21 @@ async def test_pay_cross_currency_cop_to_usd(
         MockEngine.return_value.sync_periods = AsyncMock()
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [p1]
-        mock_repo.session.execute.return_value = mock_result
+        mock_repo.session.execute.side_effect = lambda stmt, *a, **kw: (
+            MagicMock(scalar_one_or_none=MagicMock(return_value=0))
+            if "goal_transactions" in str(stmt).lower()
+            else (
+                MagicMock(
+                    scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+                )
+                if "from obligation_payments" in str(stmt).lower()
+                else mock_result
+            )
+        )
 
         # User wants to apply 10 USD to the obligation.
         # Since account is COP, backend will calculate source_amount = 10 / 0.00025 = 40000 COP
-        payload = ObligationPaymentCreate(
-            account_id=acc.id, amount=Decimal("10.00")
-        )
+        payload = ObligationPaymentCreate(account_id=acc.id, amount=Decimal("10.00"))
         await real_service.pay_obligation_fifo(base_user_id, obligation.id, payload)
 
         # 40000 COP * 0.00025 = 10.00 USD
@@ -399,9 +479,17 @@ async def test_pay_insufficient_funds_doesnt_change_period(
     )
     mock_res = MagicMock()
     mock_res.scalar_one_or_none.return_value = period
-    mock_repo.session.execute.return_value = mock_res
+    mock_repo.session.execute.side_effect = lambda stmt, *a, **kw: (
+        MagicMock(scalar_one_or_none=MagicMock(return_value=0))
+        if "goal_transactions" in str(stmt).lower()
+        else (
+            MagicMock(scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None))))
+            if "from obligation_payments" in str(stmt).lower()
+            else mock_res
+        )
+    )
     mock_repo.get_by_id.return_value = Obligation(
-        id=period.obligation_id, user_id=base_user_id, currency="COP"
+        id=period.obligation_id, user_id=base_user_id, currency="COP", status="active"
     )
 
     service._calculate_fx_and_amounts.return_value = (
@@ -435,9 +523,17 @@ async def test_pay_unpayable_states(service, base_user_id, mock_repo, mock_accou
     )
     mock_res = MagicMock()
     mock_res.scalar_one_or_none.return_value = period
-    mock_repo.session.execute.return_value = mock_res
+    mock_repo.session.execute.side_effect = lambda stmt, *a, **kw: (
+        MagicMock(scalar_one_or_none=MagicMock(return_value=0))
+        if "goal_transactions" in str(stmt).lower()
+        else (
+            MagicMock(scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None))))
+            if "from obligation_payments" in str(stmt).lower()
+            else mock_res
+        )
+    )
     mock_repo.get_by_id.return_value = Obligation(
-        id=period.obligation_id, user_id=base_user_id, currency="COP"
+        id=period.obligation_id, user_id=base_user_id, currency="COP", status="active"
     )
 
     payload = ObligationPaymentCreate(account_id=acc.id, amount=Decimal("50.00"), currency="COP")
@@ -465,8 +561,18 @@ async def test_pay_preview_specific_period_same_currency(
     )
     mock_res = MagicMock()
     mock_res.scalar_one_or_none.return_value = period
-    mock_repo.session.execute.return_value = mock_res
-    obligation = Obligation(id=period.obligation_id, user_id=base_user_id, currency="COP")
+    mock_repo.session.execute.side_effect = lambda stmt, *a, **kw: (
+        MagicMock(scalar_one_or_none=MagicMock(return_value=0))
+        if "goal_transactions" in str(stmt).lower()
+        else (
+            MagicMock(scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None))))
+            if "from obligation_payments" in str(stmt).lower()
+            else mock_res
+        )
+    )
+    obligation = Obligation(
+        id=period.obligation_id, user_id=base_user_id, currency="COP", status="active"
+    )
     mock_repo.get_by_id.return_value = obligation
 
     from app.obligations.schemas import ObligationPaymentPreviewCreate
@@ -511,8 +617,18 @@ async def test_pay_preview_specific_period_overpayment(
     )
     mock_res = MagicMock()
     mock_res.scalar_one_or_none.return_value = period
-    mock_repo.session.execute.return_value = mock_res
-    obligation = Obligation(id=period.obligation_id, user_id=base_user_id, currency="COP")
+    mock_repo.session.execute.side_effect = lambda stmt, *a, **kw: (
+        MagicMock(scalar_one_or_none=MagicMock(return_value=0))
+        if "goal_transactions" in str(stmt).lower()
+        else (
+            MagicMock(scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None))))
+            if "from obligation_payments" in str(stmt).lower()
+            else mock_res
+        )
+    )
+    obligation = Obligation(
+        id=period.obligation_id, user_id=base_user_id, currency="COP", status="active"
+    )
     mock_repo.get_by_id.return_value = obligation
 
     from app.obligations.schemas import ObligationPaymentPreviewCreate

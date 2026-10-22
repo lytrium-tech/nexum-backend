@@ -1,11 +1,11 @@
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ledger.enums import Direction, EventType
 from app.ledger.repository import LedgerRepository
 from app.ledger.schemas import LedgerEventCreate
 from app.ledger.service import LedgerService
@@ -19,6 +19,25 @@ from app.obligations.schemas_v17 import (
     ObligationPeriodPaymentCreateRequest,
     ObligationV17CreateRequest,
 )
+from app.obligations.settlement import (
+    build_idempotency_fingerprint,
+    find_replay_by_command_id,
+    reconcile_fifo_source_allocations,
+    resolve_settlement,
+    validate_idempotency_fingerprint,
+)
+
+
+def _extract_event_metadata(event) -> dict:
+    if event is None:
+        return {}
+    meta = getattr(event, "metadata_", None)
+    if isinstance(meta, dict):
+        return meta
+    meta = getattr(event, "metadata", None)
+    if isinstance(meta, dict):
+        return meta
+    return {}
 
 
 class ObligationV17Service:
@@ -35,17 +54,9 @@ class ObligationV17Service:
         """
         Creates a minimal V1.7 obligation and its initial period.
         """
-        # "payment_mode" is equivalent to amount_type string in V1.5 model but we use amount_type directly too
-        # To not break V1.5 fields, we should probably set type, frequency, payment_mode
-        # In V1.5:
-        # type = indefinite | one_time | installment (we'll map from obligation_type)
-        # frequency = monthly | weekly | etc
-        # payment_mode = fixed | variable (we'll map from amount_type)
-
         legacy_type = "one_time" if data.obligation_type == "one_time" else "indefinite"
         legacy_payment_mode = data.amount_type.value
 
-        # Determine due_day from first_due_date for legacy compatibility
         due_day = data.first_due_date.day
         due_month = data.first_due_date.month
 
@@ -77,13 +88,6 @@ class ObligationV17Service:
         self.session.add(initial_period)
 
         await self.session.flush()
-        
-        # Auto-refresh to generate overdue periods if start_date is in the past
-        try:
-            await self.refresh_overdue_periods(user_id, new_obligation.id)
-            await self.session.refresh(initial_period)
-        except Exception:
-            pass
 
         return new_obligation, initial_period
 
@@ -93,9 +97,8 @@ class ObligationV17Service:
         """
         is_variable = obligation.amount_type == AmountType.variable.value
 
-        # Determine amount and status
         if is_variable:
-            amount = None  # Or 0 if decided, but None is semantic for pending definition
+            amount = None
             status = PeriodStatus.pending_amount_definition.value
         else:
             amount = obligation.base_amount
@@ -133,14 +136,12 @@ class ObligationV17Service:
 
     async def list_obligations_overview(self, user_id: uuid.UUID) -> list[dict]:
         """Returns obligations with their relevant period, action state, and period counts in a single query."""
-        from decimal import Decimal
-        
         obligations = await self.list_obligations(user_id)
         if not obligations:
             return []
-        
+
         obligation_ids = [ob.id for ob in obligations]
-        
+
         stmt = (
             select(ObligationPeriod)
             .where(ObligationPeriod.obligation_id.in_(obligation_ids))
@@ -153,35 +154,39 @@ class ObligationV17Service:
         )
         periods_result = await self.session.execute(stmt)
         all_periods = periods_result.scalars().all()
-        
+
         from collections import defaultdict
+
         periods_by_ob = defaultdict(list)
         for p in all_periods:
             periods_by_ob[p.obligation_id].append(p)
-            
+
         overview = []
         for ob in obligations:
             periods = periods_by_ob.get(ob.id, [])
-            
+
             payable_count = 0
             overdue_count = 0
             pending_count = 0
             paid_count = 0
             cancelled_count = 0
             skipped_count = 0
-            
+
             payable_total = Decimal("0")
-            
+
             relevant_period = None
             requires_amount_definition = False
-            
+
             payable_periods = []
             pending_def_periods = []
             closed_periods = []
-            
+
             for p in periods:
                 status = p.status
-                if status in (PeriodStatus.pending_payment.value, PeriodStatus.partially_paid.value):
+                if status in (
+                    PeriodStatus.pending_payment.value,
+                    PeriodStatus.partially_paid.value,
+                ):
                     pending_count += 1
                 elif status == PeriodStatus.overdue.value:
                     overdue_count += 1
@@ -193,7 +198,7 @@ class ObligationV17Service:
                     skipped_count += 1
                 elif status == PeriodStatus.pending_amount_definition.value:
                     pending_count += 1
-                    
+
                 is_payable = status in (
                     PeriodStatus.pending_payment.value,
                     PeriodStatus.partially_paid.value,
@@ -207,14 +212,18 @@ class ObligationV17Service:
                         if amt_due > 0:
                             payable_total += amt_due
                             payable_periods.append(p)
-                            
+
                 if status == PeriodStatus.pending_amount_definition.value:
                     payable_count += 1
                     pending_def_periods.append(p)
-                    
-                if status in (PeriodStatus.paid.value, PeriodStatus.cancelled.value, PeriodStatus.skipped.value):
+
+                if status in (
+                    PeriodStatus.paid.value,
+                    PeriodStatus.cancelled.value,
+                    PeriodStatus.skipped.value,
+                ):
                     closed_periods.append(p)
-            
+
             if payable_periods:
                 relevant_period = payable_periods[0]
             elif pending_def_periods:
@@ -222,11 +231,11 @@ class ObligationV17Service:
                 requires_amount_definition = True
             elif closed_periods:
                 relevant_period = closed_periods[-1]
-                
+
             can_pay = payable_count > 0 and not requires_amount_definition
             can_skip = payable_count > 0 or len(pending_def_periods) > 0
             can_cancel = payable_count > 0 or len(pending_def_periods) > 0
-            
+
             action_state = {
                 "can_pay": can_pay,
                 "requires_amount_definition": requires_amount_definition,
@@ -234,37 +243,38 @@ class ObligationV17Service:
                 "can_cancel": can_cancel,
                 "has_overdue": overdue_count > 0,
                 "payable_period_count": payable_count,
-                "payable_total_amount": str(payable_total)
+                "payable_total_amount": str(payable_total),
             }
-            
+
             period_counts = {
                 "payable": payable_count,
                 "overdue": overdue_count,
                 "pending": pending_count,
                 "paid": paid_count,
                 "cancelled": cancelled_count,
-                "skipped": skipped_count
+                "skipped": skipped_count,
             }
-            
-            overview.append({
-                "id": ob.id,
-                "user_id": ob.user_id,
-                "name": ob.name,
-                "description": ob.description,
-                "currency": ob.currency,
-                "frequency": ob.frequency,
 
-                "amount": ob.base_amount or Decimal("0"),
-                "amount_type": ob.amount_type or "variable",
-                "obligation_type": "recurring" if ob.type == "indefinite" else "one_time",
-                "status": ob.status or "active",
-                "created_at": ob.created_at,
-                "updated_at": ob.updated_at,
-                "relevant_period": relevant_period,
-                "period_counts": period_counts,
-                "action_state": action_state
-            })
-            
+            overview.append(
+                {
+                    "id": ob.id,
+                    "user_id": ob.user_id,
+                    "name": ob.name,
+                    "description": ob.description,
+                    "currency": ob.currency,
+                    "frequency": ob.frequency,
+                    "amount": ob.base_amount or Decimal("0"),
+                    "amount_type": ob.amount_type or "variable",
+                    "obligation_type": "recurring" if ob.type == "indefinite" else "one_time",
+                    "status": ob.status or "active",
+                    "created_at": ob.created_at,
+                    "updated_at": ob.updated_at,
+                    "relevant_period": relevant_period,
+                    "period_counts": period_counts,
+                    "action_state": action_state,
+                }
+            )
+
         return overview
 
     async def get_obligation(
@@ -287,7 +297,7 @@ class ObligationV17Service:
 
         # Auto-refresh before listing periods
         try:
-            await self.refresh_overdue_periods(user_id, obligation_id)
+            await self.refresh_overdue_periods(user_id, obligation_id, commit=False)
         except Exception:
             pass
 
@@ -338,15 +348,11 @@ class ObligationV17Service:
         period.amount = data.amount
         period.status = PeriodStatus.pending_payment.value
 
-        await self.session.commit()
-        await self.session.refresh(period)
+        await self.session.flush()
 
         # Auto-refresh after defining amount
-        try:
-            await self.refresh_overdue_periods(user_id, obligation_id)
-            await self.session.refresh(period)
-        except Exception:
-            pass
+        await self.refresh_overdue_periods(user_id, obligation_id, commit=False)
+        await self.session.flush()
 
         return period
 
@@ -358,8 +364,6 @@ class ObligationV17Service:
         data: "ObligationPaymentPreviewV17Request",
     ) -> "ObligationPaymentPreviewV17Response":
         """Preview a specific period payment."""
-        from app.obligations.schemas_v17 import ObligationPaymentPreviewV17Response
-
         obligation = await self.get_obligation(user_id, obligation_id)
         if not obligation:
             raise HTTPException(status_code=404, detail="obligation_not_found")
@@ -371,8 +375,6 @@ class ObligationV17Service:
         account = await self.account_repo.get_by_id(data.source_account_id)
         if not account or account.user_id != user_id:
             raise HTTPException(status_code=404, detail="account_not_found")
-
-        from decimal import Decimal
 
         applied_amount = data.amount
 
@@ -391,10 +393,8 @@ class ObligationV17Service:
             fx_rate = fx_info["fx_rate"]
             rate_timestamp = fx_info["rate_timestamp"]
 
-            # calculate source_amount = applied_amount / fx_rate
             source_amount = round_to_minimum_unit(applied_amount / fx_rate, account.currency)
 
-            # create a quote so the user can use it
             provider = StaticFxRateProvider(
                 rates={
                     f"{account.currency.upper()}_{obligation.currency.upper()}": fx_rate,
@@ -403,7 +403,7 @@ class ObligationV17Service:
                 }
             )
             fx_service = FXService(provider=provider, session=self.session)
-            fx_service.quote_validity_minutes = 1.5  # 90 seconds TTL
+            fx_service.quote_validity_minutes = 1.5
             quote = await fx_service.create_quote(
                 user_id=user_id,
                 source_currency=account.currency,
@@ -433,30 +433,153 @@ class ObligationV17Service:
         data: ObligationPeriodPaymentCreateRequest,
     ) -> tuple[ObligationPayment, ObligationPeriod]:
         """Pay a specific period."""
-        obligation = await self.get_obligation(user_id, obligation_id)
-        if not obligation:
-            raise HTTPException(status_code=404, detail="obligation_not_found")
-
         if not data.idempotency_key:
             raise HTTPException(status_code=422, detail="missing_idempotency_key")
 
-        stmt = select(ObligationPayment).where(
+        if not data.source_account_id:
+            raise HTTPException(status_code=422, detail="source_account_id_required")
+
+        if data.amount is None or not data.amount.is_finite() or data.amount <= Decimal("0"):
+            raise HTTPException(status_code=422, detail="invalid_amount")
+
+        command_id = uuid.uuid5(
+            uuid.NAMESPACE_OID, f"obligations_v1_7:{user_id}:{data.idempotency_key}"
+        )
+
+        # 1. Early idempotency / replay check (before locks, availability, account status, FX expiry)
+        existing_event, payments = await find_replay_by_command_id(
+            self.session, user_id, command_id
+        )
+        if existing_event and payments:
+            fp = _extract_event_metadata(existing_event).get("fingerprint")
+            validate_idempotency_fingerprint(
+                fp,
+                obligation_id,
+                period_id,
+                "specific_period",
+                data.source_account_id,
+                data.amount,
+                data.currency or payments[0].currency,
+                data.quote_id,
+                data.rate_snapshot_id,
+                data.payment_date,
+                source_currency=data.source_currency,
+                existing_payments=payments,
+            )
+            stmt_period = select(ObligationPeriod).where(
+                ObligationPeriod.id == payments[0].obligation_period_id
+            )
+            existing_period = (await self.session.execute(stmt_period)).scalars().first()
+            return payments[0], existing_period
+
+        # Fallback check on exact idempotency key for historical payments
+        stmt_pay_key = select(ObligationPayment).where(
             ObligationPayment.user_id == user_id,
             ObligationPayment.idempotency_key == data.idempotency_key,
         )
-        existing = await self.session.execute(stmt)
-        if existing.scalars().first():
-            raise HTTPException(status_code=409, detail="idempotency_conflict")
+        existing_pay_key = (await self.session.execute(stmt_pay_key)).scalars().first()
+        if existing_pay_key:
+            validate_idempotency_fingerprint(
+                None,
+                obligation_id,
+                period_id,
+                "specific_period",
+                data.source_account_id,
+                data.amount,
+                data.currency or existing_pay_key.currency,
+                data.quote_id,
+                data.rate_snapshot_id,
+                data.payment_date,
+                source_currency=data.source_currency,
+                existing_payments=[existing_pay_key],
+            )
+            stmt_period = select(ObligationPeriod).where(
+                ObligationPeriod.id == existing_pay_key.obligation_period_id
+            )
+            existing_period = (await self.session.execute(stmt_period)).scalars().first()
+            return existing_pay_key, existing_period
 
-        stmt = (
+        # 2. Lock root Obligation (fresh after waits)
+        stmt_obl = (
+            select(Obligation)
+            .where(
+                Obligation.id == obligation_id,
+                Obligation.user_id == user_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        obligation = (await self.session.execute(stmt_obl)).scalars().first()
+        if not obligation:
+            raise HTTPException(status_code=404, detail="obligation_not_found")
+
+        # 3. Re-read idempotency under root lock BEFORE terminal lifecycle validation
+        existing_event, payments = await find_replay_by_command_id(
+            self.session, user_id, command_id
+        )
+        if existing_event and payments:
+            fp = _extract_event_metadata(existing_event).get("fingerprint")
+            validate_idempotency_fingerprint(
+                fp,
+                obligation_id,
+                period_id,
+                "specific_period",
+                data.source_account_id,
+                data.amount,
+                data.currency or obligation.currency,
+                data.quote_id,
+                data.rate_snapshot_id,
+                data.payment_date,
+                source_currency=data.source_currency,
+                existing_payments=payments,
+            )
+            stmt_period = select(ObligationPeriod).where(
+                ObligationPeriod.id == payments[0].obligation_period_id
+            )
+            existing_period = (await self.session.execute(stmt_period)).scalars().first()
+            return payments[0], existing_period
+
+        # Fallback check on exact idempotency key under root lock
+        stmt_pay_key = select(ObligationPayment).where(
+            ObligationPayment.user_id == user_id,
+            ObligationPayment.idempotency_key == data.idempotency_key,
+        )
+        existing_pay_key = (await self.session.execute(stmt_pay_key)).scalars().first()
+        if existing_pay_key:
+            validate_idempotency_fingerprint(
+                None,
+                obligation_id,
+                period_id,
+                "specific_period",
+                data.source_account_id,
+                data.amount,
+                data.currency or existing_pay_key.currency,
+                data.quote_id,
+                data.rate_snapshot_id,
+                data.payment_date,
+                source_currency=data.source_currency,
+                existing_payments=[existing_pay_key],
+            )
+            stmt_period = select(ObligationPeriod).where(
+                ObligationPeriod.id == existing_pay_key.obligation_period_id
+            )
+            existing_period = (await self.session.execute(stmt_period)).scalars().first()
+            return existing_pay_key, existing_period
+
+        if obligation.status != ObligationStatus.active.value:
+            raise HTTPException(status_code=400, detail="obligation_inactive")
+
+        # 4. Lock Period (fresh read with populate_existing)
+        stmt_period = (
             select(ObligationPeriod)
             .where(
                 ObligationPeriod.obligation_id == obligation_id,
                 ObligationPeriod.id == str(period_id),
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
-        period = (await self.session.execute(stmt)).scalars().first()
+        period = (await self.session.execute(stmt_period)).scalars().first()
         if not period:
             raise HTTPException(status_code=404, detail="period_not_found")
 
@@ -466,187 +589,133 @@ class ObligationV17Service:
         if period.status not in (
             PeriodStatus.pending_payment.value,
             PeriodStatus.partially_paid.value,
+            PeriodStatus.overdue.value,
         ):
             raise HTTPException(status_code=422, detail="period_not_payable")
 
-        if data.currency and data.currency != obligation.currency:
-            raise HTTPException(status_code=422, detail="currency_mismatch")
+        # 5. Lock Account (fresh after waits)
+        account = await self.account_repo.get_by_id_for_update(
+            data.source_account_id, include_inactive=True
+        )
+        if not account or account.user_id != user_id:
+            raise HTTPException(status_code=404, detail="account_not_found")
+        if not account.is_active:
+            raise HTTPException(status_code=400, detail="account_inactive")
+        if account.balance is None or not account.balance.is_finite() or account.balance < 0:
+            raise HTTPException(status_code=400, detail="account_unavailable")
 
-        from decimal import Decimal
-
-        # Determine source currency
-        source_currency = obligation.currency
-        if data.source_account_id:
-            account = await self.account_repo.get_by_id(data.source_account_id)
-            if not account or account.user_id != user_id:
-                raise HTTPException(status_code=404, detail="account_not_found")
-            source_currency = account.currency
-        elif data.source_currency:
-            source_currency = data.source_currency
-
-        if source_currency != obligation.currency:
-            if not data.rate_snapshot_id and not data.quote_id:
-                raise HTTPException(status_code=422, detail="fx_rate_snapshot_required")
-
-            if data.rate_snapshot_id:
-                from decimal import ROUND_HALF_UP
-
-                from app.obligations.models import ExchangeRate
-
-                stmt = select(ExchangeRate).where(ExchangeRate.id == data.rate_snapshot_id)
-                snapshot = (await self.session.execute(stmt)).scalars().first()
-                if not snapshot:
-                    raise HTTPException(status_code=404, detail="invalid_fx_rate_snapshot")
-                if snapshot.expires_at < datetime.now(UTC):
-                    raise HTTPException(status_code=422, detail="fx_rate_snapshot_expired")
-                if (
-                    snapshot.base_currency != source_currency
-                    or snapshot.quote_currency != obligation.currency
-                ):
-                    raise HTTPException(status_code=422, detail="invalid_fx_rate_snapshot")
-
-                amount = data.amount
-                fx_rate = snapshot.rate
-                source_amount = (amount / fx_rate).quantize(Decimal("0.00"), rounding=ROUND_HALF_UP)
-                source_currency = snapshot.base_currency
-                rate_source = snapshot.provider
-                rate_timestamp = snapshot.fetched_at.replace(tzinfo=None)
-                quote_id = None
-                rate_snapshot_id = snapshot.id
-            else:
-                from app.obligations.models import FXQuote
-
-                stmt = select(FXQuote).where(FXQuote.id == data.quote_id)
-                quote = (await self.session.execute(stmt)).scalars().first()
-                if not quote or quote.user_id != user_id:
-                    raise HTTPException(status_code=404, detail="fx_quote_not_found")
-
-                if quote.expires_at < datetime.now(UTC):
-                    raise HTTPException(status_code=422, detail="fx_quote_expired")
-
-                if (
-                    quote.from_currency != source_currency
-                    or quote.to_currency != obligation.currency
-                ):
-                    raise HTTPException(status_code=422, detail="invalid_fx_quote")
-
-                if data.source_amount is not None and quote.source_amount != data.source_amount:
-                    raise HTTPException(status_code=422, detail="invalid_fx_quote")
-
-                # Relative tolerance of 0.10% (0.001) or absolute tolerance of 50 COP / 0.01 USD/EUR
-                allowed_diff = max(
-                    data.amount * Decimal("0.001"),
-                    Decimal("50.00") if obligation.currency == "COP" else Decimal("0.01"),
-                )
-                if abs(quote.target_amount - data.amount) > allowed_diff:
-                    raise HTTPException(status_code=422, detail="invalid_fx_quote")
-
-                amount = quote.target_amount
-                source_amount = quote.source_amount
-                source_currency = quote.from_currency
-                fx_rate = quote.rate
-                rate_source = quote.provider
-                rate_timestamp = (
-                    quote.rate_timestamp.replace(tzinfo=None) if quote.rate_timestamp else None
-                )
-                quote_id = quote.id
-                rate_snapshot_id = None
-        else:
-            amount = data.amount
-            source_amount = data.amount
-            source_currency = obligation.currency
-            fx_rate = Decimal("1.00000000")
-            rate_source = None
-            rate_timestamp = None
-            quote_id = None
-            rate_snapshot_id = None
+        # 6. Authoritative settlement & FX calculation FIRST
+        settlement = await resolve_settlement(
+            session=self.session,
+            user_id=user_id,
+            obligation=obligation,
+            account=account,
+            requested_amount=data.amount,
+            requested_currency=data.currency,
+            requested_source_currency=data.source_currency,
+            requested_source_amount=data.source_amount,
+            quote_id=data.quote_id,
+            rate_snapshot_id=data.rate_snapshot_id,
+        )
 
         paid_amt = period.paid_amount or Decimal("0")
         remaining_amount = period.amount - paid_amt
-        if amount > remaining_amount:
+        if settlement.applied_amount > remaining_amount:
             raise HTTPException(status_code=422, detail="payment_exceeds_remaining_amount")
 
-        command_id = uuid.uuid5(
-            uuid.NAMESPACE_OID, f"obligations_v1_7:{user_id}:{data.idempotency_key}"
+        # 7. Check Canonical Availability (No Goal mutation)
+        from app.goals.repository import GoalRepository
+
+        goal_repo = GoalRepository(self.session)
+        reserved_amount = await goal_repo.calculate_reserved_by_account(account.id, user_id)
+        if not reserved_amount.is_finite() or reserved_amount < Decimal("0"):
+            raise HTTPException(status_code=409, detail="inconsistent_reservation_state")
+        available_balance = account.balance - reserved_amount
+
+        if available_balance < settlement.source_amount:
+            raise HTTPException(status_code=400, detail="insufficient_balance")
+
+        # 8. Debit Account
+        await self.account_repo.update_balance(account, -settlement.source_amount)
+
+        # 9. Record Ledger Event
+        fingerprint = build_idempotency_fingerprint(
+            obligation_id=obligation_id,
+            period_id=period_id,
+            strategy="specific_period",
+            source_account_id=account.id,
+            amount=data.amount,
+            currency=obligation.currency,
+            source_currency=account.currency,
+            quote_id=data.quote_id,
+            rate_snapshot_id=data.rate_snapshot_id,
+            payment_date=data.payment_date,
         )
 
         event_create = LedgerEventCreate(
             user_id=user_id,
-            account_id=data.source_account_id,
-            event_type=EventType.OBLIGATION_PAYMENT,
-            direction=Direction.OUTFLOW,
-            amount=source_amount,
-            currency=source_currency,
+            event_type="obligation_payment",
+            direction="outflow",
+            account_id=account.id,
+            amount=settlement.source_amount,
+            currency=settlement.source_currency,
             description=f"Obligation Payment V1.7: {obligation.name}",
             occurred_at=datetime.now(UTC),
             command_id=command_id,
-            metadata_={
+            metadata={
+                "fingerprint": fingerprint,
+                "idempotency_key": data.idempotency_key,
                 "obligation_period_id": str(period.id),
-                "fx_quote_id": str(quote_id) if quote_id else None,
-                "rate_snapshot_id": str(rate_snapshot_id) if rate_snapshot_id else None,
-                "source_amount": str(source_amount),
-                "source_currency": source_currency,
-                "fx_rate": str(fx_rate),
+                "fx_quote_id": str(settlement.quote_id) if settlement.quote_id else None,
+                "rate_snapshot_id": str(settlement.rate_snapshot_id)
+                if settlement.rate_snapshot_id
+                else None,
+                "source_amount": str(settlement.source_amount),
+                "source_currency": settlement.source_currency,
+                "fx_rate": str(settlement.fx_rate),
+                "allocations": [
+                    {
+                        "obligation_period_id": str(period.id),
+                        "amount": str(settlement.applied_amount),
+                    }
+                ],
             },
         )
         ledger_result = await self.ledger_service.record_event(event_create)
 
         if ledger_result.idempotent:
-            await self.session.rollback()
-            stmt = select(ObligationPayment).where(
-                ObligationPayment.idempotency_key == data.idempotency_key
-            )
-            payment = (await self.session.execute(stmt)).scalars().first()
-            if not payment:
-                stmt = select(ObligationPayment).where(
-                    ObligationPayment.financial_event_id == ledger_result.event.id
-                )
-                payment = (await self.session.execute(stmt)).scalars().first()
-            stmt = select(ObligationPeriod).where(ObligationPeriod.id == str(period_id))
-            period = (await self.session.execute(stmt)).scalars().first()
-            return payment, period
-
-        if data.source_account_id:
-            # Debit the account
-            account = await self.account_repo.get_by_id_for_update(data.source_account_id)
-            if not account or account.user_id != user_id:
-                raise HTTPException(status_code=404, detail="account_not_found")
-            if account.balance < source_amount:
-                raise HTTPException(status_code=400, detail="insufficient_balance")
-            await self.account_repo.update_balance(account, -source_amount)
+            # The outer unit of work rolls back the debit on a late command collision.
+            raise HTTPException(status_code=409, detail="idempotency_conflict")
 
         payment = ObligationPayment(
             id=uuid.uuid4(),
             obligation_id=obligation.id,
             obligation_period_id=period.id,
             user_id=user_id,
-            account_id=data.source_account_id,
+            account_id=account.id,
             financial_event_id=ledger_result.event.id,
-            amount=amount,
+            amount=settlement.applied_amount,
             currency=obligation.currency,
-            source_amount=source_amount,
-            source_currency=source_currency,
-            fx_rate=fx_rate,
-            rate_source=rate_source,
-            rate_timestamp=rate_timestamp,
-            quote_id=quote_id,
-            rate_snapshot_id=rate_snapshot_id,
+            source_amount=settlement.source_amount,
+            source_currency=settlement.source_currency,
+            fx_rate=settlement.fx_rate,
+            rate_source=settlement.rate_source,
+            rate_timestamp=settlement.rate_timestamp,
+            quote_id=settlement.quote_id,
+            rate_snapshot_id=settlement.rate_snapshot_id,
             idempotency_key=data.idempotency_key,
         )
         self.session.add(payment)
 
-        period.paid_amount = paid_amt + amount
+        period.paid_amount = paid_amt + settlement.applied_amount
         if period.paid_amount < period.amount:
             period.status = PeriodStatus.partially_paid.value
         else:
             period.status = PeriodStatus.paid.value
 
-        await self.session.commit()
-        await self.session.refresh(period)
-        await self.session.refresh(payment)
+        await self.session.flush()
 
-        # Ensure missing periods are generated
-        await self.refresh_overdue_periods(user_id, obligation_id)
+        await self.refresh_overdue_periods(user_id, obligation_id, commit=False)
 
         return payment, period
 
@@ -656,162 +725,159 @@ class ObligationV17Service:
         obligation_id: uuid.UUID,
         data: "ObligationFIFOPaymentCreateRequest",
     ) -> tuple[list[ObligationPayment], list[ObligationPeriod]]:
-        """Smart payment that acts as a single action, checking if oldest is pending amount."""
-        
-        # 1. Refresh periods
-        await self.refresh_overdue_periods(user_id, obligation_id)
-        
-        # 2. Check if oldest unpaid period requires amount definition
-        stmt = (
-            select(ObligationPeriod)
-            .where(
-                ObligationPeriod.obligation_id == obligation_id,
-                ObligationPeriod.status.notin_([
-                    PeriodStatus.paid.value,
-                    PeriodStatus.skipped.value,
-                    PeriodStatus.cancelled.value,
-                ])
-            )
-            .order_by(
-                ObligationPeriod.due_date.asc(),
-                ObligationPeriod.sequence_number.asc(),
-                ObligationPeriod.created_at.asc()
-            )
-            .limit(1)
-        )
-        oldest_unpaid = (await self.session.execute(stmt)).scalars().first()
-        
-        if oldest_unpaid and (
-            oldest_unpaid.status == PeriodStatus.pending_amount_definition.value 
-            or oldest_unpaid.amount is None
-        ):
-            raise HTTPException(
-                status_code=422, 
-                detail="oldest_period_requires_amount_definition"
-            )
-            
-        # 3. Delegate to FIFO payment which natively handles single/multiple periods
-        return await self.pay_obligation_fifo(user_id, obligation_id, data)
-
-
+        """
+        Smart payment delegates to FIFO with strategy='smart'.
+        Replay is resolved before refresh or oldest checks.
+        """
+        return await self.pay_obligation_fifo(user_id, obligation_id, data, strategy="smart")
 
     async def pay_obligation_fifo(
         self,
         user_id: uuid.UUID,
         obligation_id: uuid.UUID,
         data: "ObligationFIFOPaymentCreateRequest",
+        strategy: str = "fifo",
     ) -> tuple[list[ObligationPayment], list[ObligationPeriod]]:
         """Pay obligation using FIFO strategy across periods."""
-        obligation = await self.get_obligation(user_id, obligation_id)
-        if not obligation:
-            raise HTTPException(status_code=404, detail="obligation_not_found")
-
         if not data.idempotency_key:
             raise HTTPException(status_code=422, detail="missing_idempotency_key")
 
-        stmt = select(ObligationPayment).where(
-            ObligationPayment.user_id == user_id,
-            ObligationPayment.idempotency_key.like(f"{data.idempotency_key}-%")
+        if not data.source_account_id:
+            raise HTTPException(status_code=422, detail="source_account_id_required")
+
+        if data.amount is None or not data.amount.is_finite() or data.amount <= Decimal("0"):
+            raise HTTPException(status_code=422, detail="invalid_amount")
+
+        command_id = uuid.uuid5(
+            uuid.NAMESPACE_OID, f"obligations_v1_7:{user_id}:{data.idempotency_key}"
         )
-        existing = await self.session.execute(stmt)
-        if existing.scalars().first():
-            raise HTTPException(status_code=409, detail="idempotency_conflict")
 
-        if data.currency and data.currency != obligation.currency:
-            raise HTTPException(status_code=422, detail="currency_mismatch")
+        # 1. Early idempotency / replay check (exact match, strictly scoped to user)
+        existing_event, payments = await find_replay_by_command_id(
+            self.session, user_id, command_id
+        )
+        if existing_event and payments:
+            fp = _extract_event_metadata(existing_event).get("fingerprint")
+            validate_idempotency_fingerprint(
+                fp,
+                obligation_id,
+                None,
+                strategy,
+                data.source_account_id,
+                data.amount,
+                data.currency or payments[0].currency,
+                data.quote_id,
+                data.rate_snapshot_id,
+                data.payment_date,
+                source_currency=data.source_currency,
+                existing_payments=payments,
+            )
+            period_ids = [p.obligation_period_id for p in payments]
+            stmt_periods = select(ObligationPeriod).where(ObligationPeriod.id.in_(period_ids))
+            existing_periods = list((await self.session.execute(stmt_periods)).scalars().all())
+            return payments, existing_periods
 
-        from decimal import Decimal
+        # Fallback check on exact idempotency key for historical payments
+        stmt_pay_key = (
+            select(ObligationPayment)
+            .where(
+                ObligationPayment.user_id == user_id,
+                ObligationPayment.idempotency_key == data.idempotency_key,
+            )
+            .order_by(ObligationPayment.created_at.asc())
+        )
+        existing_pay_key = list((await self.session.execute(stmt_pay_key)).scalars().all())
+        if existing_pay_key:
+            validate_idempotency_fingerprint(
+                None,
+                obligation_id,
+                None,
+                strategy,
+                data.source_account_id,
+                data.amount,
+                data.currency or existing_pay_key[0].currency,
+                data.quote_id,
+                data.rate_snapshot_id,
+                data.payment_date,
+                source_currency=data.source_currency,
+                existing_payments=existing_pay_key,
+            )
+            period_ids = [p.obligation_period_id for p in existing_pay_key]
+            stmt_periods = select(ObligationPeriod).where(ObligationPeriod.id.in_(period_ids))
+            existing_periods = list((await self.session.execute(stmt_periods)).scalars().all())
+            return existing_pay_key, existing_periods
 
-        # Determine source currency
-        source_currency = obligation.currency
-        if data.source_account_id:
-            account = await self.account_repo.get_by_id(data.source_account_id)
-            if not account or account.user_id != user_id:
-                raise HTTPException(status_code=404, detail="account_not_found")
-            source_currency = account.currency
-        elif data.source_currency:
-            source_currency = data.source_currency
+        # 2. Lock root Obligation (fresh after waits)
+        stmt_obl = (
+            select(Obligation)
+            .where(
+                Obligation.id == obligation_id,
+                Obligation.user_id == user_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        obligation = (await self.session.execute(stmt_obl)).scalars().first()
+        if not obligation:
+            raise HTTPException(status_code=404, detail="obligation_not_found")
 
-        if source_currency != obligation.currency:
-            if not data.rate_snapshot_id and not data.quote_id:
-                raise HTTPException(status_code=422, detail="fx_rate_snapshot_required")
+        # 3. Re-read idempotency under root lock BEFORE terminal lifecycle validation
+        existing_event, payments = await find_replay_by_command_id(
+            self.session, user_id, command_id
+        )
+        if existing_event and payments:
+            fp = _extract_event_metadata(existing_event).get("fingerprint")
+            validate_idempotency_fingerprint(
+                fp,
+                obligation_id,
+                None,
+                strategy,
+                data.source_account_id,
+                data.amount,
+                data.currency or obligation.currency,
+                data.quote_id,
+                data.rate_snapshot_id,
+                data.payment_date,
+                source_currency=data.source_currency,
+                existing_payments=payments,
+            )
+            period_ids = [p.obligation_period_id for p in payments]
+            stmt_periods = select(ObligationPeriod).where(ObligationPeriod.id.in_(period_ids))
+            existing_periods = list((await self.session.execute(stmt_periods)).scalars().all())
+            return payments, existing_periods
 
-            if data.rate_snapshot_id:
-                from decimal import ROUND_HALF_UP
+        if obligation.status != ObligationStatus.active.value:
+            raise HTTPException(status_code=400, detail="obligation_inactive")
 
-                from app.obligations.models import ExchangeRate
+        # 4. Check if oldest unpaid period requires amount definition (stops FIFO and Smart)
+        stmt_oldest = (
+            select(ObligationPeriod)
+            .where(
+                ObligationPeriod.obligation_id == obligation_id,
+                ObligationPeriod.status.notin_(
+                    [
+                        PeriodStatus.paid.value,
+                        PeriodStatus.skipped.value,
+                        PeriodStatus.cancelled.value,
+                    ]
+                ),
+            )
+            .order_by(
+                ObligationPeriod.due_date.asc(),
+                ObligationPeriod.sequence_number.asc(),
+                ObligationPeriod.created_at.asc(),
+            )
+            .limit(1)
+        )
+        oldest_period = (await self.session.execute(stmt_oldest)).scalars().first()
+        if oldest_period and (
+            oldest_period.amount is None
+            or oldest_period.status == PeriodStatus.pending_amount_definition.value
+        ):
+            raise HTTPException(status_code=422, detail="oldest_period_requires_amount_definition")
 
-                stmt = select(ExchangeRate).where(ExchangeRate.id == data.rate_snapshot_id)
-                snapshot = (await self.session.execute(stmt)).scalars().first()
-                if not snapshot:
-                    raise HTTPException(status_code=404, detail="invalid_fx_rate_snapshot")
-                if snapshot.expires_at < datetime.now(UTC):
-                    raise HTTPException(status_code=422, detail="fx_rate_snapshot_expired")
-                if (
-                    snapshot.base_currency != source_currency
-                    or snapshot.quote_currency != obligation.currency
-                ):
-                    raise HTTPException(status_code=422, detail="invalid_fx_rate_snapshot")
-
-                amount = data.amount
-                fx_rate = snapshot.rate
-                source_amount = (amount / fx_rate).quantize(Decimal("0.00"), rounding=ROUND_HALF_UP)
-                source_currency = snapshot.base_currency
-                rate_source = snapshot.provider
-                rate_timestamp = snapshot.fetched_at.replace(tzinfo=None)
-                quote_id = None
-                rate_snapshot_id = snapshot.id
-            else:
-                from app.obligations.models import FXQuote
-
-                stmt = select(FXQuote).where(FXQuote.id == data.quote_id)
-                quote = (await self.session.execute(stmt)).scalars().first()
-                if not quote or quote.user_id != user_id:
-                    raise HTTPException(status_code=404, detail="fx_quote_not_found")
-
-                if quote.expires_at < datetime.now(UTC):
-                    raise HTTPException(status_code=422, detail="fx_quote_expired")
-
-                if (
-                    quote.from_currency != source_currency
-                    or quote.to_currency != obligation.currency
-                ):
-                    raise HTTPException(status_code=422, detail="invalid_fx_quote")
-
-                if data.source_amount is not None and quote.source_amount != data.source_amount:
-                    raise HTTPException(status_code=422, detail="invalid_fx_quote")
-
-                # Relative tolerance of 0.10% (0.001) or absolute tolerance of 50 COP / 0.01 USD/EUR
-                allowed_diff = max(
-                    data.amount * Decimal("0.001"),
-                    Decimal("50.00") if obligation.currency == "COP" else Decimal("0.01"),
-                )
-                if abs(quote.target_amount - data.amount) > allowed_diff:
-                    raise HTTPException(status_code=422, detail="invalid_fx_quote")
-
-                amount = quote.target_amount
-                source_amount = quote.source_amount
-                source_currency = quote.from_currency
-                fx_rate = quote.rate
-                rate_source = quote.provider
-                rate_timestamp = (
-                    quote.rate_timestamp.replace(tzinfo=None) if quote.rate_timestamp else None
-                )
-                quote_id = quote.id
-                rate_snapshot_id = None
-        else:
-            amount = data.amount
-            source_amount = data.amount if data.source_amount is None else data.source_amount
-            source_currency = obligation.currency
-            fx_rate = Decimal("1.00000000")
-            rate_source = None
-            rate_timestamp = None
-            quote_id = None
-            rate_snapshot_id = None
-
-        # Get payable periods: pending_payment, partially_paid, overdue
-        # Sort by due_date asc, sequence_number asc, created_at asc
-        stmt = (
+        # 5. Lock ordered payable periods
+        stmt_periods = (
             select(ObligationPeriod)
             .where(
                 ObligationPeriod.obligation_id == obligation_id,
@@ -829,14 +895,13 @@ class ObligationV17Service:
                 ObligationPeriod.created_at.asc(),
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
-        periods_result = await self.session.execute(stmt)
-        periods = periods_result.scalars().all()
+        periods_result = await self.session.execute(stmt_periods)
+        periods = list(periods_result.scalars().all())
 
         if not periods:
             raise HTTPException(status_code=422, detail="no_payable_periods")
-
-        from decimal import Decimal
 
         total_remaining = Decimal("0")
         period_data = []
@@ -848,129 +913,159 @@ class ObligationV17Service:
             total_remaining += remaining
             period_data.append((p, paid_amt, remaining))
 
-        if amount > total_remaining:
+        # 6. Lock Account (fresh after waits)
+        account = await self.account_repo.get_by_id_for_update(
+            data.source_account_id, include_inactive=True
+        )
+        if not account or account.user_id != user_id:
+            raise HTTPException(status_code=404, detail="account_not_found")
+        if not account.is_active:
+            raise HTTPException(status_code=400, detail="account_inactive")
+        if account.balance is None or not account.balance.is_finite() or account.balance < 0:
+            raise HTTPException(status_code=400, detail="account_unavailable")
+
+        # 7. Authoritative settlement & FX calculation FIRST
+        settlement = await resolve_settlement(
+            session=self.session,
+            user_id=user_id,
+            obligation=obligation,
+            account=account,
+            requested_amount=data.amount,
+            requested_currency=data.currency,
+            requested_source_currency=data.source_currency,
+            requested_source_amount=data.source_amount,
+            quote_id=data.quote_id,
+            rate_snapshot_id=data.rate_snapshot_id,
+        )
+
+        if settlement.applied_amount > total_remaining:
             raise HTTPException(status_code=422, detail="payment_exceeds_total_remaining_amount")
 
-        remaining_input = amount
+        # 8. Compute allocations from authoritative settlement.applied_amount
+        remaining_applied = settlement.applied_amount
         allocations = []
         for p, paid_amt, remaining in period_data:
-            if remaining_input <= Decimal("0"):
+            if remaining_applied <= Decimal("0"):
                 break
-            payment_slice = min(remaining_input, remaining)
-            remaining_input -= payment_slice
+            payment_slice = min(remaining_applied, remaining)
+            remaining_applied -= payment_slice
             allocations.append((p, paid_amt, payment_slice))
 
-        command_id = uuid.uuid5(
-            uuid.NAMESPACE_OID, f"obligations_v1_7:{user_id}:{data.idempotency_key}"
+        source_slices = reconcile_fifo_source_allocations(
+            total_source_amount=settlement.source_amount,
+            allocations=allocations,
         )
+
+        # 9. Check Canonical Availability (No Goal mutation)
+        from app.goals.repository import GoalRepository
+
+        goal_repo = GoalRepository(self.session)
+        reserved_amount = await goal_repo.calculate_reserved_by_account(account.id, user_id)
+        if not reserved_amount.is_finite() or reserved_amount < Decimal("0"):
+            raise HTTPException(status_code=409, detail="inconsistent_reservation_state")
+        available_balance = account.balance - reserved_amount
+
+        if available_balance < settlement.source_amount:
+            raise HTTPException(status_code=400, detail="insufficient_balance")
+
+        # 10. Debit Account
+        await self.account_repo.update_balance(account, -settlement.source_amount)
+
+        # 11. Record Ledger Event
+        fingerprint = build_idempotency_fingerprint(
+            obligation_id=obligation_id,
+            period_id=None,
+            strategy=strategy,
+            source_account_id=account.id,
+            amount=data.amount,
+            currency=obligation.currency,
+            source_currency=account.currency,
+            quote_id=data.quote_id,
+            rate_snapshot_id=data.rate_snapshot_id,
+            payment_date=data.payment_date,
+        )
+
+        allocations_meta = [
+            {"obligation_period_id": str(p.id), "amount": str(slice_amt)}
+            for (p, _, slice_amt) in allocations
+        ]
 
         event_create = LedgerEventCreate(
             user_id=user_id,
-            account_id=data.source_account_id,
-            event_type=EventType.OBLIGATION_PAYMENT,
-            direction=Direction.OUTFLOW,
-            amount=source_amount,
-            currency=source_currency,
-            description=f"Obligation FIFO Payment V1.7: {obligation.name}",
+            event_type="obligation_payment",
+            direction="outflow",
+            account_id=account.id,
+            amount=settlement.source_amount,
+            currency=settlement.source_currency,
+            description=f"Obligation Payment V1.7 ({strategy.upper()}): {obligation.name}",
             occurred_at=datetime.now(UTC),
             command_id=command_id,
-            metadata_={
-                "fx_quote_id": str(quote_id) if quote_id else None,
-                "rate_snapshot_id": str(rate_snapshot_id) if rate_snapshot_id else None,
-                "source_amount": str(source_amount),
-                "source_currency": source_currency,
-                "fx_rate": str(fx_rate),
-                "allocations": [
-                    {"obligation_period_id": str(p.id), "amount": str(slice_amt)}
-                    for p, _, slice_amt in allocations
-                ],
+            metadata={
+                "fingerprint": fingerprint,
+                "idempotency_key": data.idempotency_key,
+                "strategy": strategy,
+                "fx_quote_id": str(settlement.quote_id) if settlement.quote_id else None,
+                "rate_snapshot_id": str(settlement.rate_snapshot_id)
+                if settlement.rate_snapshot_id
+                else None,
+                "source_amount": str(settlement.source_amount),
+                "source_currency": settlement.source_currency,
+                "fx_rate": str(settlement.fx_rate),
+                "allocations": allocations_meta,
             },
         )
         ledger_result = await self.ledger_service.record_event(event_create)
 
         if ledger_result.idempotent:
-            await self.session.rollback()
-            stmt = select(ObligationPayment).where(
-                ObligationPayment.idempotency_key == data.idempotency_key
-            )
-            payments = list((await self.session.execute(stmt)).scalars().all())
-            if not payments:
-                stmt = select(ObligationPayment).where(
-                    ObligationPayment.financial_event_id == ledger_result.event.id
-                )
-                payments = list((await self.session.execute(stmt)).scalars().all())
-
-            period_ids = [str(p.obligation_period_id) for p in payments]
-            if period_ids:
-                stmt = select(ObligationPeriod).where(
-                    ObligationPeriod.obligation_id == obligation_id,
-                    ObligationPeriod.id.in_(period_ids),
-                )
-                periods = list((await self.session.execute(stmt)).scalars().all())
-            else:
-                periods = []
-            return payments, periods
-
-        if data.source_account_id:
-            # Debit the account
-            account = await self.account_repo.get_by_id_for_update(data.source_account_id)
-            if not account or account.user_id != user_id:
-                raise HTTPException(status_code=404, detail="account_not_found")
-            if account.balance < source_amount:
-                raise HTTPException(status_code=400, detail="insufficient_balance")
-            await self.account_repo.update_balance(account, -source_amount)
+            # The outer unit of work rolls back the debit on a late command collision.
+            raise HTTPException(status_code=409, detail="idempotency_conflict")
 
         created_payments = []
         updated_periods = []
 
-        for p, paid_amt, payment_slice in allocations:
+        for (p, paid_amt, applied_slice), source_slice in zip(
+            allocations, source_slices, strict=False
+        ):
             payment = ObligationPayment(
                 id=uuid.uuid4(),
                 obligation_id=obligation.id,
                 obligation_period_id=p.id,
                 user_id=user_id,
-                account_id=data.source_account_id,
+                account_id=account.id,
                 financial_event_id=ledger_result.event.id,
-                amount=payment_slice,
+                amount=applied_slice,
                 currency=obligation.currency,
-                source_amount=(payment_slice / fx_rate).quantize(Decimal("0.0000")),  # Rough split
-                source_currency=source_currency,
-                fx_rate=fx_rate,
-                rate_source=rate_source,
-                rate_timestamp=rate_timestamp,
-                quote_id=quote_id,
-                rate_snapshot_id=rate_snapshot_id,
+                source_amount=source_slice,
+                source_currency=settlement.source_currency,
+                fx_rate=settlement.fx_rate,
+                rate_source=settlement.rate_source,
+                rate_timestamp=settlement.rate_timestamp,
+                quote_id=settlement.quote_id,
+                rate_snapshot_id=settlement.rate_snapshot_id,
                 idempotency_key=f"{data.idempotency_key}-{p.id}",
             )
             self.session.add(payment)
             created_payments.append(payment)
 
-            p.paid_amount = paid_amt + payment_slice
+            p.paid_amount = paid_amt + applied_slice
             if p.paid_amount < p.amount:
                 p.status = PeriodStatus.partially_paid.value
             else:
                 p.status = PeriodStatus.paid.value
             updated_periods.append(p)
 
-        await self.session.commit()
-        for p in updated_periods:
-            await self.session.refresh(p)
-        for payment in created_payments:
-            await self.session.refresh(payment)
+        await self.session.flush()
 
-        # Ensure missing periods are generated
-        refreshed_periods, _ = await self.refresh_overdue_periods(user_id, obligation_id)
-
-        # Merge refreshed periods into updated_periods if they aren't already there
-        updated_period_ids = {p.id for p in updated_periods}
-        for rp in refreshed_periods:
-            if rp.id not in updated_period_ids:
-                updated_periods.append(rp)
+        await self.refresh_overdue_periods(user_id, obligation_id, commit=False)
 
         return created_payments, updated_periods
 
     async def skip_period(
-        self, user_id: uuid.UUID, obligation_id: uuid.UUID, period_id: uuid.UUID
+        self,
+        user_id: uuid.UUID,
+        obligation_id: uuid.UUID,
+        period_id: uuid.UUID,
+        commit: bool = True,
     ) -> ObligationPeriod:
         obligation = await self.get_obligation(user_id, obligation_id)
         if not obligation:
@@ -988,16 +1083,23 @@ class ObligationV17Service:
             raise HTTPException(status_code=422, detail="period_not_skippable")
 
         period.status = PeriodStatus.skipped.value
-        await self.session.commit()
-        await self.session.refresh(period)
+        if commit:
+            await self.session.commit()
+            await self.session.refresh(period)
+        else:
+            await self.session.flush()
 
         # Ensure missing periods are generated
-        await self.refresh_overdue_periods(user_id, obligation_id)
+        await self.refresh_overdue_periods(user_id, obligation_id, commit=commit)
 
         return period
 
     async def cancel_period(
-        self, user_id: uuid.UUID, obligation_id: uuid.UUID, period_id: uuid.UUID
+        self,
+        user_id: uuid.UUID,
+        obligation_id: uuid.UUID,
+        period_id: uuid.UUID,
+        commit: bool = True,
     ) -> ObligationPeriod:
         obligation = await self.get_obligation(user_id, obligation_id)
         if not obligation:
@@ -1006,8 +1108,6 @@ class ObligationV17Service:
         period = await self.get_period(obligation_id, period_id)
         if not period:
             raise HTTPException(status_code=404, detail="period_not_found")
-
-        from decimal import Decimal
 
         paid_amt = period.paid_amount or Decimal("0")
         if paid_amt > 0:
@@ -1022,18 +1122,26 @@ class ObligationV17Service:
             raise HTTPException(status_code=422, detail="period_not_cancellable")
 
         period.status = PeriodStatus.cancelled.value
-        await self.session.commit()
-        await self.session.refresh(period)
+        if commit:
+            await self.session.commit()
+            await self.session.refresh(period)
+        else:
+            await self.session.flush()
 
         # Ensure missing periods are generated
-        await self.refresh_overdue_periods(user_id, obligation_id)
+        await self.refresh_overdue_periods(user_id, obligation_id, commit=commit)
 
         return period
 
     async def refresh_overdue_periods(
-        self, user_id: uuid.UUID, obligation_id: uuid.UUID
+        self,
+        user_id: uuid.UUID,
+        obligation_id: uuid.UUID,
+        commit: bool = True,
+        obligation: Obligation | None = None,
     ) -> tuple[list[ObligationPeriod], int]:
-        obligation = await self.get_obligation(user_id, obligation_id)
+        if obligation is None:
+            obligation = await self.get_obligation(user_id, obligation_id)
         if not obligation:
             raise HTTPException(status_code=404, detail="obligation_not_found")
 
@@ -1063,13 +1171,15 @@ class ObligationV17Service:
             updated_periods.append(p)
 
         if updated_periods:
-            await self.session.commit()
-            for p in updated_periods:
-                await self.session.refresh(p)
+            if commit:
+                await self.session.commit()
+                for p in updated_periods:
+                    await self.session.refresh(p)
+            else:
+                await self.session.flush()
 
         # 2. Generate missing periods up to today
         engine = PeriodEngine(self.session)
-        # We manually sync periods, skipping the internal engine's overdue logic since we just did a better one
         if obligation.status == "active" and obligation.start_date:
             current_seq = engine._find_sequence_for_date(obligation, today)
             max_seq = 1 if obligation.frequency == "one_time" else current_seq + 1
@@ -1091,7 +1201,10 @@ class ObligationV17Service:
                 ):
                     updated_periods.append(new_period)
 
-            await self.session.commit()
+            if commit:
+                await self.session.commit()
+            else:
+                await self.session.flush()
 
         return updated_periods, len(updated_periods)
 
@@ -1114,11 +1227,15 @@ class ObligationV17Service:
         stmt_update = (
             update(ObligationPeriod)
             .where(
-                ObligationPeriod.status.in_([PeriodStatus.pending_payment.value, PeriodStatus.partially_paid.value]),
+                ObligationPeriod.status.in_(
+                    [PeriodStatus.pending_payment.value, PeriodStatus.partially_paid.value]
+                ),
                 ObligationPeriod.due_date < today,
                 ObligationPeriod.obligation_id.in_(
-                    select(Obligation.id).where(Obligation.user_id == user_id, Obligation.status == "active")
-                )
+                    select(Obligation.id).where(
+                        Obligation.user_id == user_id, Obligation.status == "active"
+                    )
+                ),
             )
             .values(status=PeriodStatus.overdue.value)
         )
@@ -1126,9 +1243,9 @@ class ObligationV17Service:
 
         # 2. Get active recurring obligations
         stmt_active = select(Obligation).where(
-            Obligation.user_id == user_id, 
+            Obligation.user_id == user_id,
             Obligation.status == "active",
-            Obligation.frequency != "one_time"
+            Obligation.frequency != "one_time",
         )
         active_obls = (await self.session.execute(stmt_active)).scalars().all()
 
@@ -1176,7 +1293,11 @@ class ObligationV17Service:
                 p_start, p_end, p_due = calculate_period_bounds(obligation, seq)
                 p_key = generate_period_key(obligation.frequency, p_start, seq)
 
-                is_fixed = obligation.payment_mode in ("fixed", "partial_allowed", "fixed_full_payment")
+                is_fixed = obligation.payment_mode in (
+                    "fixed",
+                    "partial_allowed",
+                    "fixed_full_payment",
+                )
                 amount = obligation.base_amount if is_fixed else None
                 status = "pending_payment" if is_fixed else "pending_amount_definition"
 
@@ -1195,8 +1316,6 @@ class ObligationV17Service:
                     currency=obligation.currency,
                     paid_amount=0,
                     status=status,
-                    # We do not set is_current=True explicitly to avoid duplicates 
-                    # and match PeriodEngine logic
                 )
                 new_periods.append(new_period)
 
@@ -1207,7 +1326,6 @@ class ObligationV17Service:
                     self.session.add_all(new_periods)
                     await self.session.flush()
             except IntegrityError:
-                # Concurrent request inserted the same periods. Safe to ignore.
                 for p in new_periods:
                     self.session.expunge(p)
                 pass
@@ -1219,7 +1337,6 @@ class ObligationV17Service:
 
     async def get_summary(self, user_id: uuid.UUID, month: str | None = None):
         from datetime import date, datetime
-        from decimal import Decimal
 
         from app.obligations.schemas_v17 import (
             ObligationsV17ActionRequiredItem,
@@ -1235,11 +1352,11 @@ class ObligationV17Service:
         try:
             await self.refresh_due_periods_for_user(user_id, commit=True)
         except Exception:
-            pass # Ignore errors in refresh to avoid breaking summary
+            pass
 
-        # Determine bounds for the month using due_date
-        year, m = map(int, month.split('-'))
+        year, m = map(int, month.split("-"))
         from calendar import monthrange
+
         first_day = date(year, m, 1)
         last_day = date(year, m, monthrange(year, m)[1])
 
@@ -1285,7 +1402,6 @@ class ObligationV17Service:
             c_map = totals_by_currency_map[currency]
             c_map["period_count"] += 1
 
-            # Update status counts
             status_val = period.status
             if status_val == PeriodStatus.pending_payment.value:
                 status_counts.pending_payment += 1
@@ -1308,9 +1424,7 @@ class ObligationV17Service:
             paid = period.paid_amount or Decimal("0.00")
             remaining = amt - paid
 
-            # Do not sum amounts for skipped/cancelled into pending
             if status_val not in (PeriodStatus.skipped.value, PeriodStatus.cancelled.value):
-                # paid_amount is always added if there's any paid
                 c_map["paid_amount"] += paid
 
                 if status_val == PeriodStatus.overdue.value:
@@ -1322,7 +1436,6 @@ class ObligationV17Service:
                 ):
                     c_map["pending_amount"] += remaining
                 elif status_val == PeriodStatus.pending_amount_definition.value:
-                    # pending_amount_definition has amount=None, so amt=0. Does not add to totals.
                     requires_action.append(
                         ObligationsV17ActionRequiredItem(
                             obligation_id=obligation.id,
@@ -1334,7 +1447,6 @@ class ObligationV17Service:
                         )
                     )
 
-        # Build response
         currency_totals = []
         for v in sorted(totals_by_currency_map.values(), key=lambda x: x["currency"]):
             currency_totals.append(
@@ -1347,7 +1459,6 @@ class ObligationV17Service:
                 )
             )
 
-        # Sort requires_action by due_date asc, then name asc
         requires_action.sort(key=lambda x: (x.due_date, x.name))
 
         return ObligationsV17SummaryResponse(
@@ -1368,7 +1479,6 @@ class ObligationV17Service:
             ObligationsV17IntelligenceRiskFlag,
         )
 
-        # Reuse summary logic entirely
         summary = await self.get_summary(user_id, month)
 
         risk_flags = []

@@ -52,7 +52,7 @@ class AccountRepository:
         stmt = select(Account).where(Account.id == account_id)
         if not include_inactive:
             stmt = stmt.where(Account.is_active.is_(True))
-        stmt = stmt.with_for_update()
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 

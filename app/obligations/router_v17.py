@@ -1,4 +1,3 @@
-
 from decimal import Decimal
 from uuid import UUID
 
@@ -7,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db_session
+from app.core.uow import UnitOfWork
 from app.obligations.schemas_v17 import (
     ApiErrorResponse,
     EmptyStateResponse,
@@ -22,8 +22,8 @@ from app.obligations.schemas_v17 import (
     ObligationPeriodV17Response,
     ObligationsV17IntelligenceContextResponse,
     ObligationsV17SummaryResponse,
-    ObligationV17OverviewResponse,
     ObligationV17CreateRequest,
+    ObligationV17OverviewResponse,
     ObligationV17Response,
 )
 from app.obligations.service_v17 import ObligationV17Service
@@ -58,9 +58,11 @@ def _map_obligation(obligation) -> ObligationV17Response:
         updated_at=obligation.updated_at or datetime.utcnow(),
     )
 
+
 def _map_obligation_period(period) -> ObligationPeriodV17Response:
     from datetime import datetime
     from decimal import Decimal
+
     amt = period.amount or Decimal("0")
     paid = period.paid_amount or Decimal("0")
     # For pending_amount_definition, amount could be None, but handled as 0 here which is fine since the schema requires a string/decimal
@@ -96,6 +98,7 @@ async def list_obligations_v17(
     obligations = await service.list_obligations(current_profile.id)
     return [_map_obligation(obl) for obl in obligations]
 
+
 @router.get(
     "/overview",
     response_model=list[ObligationV17OverviewResponse],
@@ -112,7 +115,7 @@ async def list_obligations_overview_v17(
     """
     service = ObligationV17Service(session)
     overview = await service.list_obligations_overview(current_profile.id)
-    
+
     # overview contains dicts that match ObligationV17OverviewResponse fields natively
     # but the period needs _map_obligation_period.
     result = []
@@ -120,8 +123,9 @@ async def list_obligations_overview_v17(
         rp = ob_dict.get("relevant_period")
         ob_dict["relevant_period"] = _map_obligation_period(rp) if rp else None
         result.append(ob_dict)
-    
+
     return result
+
 
 @router.post(
     "",
@@ -139,8 +143,10 @@ async def create_obligation_v17(
     """
     Creates an obligation using V1.7 contract.
     """
-    service = ObligationV17Service(db)
-    obligation, initial_period = await service.create_obligation(current_profile.id, data)
+    uow = UnitOfWork(db)
+    async with uow.transaction():
+        service = ObligationV17Service(db)
+        obligation, initial_period = await service.create_obligation(current_profile.id, data)
 
     # Map fields for response
     return _map_obligation(obligation)
@@ -154,7 +160,9 @@ async def create_obligation_v17(
 )
 async def get_obligations_summary_v17(
     current_profile: CurrentUserProfile,
-    month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$", description="Month in YYYY-MM format"),
+    month: str | None = Query(
+        None, pattern=r"^\d{4}-\d{2}$", description="Month in YYYY-MM format"
+    ),
     session: AsyncSession = Depends(get_db_session),
     _: None = Depends(check_v17_feature_flag),
 ):
@@ -173,7 +181,9 @@ async def get_obligations_summary_v17(
 )
 async def get_obligations_intelligence_context_v17(
     current_profile: CurrentUserProfile,
-    month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$", description="Month in YYYY-MM format"),
+    month: str | None = Query(
+        None, pattern=r"^\d{4}-\d{2}$", description="Month in YYYY-MM format"
+    ),
     session: AsyncSession = Depends(get_db_session),
     _: None = Depends(check_v17_feature_flag),
 ):
@@ -243,7 +253,10 @@ async def get_obligation_periods_v17(
                 due_date=p.due_date,
                 status=p.status,
                 is_current=p.is_current,
-                amount=p.amount or Decimal("0"), amount_due=max(Decimal("0"), (p.amount or Decimal("0")) - (p.paid_amount or Decimal("0"))),
+                amount=p.amount or Decimal("0"),
+                amount_due=max(
+                    Decimal("0"), (p.amount or Decimal("0")) - (p.paid_amount or Decimal("0"))
+                ),
                 amount_paid=p.paid_amount or Decimal("0"),
                 created_at=p.created_at or datetime.utcnow(),
                 updated_at=p.updated_at or datetime.utcnow(),
@@ -274,8 +287,12 @@ async def define_period_amount_v17(
     """
     Define el monto para un periodo variable en V1.7.
     """
-    service = ObligationV17Service(session)
-    period = await service.define_period_amount(current_profile.id, obligation_id, period_id, data)
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = ObligationV17Service(session)
+        period = await service.define_period_amount(
+            current_profile.id, obligation_id, period_id, data
+        )
 
     from datetime import datetime
 
@@ -285,7 +302,10 @@ async def define_period_amount_v17(
         due_date=period.due_date,
         status=period.status,
         is_current=period.is_current,
-        amount=period.amount or Decimal("0"), amount_due=max(Decimal("0"), (period.amount or Decimal("0")) - (period.paid_amount or Decimal("0"))),
+        amount=period.amount or Decimal("0"),
+        amount_due=max(
+            Decimal("0"), (period.amount or Decimal("0")) - (period.paid_amount or Decimal("0"))
+        ),
         amount_paid=period.paid_amount or Decimal("0"),
         created_at=period.created_at or datetime.utcnow(),
         updated_at=period.updated_at or datetime.utcnow(),
@@ -304,6 +324,7 @@ async def preview_pay_period_v17(
     data: ObligationPaymentPreviewV17Request,
     current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
+    _: None = Depends(check_v17_feature_flag),
 ):
     """
     Simula o previsualiza un pago para un periodo específico, retornando el tipo de cambio y los montos exactos requeridos.
@@ -340,10 +361,12 @@ async def create_period_payment_v17(
     """
     if idempotency_key:
         data.idempotency_key = idempotency_key
-    service = ObligationV17Service(session)
-    payment, period = await service.pay_specific_period(
-        current_profile.id, obligation_id, period_id, data
-    )
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = ObligationV17Service(session)
+        payment, period = await service.pay_specific_period(
+            current_profile.id, obligation_id, period_id, data
+        )
 
     from datetime import datetime
 
@@ -365,7 +388,10 @@ async def create_period_payment_v17(
         due_date=period.due_date,
         status=period.status,
         is_current=period.is_current,
-        amount=period.amount or Decimal("0"), amount_due=max(Decimal("0"), (period.amount or Decimal("0")) - (period.paid_amount or Decimal("0"))),
+        amount=period.amount or Decimal("0"),
+        amount_due=max(
+            Decimal("0"), (period.amount or Decimal("0")) - (period.paid_amount or Decimal("0"))
+        ),
         amount_paid=period.paid_amount or Decimal("0"),
         created_at=period.created_at or datetime.utcnow(),
         updated_at=period.updated_at or datetime.utcnow(),
@@ -400,8 +426,12 @@ async def create_obligation_payment_fifo_v17(
     """
     if idempotency_key:
         data.idempotency_key = idempotency_key
-    service = ObligationV17Service(session)
-    payments, periods = await service.pay_obligation_fifo(current_profile.id, obligation_id, data)
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = ObligationV17Service(session)
+        payments, periods = await service.pay_obligation_fifo(
+            current_profile.id, obligation_id, data
+        )
 
     from datetime import datetime
 
@@ -427,15 +457,16 @@ async def create_obligation_payment_fifo_v17(
             due_date=p.due_date,
             status=p.status,
             is_current=p.is_current,
-            amount=p.amount or Decimal("0"), amount_due=max(Decimal("0"), (p.amount or Decimal("0")) - (p.paid_amount or Decimal("0"))),
+            amount=p.amount or Decimal("0"),
+            amount_due=max(
+                Decimal("0"), (p.amount or Decimal("0")) - (p.paid_amount or Decimal("0"))
+            ),
             amount_paid=p.paid_amount or Decimal("0"),
             created_at=p.created_at or datetime.utcnow(),
             updated_at=p.updated_at or datetime.utcnow(),
         )
         for p in periods
     ]
-
-    
 
     return ObligationFIFOPaymentResultResponse(
         payments=payment_responses,
@@ -464,8 +495,12 @@ async def pay_obligation_smart(
     """
     if idempotency_key:
         data.idempotency_key = idempotency_key
-    service = ObligationV17Service(session)
-    payments, periods = await service.pay_obligation_smart(current_profile.id, obligation_id, data)
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = ObligationV17Service(session)
+        payments, periods = await service.pay_obligation_smart(
+            current_profile.id, obligation_id, data
+        )
 
     from datetime import datetime
 
@@ -491,7 +526,10 @@ async def pay_obligation_smart(
             due_date=p.due_date,
             status=p.status,
             is_current=p.is_current,
-            amount=p.amount or Decimal("0"), amount_due=max(Decimal("0"), (p.amount or Decimal("0")) - (p.paid_amount or Decimal("0"))),
+            amount=p.amount or Decimal("0"),
+            amount_due=max(
+                Decimal("0"), (p.amount or Decimal("0")) - (p.paid_amount or Decimal("0"))
+            ),
             amount_paid=p.paid_amount or Decimal("0"),
             created_at=p.created_at or datetime.utcnow(),
             updated_at=p.updated_at or datetime.utcnow(),
@@ -508,7 +546,6 @@ async def pay_obligation_smart(
     )
 
 
-
 @router.post(
     "/{obligation_id}/periods/{period_id}/skip",
     response_model=ObligationPeriodV17Response,
@@ -523,12 +560,15 @@ async def skip_obligation_period(
     """
     Skip a period. Only allowed for pending_amount_definition or pending_payment.
     """
-    service = ObligationV17Service(session)
-    period = await service.skip_period(
-        user_id=str(current_profile.id),
-        obligation_id=obligation_id,
-        period_id=period_id,
-    )
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = ObligationV17Service(session)
+        period = await service.skip_period(
+            user_id=str(current_profile.id),
+            obligation_id=obligation_id,
+            period_id=period_id,
+            commit=False,
+        )
     from datetime import datetime
 
     return ObligationPeriodV17Response(
@@ -537,7 +577,10 @@ async def skip_obligation_period(
         due_date=period.due_date,
         status=period.status,
         is_current=period.is_current,
-        amount=period.amount or Decimal("0"), amount_due=max(Decimal("0"), (period.amount or Decimal("0")) - (period.paid_amount or Decimal("0"))),
+        amount=period.amount or Decimal("0"),
+        amount_due=max(
+            Decimal("0"), (period.amount or Decimal("0")) - (period.paid_amount or Decimal("0"))
+        ),
         amount_paid=period.paid_amount or Decimal("0"),
         created_at=period.created_at or datetime.utcnow(),
         updated_at=period.updated_at or datetime.utcnow(),
@@ -558,12 +601,15 @@ async def cancel_obligation_period(
     """
     Cancel a period. Allowed for pending states, overdue, and skipped if no payments.
     """
-    service = ObligationV17Service(session)
-    period = await service.cancel_period(
-        user_id=str(current_profile.id),
-        obligation_id=obligation_id,
-        period_id=period_id,
-    )
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = ObligationV17Service(session)
+        period = await service.cancel_period(
+            user_id=str(current_profile.id),
+            obligation_id=obligation_id,
+            period_id=period_id,
+            commit=False,
+        )
     from datetime import datetime
 
     return ObligationPeriodV17Response(
@@ -572,7 +618,10 @@ async def cancel_obligation_period(
         due_date=period.due_date,
         status=period.status,
         is_current=period.is_current,
-        amount=period.amount or Decimal("0"), amount_due=max(Decimal("0"), (period.amount or Decimal("0")) - (period.paid_amount or Decimal("0"))),
+        amount=period.amount or Decimal("0"),
+        amount_due=max(
+            Decimal("0"), (period.amount or Decimal("0")) - (period.paid_amount or Decimal("0"))
+        ),
         amount_paid=period.paid_amount or Decimal("0"),
         created_at=period.created_at or datetime.utcnow(),
         updated_at=period.updated_at or datetime.utcnow(),
@@ -592,11 +641,14 @@ async def refresh_overdue_periods(
     """
     Refresh overdue periods for an obligation.
     """
-    service = ObligationV17Service(session)
-    updated_periods, count = await service.refresh_overdue_periods(
-        user_id=str(current_profile.id),
-        obligation_id=obligation_id,
-    )
+    uow = UnitOfWork(session)
+    async with uow.transaction():
+        service = ObligationV17Service(session)
+        updated_periods, count = await service.refresh_overdue_periods(
+            user_id=str(current_profile.id),
+            obligation_id=obligation_id,
+            commit=False,
+        )
 
     from datetime import datetime
 
@@ -607,7 +659,10 @@ async def refresh_overdue_periods(
             due_date=p.due_date,
             status=p.status,
             is_current=p.is_current,
-            amount=p.amount or Decimal("0"), amount_due=max(Decimal("0"), (p.amount or Decimal("0")) - (p.paid_amount or Decimal("0"))),
+            amount=p.amount or Decimal("0"),
+            amount_due=max(
+                Decimal("0"), (p.amount or Decimal("0")) - (p.paid_amount or Decimal("0"))
+            ),
             amount_paid=p.paid_amount or Decimal("0"),
             created_at=p.created_at or datetime.utcnow(),
             updated_at=p.updated_at or datetime.utcnow(),
