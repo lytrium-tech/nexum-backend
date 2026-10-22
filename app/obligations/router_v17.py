@@ -11,6 +11,9 @@ from app.core.uow import UnitOfWork
 from app.obligations.enums_v17 import PeriodStatus
 from app.obligations.schemas_v17 import (
     ApiErrorResponse,
+    ObligationAutoPaymentConfigRead,
+    ObligationAutoPaymentConfigUpdateRequest,
+    ObligationAutoPaymentRunsPage,
     ObligationFIFOPaymentCreateRequest,
     ObligationFIFOPaymentResultResponse,
     ObligationPaymentPreviewV17Request,
@@ -669,3 +672,67 @@ async def get_obligation_payment_v17(
     """
     service = ObligationV17Service(session)
     return await service.get_payment(current_profile.id, payment_id)
+
+
+def _get_auto_payment_service(session: AsyncSession):
+    from app.accounts.repository import AccountRepository
+    from app.fx.provider import get_default_fx_provider
+    from app.fx.service import FXService
+    from app.obligations.auto_service import ObligationAutoPaymentService
+
+    fx_service = FXService(provider=get_default_fx_provider(), session=session)
+    v17_service = ObligationV17Service(session)
+    account_repo = AccountRepository(session)
+    return ObligationAutoPaymentService(
+        session=session,
+        v17_service=v17_service,
+        fx_service=fx_service,
+        account_repo=account_repo,
+    )
+
+
+@router.get(
+    "/{obligation_id}/auto-payment",
+    response_model=ObligationAutoPaymentConfigRead,
+    dependencies=[Depends(check_v17_feature_flag)],
+)
+async def get_obligation_auto_payment_config(
+    obligation_id: UUID,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+):
+    auto_service = _get_auto_payment_service(session)
+    return await auto_service.get_config(current_profile.id, obligation_id)
+
+
+@router.put(
+    "/{obligation_id}/auto-payment",
+    response_model=ObligationAutoPaymentConfigRead,
+    dependencies=[Depends(check_v17_feature_flag)],
+)
+async def put_obligation_auto_payment_config(
+    obligation_id: UUID,
+    payload: ObligationAutoPaymentConfigUpdateRequest,
+    current_profile: CurrentUserProfile,
+    session: AsyncSession = Depends(get_db_session),
+):
+    auto_service = _get_auto_payment_service(session)
+    return await auto_service.put_config(current_profile.id, obligation_id, payload)
+
+
+@router.get(
+    "/{obligation_id}/auto-payment/runs",
+    response_model=ObligationAutoPaymentRunsPage,
+    dependencies=[Depends(check_v17_feature_flag)],
+)
+async def list_obligation_auto_payment_runs(
+    obligation_id: UUID,
+    current_profile: CurrentUserProfile,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_db_session),
+):
+    auto_service = _get_auto_payment_service(session)
+    return await auto_service.list_runs(
+        current_profile.id, obligation_id, limit=limit, offset=offset
+    )

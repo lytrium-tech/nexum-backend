@@ -22,10 +22,10 @@ def test_alembic_lineage_tree_root_and_head():
     """Verify that Alembic lineage forms a single linear DAG with v1_5_baseline as base."""
     script_dir = get_script_directory()
 
-    # Head must be goals_v1_9_auto_contributions
+    # Head must be obligations_v1_7_auto_payments
     heads = script_dir.get_heads()
     assert len(heads) == 1
-    assert heads[0] == "goals_v1_9_auto_contributions"
+    assert heads[0] == "obligations_v1_7_auto_payments"
 
     # Bases must be exactly v1_5_baseline
     bases = script_dir.get_bases()
@@ -64,6 +64,7 @@ def test_historical_revision_upgrades_to_head_without_executing_baseline():
         "goals_v1_ph1_reserved",
         "goals_v1_ph2_releases",
         "goals_v1_9_auto_contributions",
+        "obligations_v1_7_auto_payments",
     ]
     assert upgrade_revisions == expected_sequence
 
@@ -81,5 +82,5 @@ def test_fresh_empty_database_includes_v1_5_baseline_in_upgrade_path():
     # Full chain starting from v1_5_baseline up to head
     assert all_revisions[0] == "v1_5_baseline"
     assert all_revisions[1] == "v1_7_phase2_1"
-    assert all_revisions[-1] == "goals_v1_9_auto_contributions"
-    assert len(all_revisions) == 9
+    assert all_revisions[-1] == "obligations_v1_7_auto_payments"
+    assert len(all_revisions) == 10

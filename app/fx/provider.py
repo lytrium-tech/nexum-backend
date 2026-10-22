@@ -34,13 +34,13 @@ class StaticFxRateProvider(FxRateProvider):
         pair = f"{from_c}_{to_c}"
         if pair in self.rates:
             return self.rates[pair]
-        
+
         inverse_pair = f"{to_c}_{from_c}"
         if inverse_pair in self.rates:
             inverse_rate = self.rates[inverse_pair]
             if inverse_rate and inverse_rate > Decimal("0"):
                 return (Decimal("1") / inverse_rate).quantize(Decimal("0.00000000"))
-            
+
         return None
 
 
@@ -88,3 +88,11 @@ class DolarApiColombiaFxRateProvider(FxRateProvider):
         except Exception as e:
             logger.warning(f"Error fetching FX rate from DolarAPI: {e}")
             return None
+
+
+def get_default_fx_provider() -> FxRateProvider:
+    from app.core.config import settings
+
+    if getattr(settings, "APP_ENV", "") in ("development", "test"):
+        return StaticFxRateProvider()
+    return DolarApiColombiaFxRateProvider()

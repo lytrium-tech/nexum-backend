@@ -221,3 +221,76 @@ class FXQuote(Base):
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=True
     )
+
+
+class ObligationAutoPaymentConfig(Base):
+    __tablename__ = "obligation_auto_payment_configs"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    obligation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("obligations.id", ondelete="RESTRICT"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    account_id: Mapped[UUID] = mapped_column(
+        ForeignKey("accounts.id", ondelete="RESTRICT"), nullable=False
+    )
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, default="paused", server_default="paused"
+    )
+    pause_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_evaluation_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("obligation_id", name="uq_obligation_auto_payment_obligation_id"),
+        CheckConstraint("status IN ('enabled', 'paused', 'cancelled')", name="chk_oapc_status"),
+    )
+
+
+class ObligationAutoPaymentRun(Base):
+    __tablename__ = "obligation_auto_payment_runs"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    config_id: Mapped[UUID] = mapped_column(
+        ForeignKey("obligation_auto_payment_configs.id", ondelete="RESTRICT"), nullable=False
+    )
+    obligation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("obligations.id", ondelete="RESTRICT"), nullable=False
+    )
+    obligation_period_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("obligation_periods.id", ondelete="SET NULL"), nullable=True
+    )
+    attempt_key: Mapped[str] = mapped_column(Text, nullable=False)
+    canonical_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    result_code: Mapped[str] = mapped_column(Text, nullable=False)
+    amount: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
+    source_amount: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
+    currency: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_currency: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fx_rate: Mapped[Decimal | None] = mapped_column(Numeric(15, 6), nullable=True)
+    payment_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("obligation_payments.id", ondelete="SET NULL"), nullable=True
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("attempt_key", name="uq_oapr_attempt_key"),
+        CheckConstraint("status IN ('succeeded', 'skipped', 'failed')", name="chk_oapr_status"),
+    )

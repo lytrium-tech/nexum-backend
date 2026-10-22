@@ -670,9 +670,11 @@ class ObligationV17Service:
         obligation_id: uuid.UUID,
         period_id: uuid.UUID,
         data: ObligationPeriodPaymentCreateRequest,
+        channel: str = "manual",
+        override_command_id: uuid.UUID | None = None,
     ) -> tuple[ObligationPayment, ObligationPeriod]:
         """Pay a specific period."""
-        if not data.idempotency_key:
+        if not data.idempotency_key and override_command_id is None:
             raise HTTPException(status_code=422, detail="missing_idempotency_key")
 
         if not data.source_account_id:
@@ -681,8 +683,12 @@ class ObligationV17Service:
         if data.amount is None or not data.amount.is_finite() or data.amount <= Decimal("0"):
             raise HTTPException(status_code=422, detail="invalid_amount")
 
-        command_id = uuid.uuid5(
-            uuid.NAMESPACE_OID, f"obligations_v1_7:{user_id}:{data.idempotency_key}"
+        command_id = (
+            override_command_id
+            if override_command_id is not None
+            else uuid.uuid5(
+                uuid.NAMESPACE_OID, f"obligations_v1_7:{user_id}:{data.idempotency_key}"
+            )
         )
 
         # 1. Early idempotency / replay check (before locks, availability, account status, FX expiry)
@@ -690,6 +696,12 @@ class ObligationV17Service:
             self.session, user_id, command_id
         )
         if existing_event and payments:
+            if channel == "automatic":
+                stmt_period = select(ObligationPeriod).where(
+                    ObligationPeriod.id == payments[0].obligation_period_id
+                )
+                existing_period = (await self.session.execute(stmt_period)).scalars().first()
+                return payments[0], existing_period
             fp = _extract_event_metadata(existing_event).get("fingerprint")
             validate_idempotency_fingerprint(
                 fp,
@@ -757,6 +769,12 @@ class ObligationV17Service:
             self.session, user_id, command_id
         )
         if existing_event and payments:
+            if channel == "automatic":
+                stmt_period = select(ObligationPeriod).where(
+                    ObligationPeriod.id == payments[0].obligation_period_id
+                )
+                existing_period = (await self.session.execute(stmt_period)).scalars().first()
+                return payments[0], existing_period
             fp = _extract_event_metadata(existing_event).get("fingerprint")
             validate_idempotency_fingerprint(
                 fp,
@@ -905,7 +923,7 @@ class ObligationV17Service:
                 "fingerprint": fingerprint,
                 "idempotency_key": data.idempotency_key,
                 "obligation_period_id": str(period.id),
-                "channel": "manual",
+                "channel": channel,
                 "fx_quote_id": str(settlement.quote_id) if settlement.quote_id else None,
                 "rate_snapshot_id": str(settlement.rate_snapshot_id)
                 if settlement.rate_snapshot_id

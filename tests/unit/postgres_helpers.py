@@ -13,6 +13,8 @@ from app.obligations.models import (
     ExchangeRate,
     FXQuote,
     Obligation,
+    ObligationAutoPaymentConfig,
+    ObligationAutoPaymentRun,
     ObligationPayment,
     ObligationPeriod,
 )
@@ -47,6 +49,7 @@ class GateFixture:
             name="Gate Account",
         )
         self.account_id = self.account.id
+        self.has_auto_payment = False
 
     async def commit(self):
         self.session.add(self.user)
@@ -184,6 +187,33 @@ class GateFixture:
         await self.session.flush()
         return er
 
+    async def add_auto_payment_config(
+        self,
+        obligation_id: uuid.UUID,
+        account_id: uuid.UUID | None = None,
+        enabled: bool = True,
+        next_evaluation_at=None,
+    ) -> ObligationAutoPaymentConfig:
+        from datetime import UTC, datetime
+
+        now_utc = datetime.now(UTC)
+        self.has_auto_payment = True
+        cfg = ObligationAutoPaymentConfig(
+            id=uuid.uuid4(),
+            obligation_id=obligation_id,
+            user_id=self.user.id,
+            account_id=account_id or self.account.id,
+            enabled=enabled,
+            status="enabled" if enabled else "paused",
+            pause_reason=None if enabled else "user_paused",
+            next_evaluation_at=next_evaluation_at,
+            created_at=now_utc,
+            updated_at=now_utc,
+        )
+        self.session.add(cfg)
+        await self.session.flush()
+        return cfg
+
     async def cleanup(self):
         errors: list[tuple[str, Exception]] = []
         try:
@@ -192,27 +222,52 @@ class GateFixture:
             errors.append(("initial_rollback", exc))
 
         uid = self.user_id
-        stages = [
-            ("goal_transactions", delete(GoalTransaction).where(GoalTransaction.user_id == uid)),
-            (
-                "obligation_payments",
-                delete(ObligationPayment).where(ObligationPayment.user_id == uid),
-            ),
-            (
-                "obligation_periods",
-                delete(ObligationPeriod).where(
-                    ObligationPeriod.obligation_id.in_(
-                        select(Obligation.id).where(Obligation.user_id == uid)
-                    )
+        stages = []
+        if getattr(self, "has_auto_payment", False):
+            stages.extend(
+                [
+                    (
+                        "obligation_auto_payment_runs",
+                        delete(ObligationAutoPaymentRun).where(
+                            ObligationAutoPaymentRun.obligation_id.in_(
+                                select(Obligation.id).where(Obligation.user_id == uid)
+                            )
+                        ),
+                    ),
+                    (
+                        "obligation_auto_payment_configs",
+                        delete(ObligationAutoPaymentConfig).where(
+                            ObligationAutoPaymentConfig.user_id == uid
+                        ),
+                    ),
+                ]
+            )
+        stages.extend(
+            [
+                (
+                    "goal_transactions",
+                    delete(GoalTransaction).where(GoalTransaction.user_id == uid),
                 ),
-            ),
-            ("obligations", delete(Obligation).where(Obligation.user_id == uid)),
-            ("financial_events", delete(FinancialEvent).where(FinancialEvent.user_id == uid)),
-            ("goals", delete(Goal).where(Goal.user_id == uid)),
-            ("accounts", delete(Account).where(Account.user_id == uid)),
-            ("fx_quotes", delete(FXQuote).where(FXQuote.user_id == uid)),
-            ("users", delete(User).where(User.id == uid)),
-        ]
+                (
+                    "obligation_payments",
+                    delete(ObligationPayment).where(ObligationPayment.user_id == uid),
+                ),
+                (
+                    "obligation_periods",
+                    delete(ObligationPeriod).where(
+                        ObligationPeriod.obligation_id.in_(
+                            select(Obligation.id).where(Obligation.user_id == uid)
+                        )
+                    ),
+                ),
+                ("obligations", delete(Obligation).where(Obligation.user_id == uid)),
+                ("financial_events", delete(FinancialEvent).where(FinancialEvent.user_id == uid)),
+                ("goals", delete(Goal).where(Goal.user_id == uid)),
+                ("accounts", delete(Account).where(Account.user_id == uid)),
+                ("fx_quotes", delete(FXQuote).where(FXQuote.user_id == uid)),
+                ("users", delete(User).where(User.id == uid)),
+            ]
+        )
 
         has_delete_error = False
         for stage_name, stmt in stages:
@@ -258,6 +313,20 @@ async def cleanup_all_gate_users(session: AsyncSession):
 
     if uids:
         stages = [
+            (
+                "obligation_auto_payment_runs",
+                delete(ObligationAutoPaymentRun).where(
+                    ObligationAutoPaymentRun.obligation_id.in_(
+                        select(Obligation.id).where(Obligation.user_id.in_(uids))
+                    )
+                ),
+            ),
+            (
+                "obligation_auto_payment_configs",
+                delete(ObligationAutoPaymentConfig).where(
+                    ObligationAutoPaymentConfig.user_id.in_(uids)
+                ),
+            ),
             ("goal_transactions", delete(GoalTransaction).where(GoalTransaction.user_id.in_(uids))),
             (
                 "obligation_payments",

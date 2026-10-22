@@ -127,7 +127,8 @@ def test_migration_revision_and_single_head() -> None:
     assert migration.revision == "goals_v1_9_auto_contributions"
     assert len(migration.revision) <= 32
     assert migration.down_revision == "goals_v1_ph2_releases"
-    assert script.get_heads() == ["goals_v1_9_auto_contributions"]
+    assert len(script.get_heads()) == 1
+    assert script.get_revision("goals_v1_9_auto_contributions") is not None
 
 
 def test_migration_upgrade_creates_only_block2_objects() -> None:

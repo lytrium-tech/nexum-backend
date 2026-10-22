@@ -377,3 +377,54 @@ class ObligationV17OverviewResponse(ObligationV17Response):
     relevant_period: ObligationPeriodV17Response | None
     period_counts: ObligationV17PeriodCounts
     action_state: ObligationV17ActionState
+
+
+class ObligationAutoPaymentConfigRead(BaseModel):
+    id: UUID
+    obligation_id: UUID
+    account_id: UUID
+    enabled: bool
+    status: str
+    pause_reason: str | None = None
+    next_evaluation_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+
+class ObligationAutoPaymentConfigUpdateRequest(BaseModel):
+    enabled: bool
+    account_id: UUID | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ObligationAutoPaymentRunRead(BaseModel):
+    id: UUID
+    config_id: UUID
+    obligation_id: UUID
+    obligation_period_id: UUID | None = None
+    canonical_date: date
+    status: str
+    result_code: str
+    amount: Decimal | None = None
+    source_amount: Decimal | None = None
+    currency: str | None = None
+    source_currency: str | None = None
+    fx_rate: Decimal | None = None
+    payment_id: UUID | None = None
+    error_message: str | None = None
+    executed_at: datetime
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+
+class ObligationAutoPaymentRunsPage(BaseModel):
+    items: list[ObligationAutoPaymentRunRead]
+    total: int
+    limit: int
+    offset: int
+
+    model_config = ConfigDict(extra="forbid")
