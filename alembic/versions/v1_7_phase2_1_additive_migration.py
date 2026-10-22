@@ -1,7 +1,7 @@
 """v1.7 phase 2.1 schema additive migration
 
 Revision ID: v1_7_phase2_1
-Revises: 
+Revises: v1_5_baseline
 Create Date: 2026-07-04
 
 """
@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql
 
 revision: str = 'v1_7_phase2_1'
 # Representa el inicio del tracking Alembic formal, no el inicio histórico del schema (V1.5 base)
-down_revision: Union[str, None] = None
+down_revision: Union[str, None] = 'v1_5_baseline'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
