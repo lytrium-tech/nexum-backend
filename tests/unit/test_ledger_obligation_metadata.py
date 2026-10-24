@@ -6,18 +6,38 @@ en LedgerEventDetail y LedgerRepository:
 a) Evento de obligación devuelve obligation_id y obligation_name autoritativos.
 b) Evento no relacionado devuelve ambos campos como None/null coherente sin queries extra.
 c) Evento histórico de obligación cuya relación no es resoluble no falla y devuelve None coherente.
+d) Fila de outer join con Obligation ausente devuelve obligation_id presente y obligation_name None.
 """
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock
-
-import pytest
+from typing import Any
 
 from app.ledger.models import FinancialEvent
 from app.ledger.repository import LedgerRepository
 from app.ledger.schemas import LedgerEventDetail
+
+
+class FakeResult:
+    def __init__(self, rows: list[Any]) -> None:
+        self._rows = rows
+
+    def all(self) -> list[Any]:
+        return self._rows
+
+
+class FakeSession:
+    def __init__(self, rows: list[Any] | None = None) -> None:
+        self.rows = rows if rows is not None else []
+        self.execute_count = 0
+        self.last_stmt = None
+
+    async def execute(self, stmt: Any) -> FakeResult:
+        self.execute_count += 1
+        self.last_stmt = stmt
+        return FakeResult(self.rows)
 
 
 def test_ledger_event_detail_schema_obligation_metadata_resolved() -> None:
@@ -80,7 +100,6 @@ def test_ledger_event_detail_from_attributes_with_financial_event() -> None:
         period="2026-01",
         created_at=datetime.now(UTC),
     )
-    # Por defecto las propiedades retornan None
     assert event.obligation_id is None
     assert event.obligation_name is None
 
@@ -89,8 +108,7 @@ def test_ledger_event_detail_from_attributes_with_financial_event() -> None:
     assert detail.obligation_name is None
 
 
-@pytest.mark.asyncio
-async def test_repository_enrich_obligation_metadata_resolved() -> None:
+def test_repository_enrich_obligation_metadata_resolved() -> None:
     """Caso a (Repo): Evento de obligación resuelve id y nombre autoritativos sin N+1."""
     event_id = uuid.uuid4()
     obligation_id = uuid.uuid4()
@@ -109,27 +127,21 @@ async def test_repository_enrich_obligation_metadata_resolved() -> None:
         created_at=datetime.now(UTC),
     )
 
-    mock_session = AsyncMock()
-    mock_res = MagicMock()
-    # Simula la fila retornada por el join: (financial_event_id, obligation_id, name)
-    mock_res.all.return_value = [(event_id, obligation_id, obligation_name)]
-    mock_session.execute.return_value = mock_res
+    fake_session = FakeSession(rows=[(event_id, obligation_id, obligation_name)])
+    repo = LedgerRepository(fake_session)
 
-    repo = LedgerRepository(mock_session)
-    await repo._enrich_obligation_metadata([event])
+    asyncio.run(repo._enrich_obligation_metadata([event]))
 
     assert event.obligation_id == obligation_id
     assert event.obligation_name == obligation_name
-    assert mock_session.execute.await_count == 1
+    assert fake_session.execute_count == 1
 
-    # Validación Pydantic
     detail = LedgerEventDetail.model_validate(event)
     assert detail.obligation_id == obligation_id
     assert detail.obligation_name == obligation_name
 
 
-@pytest.mark.asyncio
-async def test_repository_enrich_obligation_metadata_unrelated_skips_query() -> None:
+def test_repository_enrich_obligation_metadata_unrelated_skips_query() -> None:
     """Caso b (Repo): Evento no relacionado no ejecuta query extra y devuelve None."""
     event = FinancialEvent(
         id=uuid.uuid4(),
@@ -144,18 +156,17 @@ async def test_repository_enrich_obligation_metadata_unrelated_skips_query() -> 
         created_at=datetime.now(UTC),
     )
 
-    mock_session = AsyncMock()
-    repo = LedgerRepository(mock_session)
-    await repo._enrich_obligation_metadata([event])
+    fake_session = FakeSession()
+    repo = LedgerRepository(fake_session)
+
+    asyncio.run(repo._enrich_obligation_metadata([event]))
 
     assert event.obligation_id is None
     assert event.obligation_name is None
-    # No debe consultar base de datos si no hay eventos de tipo obligation_payment
-    assert mock_session.execute.await_count == 0
+    assert fake_session.execute_count == 0
 
 
-@pytest.mark.asyncio
-async def test_repository_enrich_obligation_metadata_unresolvable_historical() -> None:
+def test_repository_enrich_obligation_metadata_unresolvable_historical() -> None:
     """Caso c (Repo): Evento histórico de tipo obligation_payment no resoluble no falla."""
     event_id = uuid.uuid4()
     event = FinancialEvent(
@@ -171,27 +182,22 @@ async def test_repository_enrich_obligation_metadata_unresolvable_historical() -
         created_at=datetime.now(UTC),
     )
 
-    mock_session = AsyncMock()
-    mock_res = MagicMock()
-    # No hay registros en obligation_payments para este evento histórico
-    mock_res.all.return_value = []
-    mock_session.execute.return_value = mock_res
+    fake_session = FakeSession(rows=[])
+    repo = LedgerRepository(fake_session)
 
-    repo = LedgerRepository(mock_session)
-    await repo._enrich_obligation_metadata([event])
+    asyncio.run(repo._enrich_obligation_metadata([event]))
 
     assert event.obligation_id is None
     assert event.obligation_name is None
-    assert mock_session.execute.await_count == 1
+    assert fake_session.execute_count == 1
 
     detail = LedgerEventDetail.model_validate(event)
     assert detail.obligation_id is None
     assert detail.obligation_name is None
 
 
-@pytest.mark.asyncio
-async def test_repository_enrich_obligation_metadata_outerjoin_missing_obligation() -> None:
-    """Caso outerjoin: ObligationPayment existe pero Obligation está ausente.
+def test_repository_enrich_obligation_metadata_outerjoin_missing_obligation() -> None:
+    """Caso d (Repo outerjoin): ObligationPayment existe pero Obligation está ausente.
 
     Debe resultar en obligation_id presente y obligation_name null/None.
     """
@@ -211,18 +217,14 @@ async def test_repository_enrich_obligation_metadata_outerjoin_missing_obligatio
         created_at=datetime.now(UTC),
     )
 
-    mock_session = AsyncMock()
-    mock_res = MagicMock()
-    # Left outer join devuelve ob_id presente pero ob_name None
-    mock_res.all.return_value = [(event_id, obligation_id, None)]
-    mock_session.execute.return_value = mock_res
+    fake_session = FakeSession(rows=[(event_id, obligation_id, None)])
+    repo = LedgerRepository(fake_session)
 
-    repo = LedgerRepository(mock_session)
-    await repo._enrich_obligation_metadata([event])
+    asyncio.run(repo._enrich_obligation_metadata([event]))
 
     assert event.obligation_id == obligation_id
     assert event.obligation_name is None
-    assert mock_session.execute.await_count == 1
+    assert fake_session.execute_count == 1
 
     detail = LedgerEventDetail.model_validate(event)
     assert detail.obligation_id == obligation_id
