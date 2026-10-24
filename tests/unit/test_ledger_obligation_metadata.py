@@ -10,7 +10,9 @@ d) Fila de outer join con Obligation ausente devuelve obligation_id presente y o
 """
 
 import asyncio
+import sys
 import uuid
+import warnings
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -18,6 +20,26 @@ from typing import Any
 from app.ledger.models import FinancialEvent
 from app.ledger.repository import LedgerRepository
 from app.ledger.schemas import LedgerEventDetail
+
+# En Windows (Python 3.8+), ProactorEventLoop puede bloquearse inicializando self-pipe
+# sockets bajo ciertos runners de prueba. Configuramos selector explícito para win32.
+if sys.platform == "win32":
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        policy_cls = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
+        if policy_cls is not None:
+            asyncio.set_event_loop_policy(policy_cls())
+
+
+def _run_sync(coro: Any) -> Any:
+    """Ejecuta una corrutina usando SelectorEventLoop en win32 para evitar self-pipe hangs."""
+    if sys.platform == "win32":
+        loop = asyncio.SelectorEventLoop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+    return asyncio.run(coro)
 
 
 class FakeResult:
@@ -130,7 +152,7 @@ def test_repository_enrich_obligation_metadata_resolved() -> None:
     fake_session = FakeSession(rows=[(event_id, obligation_id, obligation_name)])
     repo = LedgerRepository(fake_session)
 
-    asyncio.run(repo._enrich_obligation_metadata([event]))
+    _run_sync(repo._enrich_obligation_metadata([event]))
 
     assert event.obligation_id == obligation_id
     assert event.obligation_name == obligation_name
@@ -161,7 +183,7 @@ def test_repository_enrich_obligation_metadata_unrelated_skips_query() -> None:
     fake_session = FakeSession()
     repo = LedgerRepository(fake_session)
 
-    asyncio.run(repo._enrich_obligation_metadata([event]))
+    _run_sync(repo._enrich_obligation_metadata([event]))
 
     assert event.obligation_id is None
     assert event.obligation_name is None
@@ -187,7 +209,7 @@ def test_repository_enrich_obligation_metadata_unresolvable_historical() -> None
     fake_session = FakeSession(rows=[])
     repo = LedgerRepository(fake_session)
 
-    asyncio.run(repo._enrich_obligation_metadata([event]))
+    _run_sync(repo._enrich_obligation_metadata([event]))
 
     assert event.obligation_id is None
     assert event.obligation_name is None
@@ -222,7 +244,7 @@ def test_repository_enrich_obligation_metadata_outerjoin_missing_obligation() ->
     fake_session = FakeSession(rows=[(event_id, obligation_id, None)])
     repo = LedgerRepository(fake_session)
 
-    asyncio.run(repo._enrich_obligation_metadata([event]))
+    _run_sync(repo._enrich_obligation_metadata([event]))
 
     assert event.obligation_id == obligation_id
     assert event.obligation_name is None
@@ -259,7 +281,7 @@ def test_repository_enrich_obligation_metadata_with_async_mock() -> None:
     mock_session.execute.return_value = mock_res
 
     repo = LedgerRepository(mock_session)
-    asyncio.run(repo._enrich_obligation_metadata([event]))
+    _run_sync(repo._enrich_obligation_metadata([event]))
 
     assert event.obligation_id == ob_id
     assert event.obligation_name == "Servicio Energía"
