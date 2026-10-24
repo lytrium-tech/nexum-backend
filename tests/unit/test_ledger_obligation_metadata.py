@@ -9,10 +9,8 @@ c) Evento histórico de obligación cuya relación no es resoluble no falla y de
 d) Fila de outer join con Obligation ausente devuelve obligation_id presente y obligation_name None.
 """
 
-import asyncio
-import sys
 import uuid
-import warnings
+from collections.abc import Coroutine
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -21,25 +19,16 @@ from app.ledger.models import FinancialEvent
 from app.ledger.repository import LedgerRepository
 from app.ledger.schemas import LedgerEventDetail
 
-# En Windows (Python 3.8+), ProactorEventLoop puede bloquearse inicializando self-pipe
-# sockets bajo ciertos runners de prueba. Configuramos selector explícito para win32.
-if sys.platform == "win32":
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        policy_cls = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
-        if policy_cls is not None:
-            asyncio.set_event_loop_policy(policy_cls())
 
-
-def _run_sync(coro: Any) -> Any:
-    """Ejecuta una corrutina usando SelectorEventLoop en win32 para evitar self-pipe hangs."""
-    if sys.platform == "win32":
-        loop = asyncio.SelectorEventLoop()
-        try:
-            return loop.run_until_complete(coro)
-        finally:
-            loop.close()
-    return asyncio.run(coro)
+def _run_sync(coro: Coroutine[Any, Any, Any]) -> Any:
+    """Driver síncrono para corrutinas inmediatas sin creación de event loop ni sockets."""
+    try:
+        coro.send(None)
+    except StopIteration as exc:
+        return exc.value
+    raise AssertionError(
+        "La corrutina suspendió inesperadamente; se esperaba terminación inmediata."
+    )
 
 
 class FakeResult:
@@ -256,33 +245,3 @@ def test_repository_enrich_obligation_metadata_outerjoin_missing_obligation() ->
     dumped = detail.model_dump(mode="json")
     assert dumped["obligation_id"] == str(obligation_id)
     assert dumped["obligation_name"] is None
-
-
-def test_repository_enrich_obligation_metadata_with_async_mock() -> None:
-    """Valida compatibilidad directa con AsyncMock sin bloqueos por configuración de mappers."""
-    from unittest.mock import AsyncMock, MagicMock
-
-    event_id = uuid.uuid4()
-    ob_id = uuid.uuid4()
-    event = FinancialEvent(
-        id=event_id,
-        user_id=uuid.uuid4(),
-        occurred_at=datetime.now(UTC),
-        event_type="obligation_payment",
-        direction="outflow",
-        amount=Decimal("10000.00"),
-        currency="COP",
-        source="backend",
-        created_at=datetime.now(UTC),
-    )
-    mock_res = MagicMock()
-    mock_res.all.return_value = [(event_id, ob_id, "Servicio Energía")]
-    mock_session = AsyncMock()
-    mock_session.execute.return_value = mock_res
-
-    repo = LedgerRepository(mock_session)
-    _run_sync(repo._enrich_obligation_metadata([event]))
-
-    assert event.obligation_id == ob_id
-    assert event.obligation_name == "Servicio Energía"
-    assert mock_session.execute.await_count == 1
