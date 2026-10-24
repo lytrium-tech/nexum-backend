@@ -126,6 +126,23 @@ class FinancialEvent(Base):
         ),
     )
 
+    # Propiedades aditivas de lectura para resolución de obligaciones (no-persistidas)
+    @property
+    def obligation_id(self) -> UUID | None:
+        return getattr(self, "_obligation_id", None)
+
+    @obligation_id.setter
+    def obligation_id(self, value: UUID | None) -> None:
+        self._obligation_id = value
+
+    @property
+    def obligation_name(self) -> str | None:
+        return getattr(self, "_obligation_name", None)
+
+    @obligation_name.setter
+    def obligation_name(self, value: str | None) -> None:
+        self._obligation_name = value
+
 
 class FinancialEventReclassification(Base):
     """

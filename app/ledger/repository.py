@@ -244,7 +244,9 @@ class LedgerRepository:
         stmt = stmt.limit(limit).offset(offset)
 
         result = await self.session.execute(stmt)
-        return list(result.scalars().all()), total
+        events = list(result.scalars().all())
+        await self._enrich_obligation_metadata(events)
+        return events, total
 
     async def get_event_detail(self, user_id: UUID, event_id: UUID) -> FinancialEvent | None:
         from sqlalchemy.orm import selectinload
@@ -255,7 +257,10 @@ class LedgerRepository:
             .options(selectinload(FinancialEvent.account), selectinload(FinancialEvent.category))
         )
         result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()
+        event = result.scalar_one_or_none()
+        if event:
+            await self._enrich_obligation_metadata([event])
+        return event
 
     async def get_summary(
         self,
@@ -342,4 +347,48 @@ class LedgerRepository:
         stmt = stmt.order_by(FinancialEvent.occurred_at.asc())
 
         result = await self.session.execute(stmt)
-        return list(result.scalars().all())
+        events = list(result.scalars().all())
+        await self._enrich_obligation_metadata(events)
+        return events
+
+    async def _enrich_obligation_metadata(self, events: list[FinancialEvent]) -> None:
+        """
+        Enriquece de forma batch (sin N+1) una lista de FinancialEvents con
+        obligation_id y obligation_name, resolviendo la relación autoritativa:
+        FinancialEvent.id <- ObligationPayment.financial_event_id -> Obligation.id + Obligation.name.
+        """
+        if not events:
+            return
+
+        for e in events:
+            e.obligation_id = None
+            e.obligation_name = None
+
+        obligation_event_ids = [
+            e.id for e in events if getattr(e, "event_type", None) == "obligation_payment"
+        ]
+        if not obligation_event_ids:
+            return
+
+        from app.obligations.models import Obligation, ObligationPayment
+
+        stmt = (
+            select(
+                ObligationPayment.financial_event_id,
+                ObligationPayment.obligation_id,
+                Obligation.name,
+            )
+            .join(Obligation, Obligation.id == ObligationPayment.obligation_id)
+            .where(ObligationPayment.financial_event_id.in_(obligation_event_ids))
+        )
+        res = await self.session.execute(stmt)
+        rows = res.all()
+
+        mapping: dict[UUID, tuple[UUID, str]] = {}
+        for ev_id, ob_id, ob_name in rows:
+            if ev_id and ev_id not in mapping:
+                mapping[ev_id] = (ob_id, ob_name)
+
+        for e in events:
+            if e.id in mapping:
+                e.obligation_id, e.obligation_name = mapping[e.id]

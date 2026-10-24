@@ -127,6 +127,8 @@ class LedgerEventDetail(BaseModel):
     source_message_id: UUID | None = None
     command_id: UUID | None = None
     # No exponemos trace_id aquí aún porque está en messages, no en financial_events
+    obligation_id: UUID | None = None
+    obligation_name: str | None = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
