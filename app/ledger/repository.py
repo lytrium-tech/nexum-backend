@@ -378,13 +378,13 @@ class LedgerRepository:
                 ObligationPayment.obligation_id,
                 Obligation.name,
             )
-            .join(Obligation, Obligation.id == ObligationPayment.obligation_id)
+            .outerjoin(Obligation, Obligation.id == ObligationPayment.obligation_id)
             .where(ObligationPayment.financial_event_id.in_(obligation_event_ids))
         )
         res = await self.session.execute(stmt)
         rows = res.all()
 
-        mapping: dict[UUID, tuple[UUID, str]] = {}
+        mapping: dict[UUID, tuple[UUID, str | None]] = {}
         for ev_id, ob_id, ob_name in rows:
             if ev_id and ev_id not in mapping:
                 mapping[ev_id] = (ob_id, ob_name)

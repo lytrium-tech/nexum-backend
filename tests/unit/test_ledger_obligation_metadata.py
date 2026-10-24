@@ -187,3 +187,46 @@ async def test_repository_enrich_obligation_metadata_unresolvable_historical() -
     detail = LedgerEventDetail.model_validate(event)
     assert detail.obligation_id is None
     assert detail.obligation_name is None
+
+
+@pytest.mark.asyncio
+async def test_repository_enrich_obligation_metadata_outerjoin_missing_obligation() -> None:
+    """Caso outerjoin: ObligationPayment existe pero Obligation está ausente.
+
+    Debe resultar en obligation_id presente y obligation_name null/None.
+    """
+    event_id = uuid.uuid4()
+    obligation_id = uuid.uuid4()
+
+    event = FinancialEvent(
+        id=event_id,
+        user_id=uuid.uuid4(),
+        occurred_at=datetime.now(UTC),
+        event_type="obligation_payment",
+        direction="outflow",
+        amount=Decimal("50000.00"),
+        currency="COP",
+        source="backend",
+        period="2026-05",
+        created_at=datetime.now(UTC),
+    )
+
+    mock_session = AsyncMock()
+    mock_res = MagicMock()
+    # Left outer join devuelve ob_id presente pero ob_name None
+    mock_res.all.return_value = [(event_id, obligation_id, None)]
+    mock_session.execute.return_value = mock_res
+
+    repo = LedgerRepository(mock_session)
+    await repo._enrich_obligation_metadata([event])
+
+    assert event.obligation_id == obligation_id
+    assert event.obligation_name is None
+    assert mock_session.execute.await_count == 1
+
+    detail = LedgerEventDetail.model_validate(event)
+    assert detail.obligation_id == obligation_id
+    assert detail.obligation_name is None
+    dumped = detail.model_dump(mode="json")
+    assert dumped["obligation_id"] == str(obligation_id)
+    assert dumped["obligation_name"] is None
