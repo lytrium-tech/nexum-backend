@@ -135,6 +135,8 @@ def test_repository_enrich_obligation_metadata_resolved() -> None:
     assert event.obligation_id == obligation_id
     assert event.obligation_name == obligation_name
     assert fake_session.execute_count == 1
+    assert fake_session.last_stmt is not None
+    assert "LEFT OUTER JOIN obligations" in str(fake_session.last_stmt)
 
     detail = LedgerEventDetail.model_validate(event)
     assert detail.obligation_id == obligation_id
@@ -232,3 +234,33 @@ def test_repository_enrich_obligation_metadata_outerjoin_missing_obligation() ->
     dumped = detail.model_dump(mode="json")
     assert dumped["obligation_id"] == str(obligation_id)
     assert dumped["obligation_name"] is None
+
+
+def test_repository_enrich_obligation_metadata_with_async_mock() -> None:
+    """Valida compatibilidad directa con AsyncMock sin bloqueos por configuración de mappers."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    event_id = uuid.uuid4()
+    ob_id = uuid.uuid4()
+    event = FinancialEvent(
+        id=event_id,
+        user_id=uuid.uuid4(),
+        occurred_at=datetime.now(UTC),
+        event_type="obligation_payment",
+        direction="outflow",
+        amount=Decimal("10000.00"),
+        currency="COP",
+        source="backend",
+        created_at=datetime.now(UTC),
+    )
+    mock_res = MagicMock()
+    mock_res.all.return_value = [(event_id, ob_id, "Servicio Energía")]
+    mock_session = AsyncMock()
+    mock_session.execute.return_value = mock_res
+
+    repo = LedgerRepository(mock_session)
+    asyncio.run(repo._enrich_obligation_metadata([event]))
+
+    assert event.obligation_id == ob_id
+    assert event.obligation_name == "Servicio Energía"
+    assert mock_session.execute.await_count == 1

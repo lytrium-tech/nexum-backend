@@ -356,6 +356,8 @@ class LedgerRepository:
         Enriquece de forma batch (sin N+1) una lista de FinancialEvents con
         obligation_id y obligation_name, resolviendo la relación autoritativa:
         FinancialEvent.id <- ObligationPayment.financial_event_id -> Obligation.id + Obligation.name.
+        Usa tablas Core (ObligationPayment.__table__, Obligation.__table__) para evitar
+        configuración innecesaria de mappers ORM o relaciones cruzadas.
         """
         if not events:
             return
@@ -372,14 +374,17 @@ class LedgerRepository:
 
         from app.obligations.models import Obligation, ObligationPayment
 
+        op_table = ObligationPayment.__table__
+        ob_table = Obligation.__table__
+
         stmt = (
             select(
-                ObligationPayment.financial_event_id,
-                ObligationPayment.obligation_id,
-                Obligation.name,
+                op_table.c.financial_event_id,
+                op_table.c.obligation_id,
+                ob_table.c.name,
             )
-            .outerjoin(Obligation, Obligation.id == ObligationPayment.obligation_id)
-            .where(ObligationPayment.financial_event_id.in_(obligation_event_ids))
+            .outerjoin(ob_table, ob_table.c.id == op_table.c.obligation_id)
+            .where(op_table.c.financial_event_id.in_(obligation_event_ids))
         )
         res = await self.session.execute(stmt)
         rows = res.all()
