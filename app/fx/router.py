@@ -29,11 +29,6 @@ async def get_latest_rate(
     current_user: AuthenticatedIdentity = None,
     fx_service: FXService = Depends(get_fx_service),
 ):
-    if not getattr(settings, "NEXUM_OBLIGATIONS_V17_ENABLED", False):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error_code": "feature_flag_disabled", "message": "FX features are disabled."},
-        )
     try:
         return await fx_service.get_latest_rate(base_currency, quote_currency)
     except ValidationError as e:
@@ -49,12 +44,6 @@ async def create_fx_quote(
     current_user: AuthenticatedIdentity = None,
     fx_service: FXService = Depends(get_fx_service),
 ):
-    if not getattr(settings, "NEXUM_OBLIGATIONS_V17_ENABLED", False):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error_code": "feature_flag_disabled", "message": "FX features are disabled."},
-        )
-
     try:
         return await fx_service.create_quote(
             user_id=current_user.user_id,

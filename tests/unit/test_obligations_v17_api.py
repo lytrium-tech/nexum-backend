@@ -63,41 +63,9 @@ def mock_db():
 
 
 @pytest.mark.asyncio
-async def test_v17_endpoints_disabled_by_default(mock_db):
-    """Test that V1.7 endpoints return 403 when feature flag is OFF."""
-    settings.NEXUM_OBLIGATIONS_V17_ENABLED = False
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get("/api/v1.7/obligations")
-        assert response.status_code == 403
-        assert response.json()["detail"] == "feature_flag_disabled"
-
-        response = await client.get("/api/v1.7/obligations/00000000-0000-0000-0000-000000000000")
-        assert response.status_code == 403
-
-        response = await client.get(
-            "/api/v1.7/obligations/00000000-0000-0000-0000-000000000000/periods"
-        )
-        assert response.status_code == 403
-
-        response = await client.patch(
-            "/api/v1.7/obligations/00000000-0000-0000-0000-000000000000/periods/00000000-0000-0000-0000-000000000000/amount",
-            json={"idempotency_key": "test-req-1", "amount": 100},
-        )
-        assert response.status_code == 403
-
-        response = await client.post(
-            "/api/v1.7/obligations/00000000-0000-0000-0000-000000000000/periods/00000000-0000-0000-0000-000000000000/payments",
-            json={"idempotency_key": "test-req-2", "amount": 100},
-        )
-        assert response.status_code == 403
-
-
-@pytest.mark.asyncio
 async def test_v17_endpoints_empty_states(mock_db):
-    """Test that V1.7 endpoints return expected empty state when flag is ON."""
-    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
-
+    """Test that V1.7 endpoints return the expected empty state."""
+    pass  # graduation: V1.7 is always enabled
     from unittest.mock import MagicMock
 
     mock_result = MagicMock()
@@ -124,13 +92,11 @@ async def test_v17_endpoints_empty_states(mock_db):
             assert response.status_code == 404
             assert response.json()["detail"] == "Obligation not found"
     finally:
-        settings.NEXUM_OBLIGATIONS_V17_ENABLED = False
-
-
+        pass  # graduation: V1.7 is always enabled
 @pytest.mark.asyncio
 async def test_v17_read_endpoints_success(mock_db):
     """Test GET endpoints for obligations and periods."""
-    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
+    pass  # graduation: V1.7 is always enabled
     from datetime import date, datetime
     from unittest.mock import MagicMock
 
@@ -206,13 +172,11 @@ async def test_v17_read_endpoints_success(mock_db):
             assert data[0]["amount_paid"] == "0"
             assert data[0]["status"] == "pending_payment"
     finally:
-        settings.NEXUM_OBLIGATIONS_V17_ENABLED = False
-
-
+        pass  # graduation: V1.7 is always enabled
 @pytest.mark.asyncio
 async def test_create_obligation_minimal(mock_db):
     """Test POST creates a minimal obligation."""
-    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
+    pass  # graduation: V1.7 is always enabled
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
@@ -255,13 +219,11 @@ async def test_create_obligation_minimal(mock_db):
             assert period.is_current is True
             assert period.paid_amount == 0
     finally:
-        settings.NEXUM_OBLIGATIONS_V17_ENABLED = False
-
-
+        pass  # graduation: V1.7 is always enabled
 @pytest.mark.asyncio
 async def test_create_obligation_validations(mock_db):
     """Test validations for creating an obligation."""
-    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
+    pass  # graduation: V1.7 is always enabled
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             # fixed sin base_amount falla
@@ -334,13 +296,11 @@ async def test_create_obligation_validations(mock_db):
             )
             assert response.status_code == 422
     finally:
-        settings.NEXUM_OBLIGATIONS_V17_ENABLED = False
-
-
+        pass  # graduation: V1.7 is always enabled
 @pytest.mark.asyncio
 async def test_define_period_amount(mock_db):
     """Test define period amount validations and success."""
-    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
+    pass  # graduation: V1.7 is always enabled
     from datetime import date, datetime
     from unittest.mock import MagicMock
 
@@ -458,13 +418,11 @@ async def test_define_period_amount(mock_db):
             assert response.json()["detail"] == "obligation_not_found"
 
     finally:
-        settings.NEXUM_OBLIGATIONS_V17_ENABLED = False
-
-
+        pass  # graduation: V1.7 is always enabled
 @pytest.mark.asyncio
 async def test_pay_specific_period(mock_db):
     """Test pay specific period validations and success."""
-    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
+    pass  # graduation: V1.7 is always enabled
     from datetime import date, datetime
     from unittest.mock import MagicMock
 
@@ -719,13 +677,11 @@ async def test_pay_specific_period(mock_db):
             assert response.status_code == 201
 
     finally:
-        settings.NEXUM_OBLIGATIONS_V17_ENABLED = False
-
-
+        pass  # graduation: V1.7 is always enabled
 @pytest.mark.asyncio
 async def test_pay_obligation_fifo(mock_db):
     """Test pay obligation FIFO strategy."""
-    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
+    pass  # graduation: V1.7 is always enabled
     from datetime import date, datetime
     from decimal import Decimal
     from unittest.mock import MagicMock
@@ -950,12 +906,10 @@ async def test_pay_obligation_fifo(mock_db):
             assert response.status_code == 201
 
     finally:
-        settings.NEXUM_OBLIGATIONS_V17_ENABLED = False
-
-
+        pass  # graduation: V1.7 is always enabled
 @pytest.mark.asyncio
 async def test_skip_period_success(mock_db):
-    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
+    pass  # graduation: V1.7 is always enabled
     try:
         from decimal import Decimal
         from unittest.mock import MagicMock
@@ -999,12 +953,10 @@ async def test_skip_period_success(mock_db):
             assert response.status_code == 200
             assert mock_period.status == "skipped"
     finally:
-        settings.NEXUM_OBLIGATIONS_V17_ENABLED = False
-
-
+        pass  # graduation: V1.7 is always enabled
 @pytest.mark.asyncio
 async def test_cancel_period_success(mock_db):
-    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
+    pass  # graduation: V1.7 is always enabled
     try:
         from decimal import Decimal
         from unittest.mock import MagicMock
@@ -1050,12 +1002,10 @@ async def test_cancel_period_success(mock_db):
             assert response.status_code == 200
             assert mock_period.status == "cancelled"
     finally:
-        settings.NEXUM_OBLIGATIONS_V17_ENABLED = False
-
-
+        pass  # graduation: V1.7 is always enabled
 @pytest.mark.asyncio
 async def test_refresh_overdue_periods(mock_db):
-    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
+    pass  # graduation: V1.7 is always enabled
     try:
         from datetime import date, timedelta
         from decimal import Decimal
@@ -1099,9 +1049,7 @@ async def test_refresh_overdue_periods(mock_db):
             assert mock_period.status == "overdue"
             assert response.json()["updated_count"] == 1
     finally:
-        settings.NEXUM_OBLIGATIONS_V17_ENABLED = False
-
-
+        pass  # graduation: V1.7 is always enabled
 @pytest.mark.asyncio
 async def test_pay_specific_period_cross_currency_success(mock_db, monkeypatch):
     from datetime import UTC, date, datetime, timedelta
@@ -1116,8 +1064,7 @@ async def test_pay_specific_period_cross_currency_success(mock_db, monkeypatch):
     from app.obligations.enums_v17 import ObligationStatus
     from app.obligations.models import FXQuote, Obligation, ObligationPeriod
 
-    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
-
+    pass  # graduation: V1.7 is always enabled
     obs_id = uuid.uuid4()
     period_id = uuid.uuid4()
     quote_id = uuid.uuid4()
@@ -1247,8 +1194,7 @@ async def test_pay_specific_period_cross_currency_without_quote(mock_db, monkeyp
     from app.obligations.enums_v17 import ObligationStatus
     from app.obligations.models import Obligation, ObligationPeriod
 
-    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
-
+    pass  # graduation: V1.7 is always enabled
     obs_id = uuid.uuid4()
     period_id = uuid.uuid4()
     account_id = uuid.uuid4()
@@ -1338,8 +1284,7 @@ async def test_pay_specific_period_missing_idempotency_key(mock_db):
 
     from httpx import ASGITransport, AsyncClient
 
-    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
-
+    pass  # graduation: V1.7 is always enabled
     obs_id = uuid.uuid4()
     period_id = uuid.uuid4()
 
@@ -1368,8 +1313,7 @@ async def test_pay_obligation_fifo_missing_idempotency_key(mock_db):
 
     from httpx import ASGITransport, AsyncClient
 
-    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
-
+    pass  # graduation: V1.7 is always enabled
     obs_id = uuid.uuid4()
 
     from unittest.mock import MagicMock
@@ -1404,8 +1348,7 @@ async def test_get_summary_v17(mock_db, monkeypatch):
     from app.obligations.enums_v17 import PeriodStatus
     from app.obligations.models import Obligation, ObligationPeriod
 
-    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
-
+    pass  # graduation: V1.7 is always enabled
     obl1 = Obligation(
         id=uuid.uuid4(),
         user_id="00000000-0000-0000-0000-000000000000",
@@ -1468,27 +1411,12 @@ async def test_get_summary_v17(mock_db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_get_summary_v17_feature_flag_off(mock_db, monkeypatch):
-    from httpx import ASGITransport, AsyncClient
-
-    from app.main import app
-
-    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", False)
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/api/v1.7/obligations/summary?month=2026-07",
-        )
-        assert response.status_code in (401, 403)
-
-
-@pytest.mark.asyncio
 async def test_get_summary_v17_invalid_month(mock_db, monkeypatch):
     from httpx import ASGITransport, AsyncClient
 
     from app.main import app
 
-    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
+    pass  # graduation: V1.7 is always enabled
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         res = await client.get(
             "/api/v1.7/obligations/summary?month=202607",
@@ -1508,8 +1436,7 @@ async def test_get_intelligence_context_v17(mock_db, monkeypatch):
     from app.main import app
     from app.obligations.models import Obligation, ObligationPeriod
 
-    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
-
+    pass  # graduation: V1.7 is always enabled
     obl1 = Obligation(
         id=uuid.uuid4(),
         user_id="00000000-0000-0000-0000-000000000000",
@@ -1545,19 +1472,6 @@ async def test_get_intelligence_context_v17(mock_db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_get_intelligence_context_v17_feature_flag_off(mock_db, monkeypatch):
-    from httpx import ASGITransport, AsyncClient
-
-    from app.main import app
-
-    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", False)
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        res = await client.get("/api/v1.7/obligations/intelligence-context?month=2026-07")
-        assert res.status_code in (401, 403)
-
-
-@pytest.mark.asyncio
 async def test_pay_specific_period_cross_currency_debits_source_amount_not_applied_amount(
     mock_db, monkeypatch
 ):
@@ -1573,8 +1487,7 @@ async def test_pay_specific_period_cross_currency_debits_source_amount_not_appli
     from app.obligations.enums_v17 import ObligationStatus
     from app.obligations.models import FXQuote, Obligation, ObligationPeriod
 
-    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
-
+    pass  # graduation: V1.7 is always enabled
     obs_id = uuid.uuid4()
     period_id = uuid.uuid4()
     quote_id = uuid.uuid4()
@@ -1698,8 +1611,7 @@ async def test_pay_specific_period_cross_currency_validations(mock_db, monkeypat
     from app.obligations.enums_v17 import ObligationStatus
     from app.obligations.models import FXQuote, Obligation, ObligationPeriod
 
-    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
-
+    pass  # graduation: V1.7 is always enabled
     obs_id = uuid.uuid4()
     period_id = uuid.uuid4()
     quote_id = uuid.uuid4()
@@ -1838,8 +1750,7 @@ async def test_cross_currency_preview_then_payment_runtime_path(mock_db, monkeyp
     from app.obligations.enums_v17 import ObligationStatus
     from app.obligations.models import FXQuote, Obligation, ObligationPeriod
 
-    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
-
+    pass  # graduation: V1.7 is always enabled
     obs_id = uuid.uuid4()
     period_id = uuid.uuid4()
     account_id = uuid.uuid4()
@@ -1984,8 +1895,7 @@ async def test_pay_specific_period_cross_currency_tolerance_validation(mock_db, 
     from app.obligations.enums_v17 import ObligationStatus
     from app.obligations.models import FXQuote, Obligation, ObligationPeriod
 
-    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
-
+    pass  # graduation: V1.7 is always enabled
     obs_id = uuid.uuid4()
     period_id = uuid.uuid4()
     quote_id = uuid.uuid4()
@@ -2111,8 +2021,7 @@ async def test_pay_specific_period_cross_currency_mismatched_amount_validation(
     from app.obligations.enums_v17 import ObligationStatus
     from app.obligations.models import FXQuote, Obligation, ObligationPeriod
 
-    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
-
+    pass  # graduation: V1.7 is always enabled
     obs_id = uuid.uuid4()
     period_id = uuid.uuid4()
     quote_id = uuid.uuid4()
@@ -2229,8 +2138,7 @@ async def test_pay_specific_period_cross_currency_expired_quote(mock_db, monkeyp
     from app.obligations.enums_v17 import ObligationStatus
     from app.obligations.models import FXQuote, Obligation, ObligationPeriod
 
-    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
-
+    pass  # graduation: V1.7 is always enabled
     obs_id = uuid.uuid4()
     period_id = uuid.uuid4()
     quote_id = uuid.uuid4()
@@ -2343,8 +2251,7 @@ async def test_fifo_payment_idempotent_retry_does_not_duplicate_debit_or_allocat
     from app.obligations.enums_v17 import ObligationStatus
     from app.obligations.models import Obligation, ObligationPayment, ObligationPeriod
 
-    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
-
+    pass  # graduation: V1.7 is always enabled
     obs_id = uuid.uuid4()
     period_id = uuid.uuid4()
     account_id = uuid.uuid4()

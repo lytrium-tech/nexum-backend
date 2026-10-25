@@ -1,13 +1,13 @@
 import uuid
+from datetime import UTC, date, datetime
 from decimal import Decimal
-from datetime import date, datetime, UTC
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.core.config import settings
 from app.main import app
 from app.users.dependencies import get_current_user_profile_dep
+
 
 @pytest.fixture
 def mock_auth():
@@ -30,7 +30,7 @@ def mock_auth():
     mock_session = AsyncMock()
     app.dependency_overrides[get_current_user_profile_dep] = mock_get_current_user
     app.dependency_overrides[get_db_session] = lambda: mock_session
-    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
+    pass  # graduation: V1.7 is always enabled
     yield
     app.dependency_overrides.clear()
 
@@ -42,8 +42,9 @@ async def async_client(mock_auth):
 @pytest.mark.asyncio
 async def test_obligations_overview_returns_relevant_period(async_client, monkeypatch):
     from unittest.mock import AsyncMock
-    from app.obligations.service_v17 import ObligationV17Service
+
     from app.obligations.models import ObligationPeriod
+    from app.obligations.service_v17 import ObligationV17Service
     
     mock_overview = AsyncMock(return_value=[{
         "id": uuid.uuid4(),
@@ -98,8 +99,9 @@ async def test_obligations_overview_returns_relevant_period(async_client, monkey
 @pytest.mark.asyncio
 async def test_obligations_overview_variable_requires_amount_definition(async_client, monkeypatch):
     from unittest.mock import AsyncMock
-    from app.obligations.service_v17 import ObligationV17Service
+
     from app.obligations.models import ObligationPeriod
+    from app.obligations.service_v17 import ObligationV17Service
     
     mock_overview = AsyncMock(return_value=[{
         "id": uuid.uuid4(),
@@ -149,6 +151,7 @@ async def test_obligations_overview_variable_requires_amount_definition(async_cl
 @pytest.mark.asyncio
 async def test_overview_returns_200_with_obligation_without_periods(async_client, monkeypatch):
     from unittest.mock import AsyncMock
+
     from app.obligations.service_v17 import ObligationV17Service
     
     mock_overview = AsyncMock(return_value=[{
@@ -186,6 +189,7 @@ async def test_overview_returns_200_with_obligation_without_periods(async_client
 @pytest.mark.asyncio
 async def test_overview_handles_legacy_obligation_missing_optional_fields(async_client, monkeypatch):
     from unittest.mock import AsyncMock
+
     from app.obligations.service_v17 import ObligationV17Service
     
     mock_overview = AsyncMock(return_value=[{

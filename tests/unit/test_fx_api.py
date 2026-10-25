@@ -1,7 +1,6 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.core.config import settings
 from app.main import app
 
 
@@ -17,11 +16,6 @@ async def client() -> AsyncClient:
 @pytest.fixture
 def token_headers() -> dict[str, str]:
     return {}
-
-
-@pytest.fixture(autouse=True)
-def override_feature_flag(monkeypatch):
-    monkeypatch.setattr(settings, "NEXUM_OBLIGATIONS_V17_ENABLED", True)
 
 
 @pytest.fixture(autouse=True)
@@ -50,18 +44,6 @@ async def test_get_latest_rate_success(client: AsyncClient, token_headers: dict[
     assert data["base_currency"] == "USD"
     assert "COP" in data["rates"]
     assert float(data["rates"]["COP"]) == 4000.0  # From StaticFxRateProvider
-
-
-@pytest.mark.asyncio
-async def test_get_latest_rate_feature_flag_off(
-    client: AsyncClient, token_headers: dict[str, str], monkeypatch
-):
-    monkeypatch.setattr(settings, "NEXUM_OBLIGATIONS_V17_ENABLED", False)
-    response = await client.get(
-        "/api/v1/fx/rates/latest?base_currency=USD&quote_currency=COP", headers=token_headers
-    )
-    assert response.status_code == 403
-    assert response.json()["detail"]["error_code"] == "feature_flag_disabled"
 
 
 @pytest.mark.asyncio

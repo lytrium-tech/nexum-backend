@@ -4,7 +4,6 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.database import get_db_session
 from app.core.financial_time import financial_date
 from app.core.uow import UnitOfWork
@@ -36,15 +35,6 @@ from app.obligations.service_v17 import ObligationV17Service
 from app.users.dependencies import CurrentUserProfile
 
 router = APIRouter()
-
-
-def check_v17_feature_flag():
-    """Dependency to check if V1.7 is enabled."""
-    if not settings.NEXUM_OBLIGATIONS_V17_ENABLED:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="feature_flag_disabled",
-        )
 
 
 def _map_obligation(obligation) -> ObligationV17Response:
@@ -186,7 +176,6 @@ def _map_payment(payment) -> ObligationPaymentV17Response:
 async def list_obligations_v17(
     current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
-    _: None = Depends(check_v17_feature_flag),
 ):
     """
     Returns a list of V1.7 obligations for the current user.
@@ -205,7 +194,6 @@ async def list_obligations_v17(
 async def list_obligations_overview_v17(
     current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
-    _: None = Depends(check_v17_feature_flag),
 ):
     """
     Returns obligations overview with relevant periods to avoid N+1.
@@ -235,7 +223,6 @@ async def create_obligation_v17(
     data: ObligationV17CreateRequest,
     current_profile: CurrentUserProfile,
     db: AsyncSession = Depends(get_db_session),
-    _: None = Depends(check_v17_feature_flag),
 ):
     """
     Creates an obligation using V1.7 contract.
@@ -261,7 +248,6 @@ async def get_obligations_summary_v17(
         None, pattern=r"^\d{4}-\d{2}$", description="Month in YYYY-MM format"
     ),
     session: AsyncSession = Depends(get_db_session),
-    _: None = Depends(check_v17_feature_flag),
 ):
     """
     Returns a dashboard summary for the specified month (or current month).
@@ -282,7 +268,6 @@ async def get_obligations_intelligence_context_v17(
         None, pattern=r"^\d{4}-\d{2}$", description="Month in YYYY-MM format"
     ),
     session: AsyncSession = Depends(get_db_session),
-    _: None = Depends(check_v17_feature_flag),
 ):
     """
     Returns an AI-friendly context summary, reusing the summary endpoint logic.
@@ -302,7 +287,6 @@ async def get_obligation_v17(
     obligation_id: UUID,
     current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
-    _: None = Depends(check_v17_feature_flag),
 ):
     """
     Obtiene una obligación específica V1.7.
@@ -324,7 +308,6 @@ async def get_obligation_v17(
         422: {"model": ApiErrorResponse},
     },
     summary="Update Obligation (V1.7)",
-    dependencies=[Depends(check_v17_feature_flag)],
 )
 async def update_obligation_v17(
     obligation_id: UUID,
@@ -347,7 +330,6 @@ async def update_obligation_v17(
     response_model=ObligationPaymentsV17ListResponse,
     responses={403: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}},
     summary="List payments for an obligation (V1.7)",
-    dependencies=[Depends(check_v17_feature_flag)],
 )
 async def list_obligation_payments_v17(
     obligation_id: UUID,
@@ -371,7 +353,6 @@ async def list_obligation_payments_v17(
     responses={403: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}},
     summary="List V1.7 obligation periods",
     description="Lists all periods for a specific obligation using V1.7 read semantics.",
-    dependencies=[Depends(check_v17_feature_flag)],
 )
 async def get_obligation_periods_v17(
     obligation_id: UUID,
@@ -410,7 +391,6 @@ async def define_period_amount_v17(
     data: ObligationPeriodAmountDefineRequest,
     current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
-    _: None = Depends(check_v17_feature_flag),
 ):
     """
     Define el monto para un periodo variable en V1.7.
@@ -435,7 +415,6 @@ async def define_period_amount_v17(
         422: {"model": ApiErrorResponse},
     },
     summary="Preview a specific period payment (V1.7)",
-    dependencies=[Depends(check_v17_feature_flag)],
 )
 async def preview_pay_period_v17(
     obligation_id: UUID,
@@ -473,7 +452,6 @@ async def create_period_payment_v17(
     data: ObligationPeriodPaymentCreateRequest,
     current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
-    _: None = Depends(check_v17_feature_flag),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
     """
@@ -511,7 +489,6 @@ async def create_obligation_payment_fifo_v17(
     data: ObligationFIFOPaymentCreateRequest,
     current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
-    _: None = Depends(check_v17_feature_flag),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
     """
@@ -540,7 +517,6 @@ async def create_obligation_payment_fifo_v17(
 @router.post(
     "/{obligation_id}/payments/smart",
     response_model=ObligationFIFOPaymentResultResponse,
-    dependencies=[Depends(check_v17_feature_flag)],
 )
 async def pay_obligation_smart(
     obligation_id: UUID,
@@ -576,7 +552,6 @@ async def pay_obligation_smart(
 @router.post(
     "/{obligation_id}/periods/{period_id}/skip",
     response_model=ObligationPeriodV17Response,
-    dependencies=[Depends(check_v17_feature_flag)],
 )
 async def skip_obligation_period(
     obligation_id: UUID,
@@ -602,7 +577,6 @@ async def skip_obligation_period(
 @router.post(
     "/{obligation_id}/periods/{period_id}/cancel",
     response_model=ObligationPeriodV17Response,
-    dependencies=[Depends(check_v17_feature_flag)],
 )
 async def cancel_obligation_period(
     obligation_id: UUID,
@@ -628,7 +602,6 @@ async def cancel_obligation_period(
 @router.post(
     "/{obligation_id}/periods/refresh-overdue",
     response_model=ObligationPeriodRefreshOverdueResponse,
-    dependencies=[Depends(check_v17_feature_flag)],
 )
 async def refresh_overdue_periods(
     obligation_id: UUID,
@@ -660,7 +633,6 @@ async def refresh_overdue_periods(
     responses={403: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}},
     summary="Get V1.7 obligation payment by ID",
     description="Gets a specific obligation payment by ID using V1.7 read semantics.",
-    dependencies=[Depends(check_v17_feature_flag)],
 )
 async def get_obligation_payment_v17(
     payment_id: UUID,
@@ -694,7 +666,6 @@ def _get_auto_payment_service(session: AsyncSession):
 @router.get(
     "/{obligation_id}/auto-payment",
     response_model=ObligationAutoPaymentConfigRead,
-    dependencies=[Depends(check_v17_feature_flag)],
 )
 async def get_obligation_auto_payment_config(
     obligation_id: UUID,
@@ -708,7 +679,6 @@ async def get_obligation_auto_payment_config(
 @router.put(
     "/{obligation_id}/auto-payment",
     response_model=ObligationAutoPaymentConfigRead,
-    dependencies=[Depends(check_v17_feature_flag)],
 )
 async def put_obligation_auto_payment_config(
     obligation_id: UUID,
@@ -723,7 +693,6 @@ async def put_obligation_auto_payment_config(
 @router.get(
     "/{obligation_id}/auto-payment/runs",
     response_model=ObligationAutoPaymentRunsPage,
-    dependencies=[Depends(check_v17_feature_flag)],
 )
 async def list_obligation_auto_payment_runs(
     obligation_id: UUID,

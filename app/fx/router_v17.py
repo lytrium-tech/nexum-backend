@@ -29,11 +29,6 @@ async def get_latest_rate_snapshot(
     current_user: AuthenticatedIdentity = None,
     fx_service: FXService = Depends(get_fx_service),
 ):
-    if not getattr(settings, "NEXUM_OBLIGATIONS_V17_ENABLED", False):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error_code": "feature_flag_disabled", "message": "FX features are disabled."},
-        )
     try:
         return await fx_service.get_rate_snapshot(from_currency, to_currency)
     except ValidationError as e:

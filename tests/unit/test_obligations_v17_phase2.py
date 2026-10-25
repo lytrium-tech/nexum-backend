@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from httpx import ASGITransport, AsyncClient
 
 from app.core.config import settings
 from app.core.database import get_db_session
@@ -760,19 +759,6 @@ async def test_list_payments_pagination(base_obligation):
 # ==============================================================================
 # Part 6: Canonical Preview & Target Authority FX
 # ==============================================================================
-
-
-@pytest.mark.asyncio
-async def test_preview_endpoint_flag_guard(mock_db):
-    """Canonical preview endpoint is guarded by NEXUM_OBLIGATIONS_V17_ENABLED."""
-    settings.NEXUM_OBLIGATIONS_V17_ENABLED = False
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        res = await client.post(
-            f"/api/v1.7/obligations/{uuid.uuid4()}/periods/{uuid.uuid4()}/payments/preview",
-            json={"account_id": str(uuid.uuid4()), "target_amount": 100},
-        )
-        assert res.status_code == 403
 
 
 @pytest.mark.asyncio

@@ -74,8 +74,7 @@ async def test_latest_fx_rate_snapshot_returns_rate_and_id(mock_db, mock_auth, m
     from decimal import Decimal
     from unittest.mock import MagicMock
 
-    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
-
+    pass  # graduation: V1.7 is always enabled
     mock_db.execute.return_value = MagicMock(scalar=MagicMock(return_value=Decimal("4000.00")))
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -91,8 +90,7 @@ async def test_latest_fx_rate_snapshot_returns_rate_and_id(mock_db, mock_auth, m
 
 @pytest.mark.asyncio
 async def test_cross_currency_payment_requires_rate_snapshot(mock_db, mock_auth, monkeypatch):
-    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
-
+    pass  # graduation: V1.7 is always enabled
     obs_id = uuid.uuid4()
     period_id = uuid.uuid4()
     account_id = uuid.uuid4()
@@ -170,8 +168,7 @@ async def test_cross_currency_payment_requires_rate_snapshot(mock_db, mock_auth,
 async def test_cross_currency_payment_with_valid_snapshot_debits_source_amount(
     mock_db, mock_auth, monkeypatch
 ):
-    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
-
+    pass  # graduation: V1.7 is always enabled
     obs_id = uuid.uuid4()
     period_id = uuid.uuid4()
     account_id = uuid.uuid4()
@@ -295,8 +292,7 @@ async def test_cross_currency_payment_with_valid_snapshot_debits_source_amount(
 
 @pytest.mark.asyncio
 async def test_cross_currency_payment_with_expired_snapshot_fails(mock_db, mock_auth, monkeypatch):
-    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
-
+    pass  # graduation: V1.7 is always enabled
     obs_id = uuid.uuid4()
     period_id = uuid.uuid4()
     account_id = uuid.uuid4()
@@ -388,8 +384,7 @@ async def test_cross_currency_payment_with_expired_snapshot_fails(mock_db, mock_
 async def test_cross_currency_payment_with_mismatched_currency_snapshot_fails(
     mock_db, mock_auth, monkeypatch
 ):
-    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
-
+    pass  # graduation: V1.7 is always enabled
     obs_id = uuid.uuid4()
     period_id = uuid.uuid4()
     account_id = uuid.uuid4()
@@ -481,8 +476,7 @@ async def test_cross_currency_payment_with_mismatched_currency_snapshot_fails(
 
 @pytest.mark.asyncio
 async def test_same_currency_payment_does_not_require_snapshot(mock_db, mock_auth, monkeypatch):
-    monkeypatch.setattr("app.core.config.settings.NEXUM_OBLIGATIONS_V17_ENABLED", True)
-
+    pass  # graduation: V1.7 is always enabled
     obs_id = uuid.uuid4()
     period_id = uuid.uuid4()
     account_id = uuid.uuid4()

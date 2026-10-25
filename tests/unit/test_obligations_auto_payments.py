@@ -1448,18 +1448,11 @@ class TestAutoPaymentExecution:
 
 
 class TestAutoPaymentCLI:
-    @pytest.mark.asyncio
-    async def test_cli_disabled_flag_exits_zero_without_db(self):
-        with patch.object(settings, "NEXUM_OBLIGATIONS_V17_ENABLED", False):
-            with patch("app.core.database.init_engine") as mock_init:
-                exit_code = await process_auto_payments.async_main()
-                assert exit_code == process_auto_payments.EXIT_OK
-                assert not mock_init.called
 
     @pytest.mark.asyncio
     async def test_cli_clean_batch_exits_zero(self):
         mock_summary = AutoPaymentProcessorSummary(selected=2, succeeded=2)
-        with patch.object(settings, "NEXUM_OBLIGATIONS_V17_ENABLED", True):
+        if True:
             with (
                 patch("app.core.database.init_engine", AsyncMock()),
                 patch("app.core.database.close_engine", AsyncMock()),
@@ -1482,7 +1475,7 @@ class TestAutoPaymentCLI:
     @pytest.mark.asyncio
     async def test_cli_technical_failure_exits_two(self):
         mock_summary = AutoPaymentProcessorSummary(selected=2, technical_failures=1, failed=1)
-        with patch.object(settings, "NEXUM_OBLIGATIONS_V17_ENABLED", True):
+        if True:
             with (
                 patch("app.core.database.init_engine", AsyncMock()),
                 patch("app.core.database.close_engine", AsyncMock()),
@@ -1504,7 +1497,7 @@ class TestAutoPaymentCLI:
 
     @pytest.mark.asyncio
     async def test_cli_unhandled_failure_exits_one(self):
-        with patch.object(settings, "NEXUM_OBLIGATIONS_V17_ENABLED", True):
+        if True:
             with (
                 patch(
                     "app.core.database.init_engine",
@@ -1518,7 +1511,7 @@ class TestAutoPaymentCLI:
     @pytest.mark.asyncio
     async def test_cli_exits_nonzero_on_technical_failure_persistence_crash(self):
         """CLI async_main must exit with EXIT_GLOBAL_FAILURE (code 1) when technical failure persistence crashes."""
-        with patch.object(settings, "NEXUM_OBLIGATIONS_V17_ENABLED", True):
+        if True:
             with (
                 patch("app.core.database.init_engine", AsyncMock()),
                 patch("app.core.database.close_engine", AsyncMock()),
@@ -1541,25 +1534,6 @@ class TestAutoPaymentCLI:
 
 
 class TestAutoPaymentHTTPRoutes:
-    @pytest.mark.asyncio
-    async def test_route_flag_disabled_returns_403(self):
-        obs_id = uuid.uuid4()
-        with patch.object(settings, "NEXUM_OBLIGATIONS_V17_ENABLED", False):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                res_get = await client.get(f"/api/v1.7/obligations/{obs_id}/auto-payment")
-                assert res_get.status_code == 403
-                assert res_get.json()["detail"] == "feature_flag_disabled"
-
-                res_put = await client.put(
-                    f"/api/v1.7/obligations/{obs_id}/auto-payment",
-                    json={"enabled": False},
-                )
-                assert res_put.status_code == 403
-
-                res_runs = await client.get(f"/api/v1.7/obligations/{obs_id}/auto-payment/runs")
-                assert res_runs.status_code == 403
 
     @pytest.mark.asyncio
     async def test_route_get_and_put_and_runs_success(self):
@@ -1634,7 +1608,7 @@ class TestAutoPaymentHTTPRoutes:
 
         app.dependency_overrides[get_current_user_profile_dep] = mock_user
 
-        with patch.object(settings, "NEXUM_OBLIGATIONS_V17_ENABLED", True):
+        if True:
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:

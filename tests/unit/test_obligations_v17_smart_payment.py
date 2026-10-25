@@ -4,7 +4,6 @@ from decimal import Decimal
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.core.config import settings
 from app.main import app
 from app.users.dependencies import get_current_user_profile_dep
 
@@ -32,7 +31,7 @@ def mock_auth():
     mock_session = AsyncMock()
     app.dependency_overrides[get_current_user_profile_dep] = mock_get_current_user
     app.dependency_overrides[get_db_session] = lambda: mock_session
-    settings.NEXUM_OBLIGATIONS_V17_ENABLED = True
+    pass  # graduation: V1.7 is always enabled
     yield
     app.dependency_overrides.clear()
 
@@ -144,7 +143,6 @@ async def test_smart_payment_single_future_pending_period_is_payable(async_clien
 async def test_smart_payment_does_not_return_period_not_payable_when_period_is_pending_with_amount_due(async_client, monkeypatch):
     from unittest.mock import AsyncMock
 
-    from app.obligations.models import ObligationPayment, ObligationPeriod
     from app.obligations.service_v17 import ObligationV17Service
     
     mock_pay = AsyncMock(return_value=([], []))

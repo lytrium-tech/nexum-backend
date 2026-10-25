@@ -13,7 +13,6 @@ from typing import NoReturn
 from app.accounts.repository import AccountRepository
 from app.api.router import api_router  # noqa: F401 (metadata bootstrap)
 from app.core import database
-from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
 from app.fx.provider import get_default_fx_provider
 from app.fx.service import FXService
@@ -78,11 +77,6 @@ async def async_main(
     now_factory: Callable[[], datetime] | None = None,
 ) -> int:
     """Execute auto payments batch with clean setup and teardown."""
-    # When feature flag is disabled, return EXIT_OK without doing any DB work.
-    if not getattr(settings, "NEXUM_OBLIGATIONS_V17_ENABLED", False):
-        logger.info("obligation_auto_payments_feature_flag_disabled")
-        return EXIT_OK
-
     initialization_started = False
     summary: AutoPaymentProcessorSummary | None = None
     exit_code = EXIT_GLOBAL_FAILURE

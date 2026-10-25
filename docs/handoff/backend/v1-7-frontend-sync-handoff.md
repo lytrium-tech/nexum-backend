@@ -9,7 +9,7 @@ El objetivo de esta fase es sincronizar el frontend local con las nuevas capacid
 ### Estado del Backend (Producción / VPS)
 * **Despliegue Independiente:** El backend es desplegable independientemente del frontend.
 * **API Pública:** `https://api.nexum.lytrium.tech`
-* **Feature Flag:** `NEXUM_OBLIGATIONS_V17_ENABLED` (temporalmente protege las rutas con `403` si está apagado).
+* **Feature Flag:** Retirado; las rutas V1.7 están completamente activas.
 
 ### Estado del Frontend (Local)
 * **Ejecución:** Se levanta usando `pnpm dev` en local, apuntando a la API de producción.
@@ -39,7 +39,7 @@ Bajo las mismas rutas `/api/v1.7`, el backend ahora soporta:
 
 ## 3. Configuración Local del Frontend
 
-El frontend debe apuntar a la API de producción e implementar feature flags locales para aislar V1.7/V1.8.
+El frontend consume la API directamente. En el backend, las rutas V1.7 ya no están protegidas por feature flag y permanecen permanentemente activas.
 
 ### Variables de Entorno Locales (`.env.local`)
 1. **API Base URL:**
@@ -48,7 +48,6 @@ El frontend debe apuntar a la API de producción e implementar feature flags loc
    ```
 2. **Feature Flag Local:**
    ```env
-   NEXT_PUBLIC_NEXUM_OBLIGATIONS_V17_ENABLED=true
    ```
 
 ---
