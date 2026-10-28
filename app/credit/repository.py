@@ -5,7 +5,20 @@ from decimal import Decimal
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.credit.models import CreditCard, CreditCardInstallment, CreditCardTransaction
+from app.credit.models import (
+    CreditCard,
+    CreditCardAdjustment,
+    CreditCardAdjustmentAllocation,
+    CreditCardBillingCycle,
+    CreditCardInstallment,
+    CreditCardPayment,
+    CreditCardPaymentAllocation,
+    CreditCardStatement,
+    CreditCardStatementCharge,
+    CreditCardStatementComponent,
+    CreditCardStatementFact,
+    CreditCardTransaction,
+)
 
 
 class CreditCardRepository:
@@ -18,7 +31,10 @@ class CreditCardRepository:
 
     async def get_by_id_for_update(self, card_id: uuid.UUID) -> CreditCard | None:
         result = await self.session.execute(
-            select(CreditCard).where(CreditCard.id == card_id).with_for_update()
+            select(CreditCard)
+            .where(CreditCard.id == card_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 
@@ -33,7 +49,11 @@ class CreditCardRepository:
         await self.session.flush()
 
     async def get_card_debt(self, card_id: uuid.UUID) -> tuple[float, float]:
-        """Returns (credit_card_debt, monthly_cc_payment) from the view."""
+        """Returns (credit_card_debt, monthly_cc_payment) directly from credit_card_installments.
+
+        Note: credit_cards.current_debt and v_credit_card_debt view are non-authoritative
+        legacy artifacts retained physically for backwards compatibility.
+        """
         query = text("""
             SELECT 
                 COALESCE(SUM(principal_amount + interest_amount - paid_amount), 0) as credit_card_debt,
@@ -86,6 +106,7 @@ class CreditCardRepository:
                 CreditCardInstallment.installment_number.asc(),
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         return list(result.scalars().all())
 
@@ -111,6 +132,7 @@ class CreditCardRepository:
             .where(CreditCardInstallment.purchase_transaction_id == transaction_id)
             .order_by(CreditCardInstallment.installment_number.asc())
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         return list(result.scalars().all())
 
@@ -171,8 +193,6 @@ class CreditCardRepository:
         return Decimal(str(result.scalar_one_or_none() or 0))
 
     async def list_statements(self, card_id: uuid.UUID) -> list:
-        from app.credit.models import CreditCardStatement
-
         result = await self.session.execute(
             select(CreditCardStatement)
             .where(CreditCardStatement.credit_card_id == card_id)
@@ -181,8 +201,6 @@ class CreditCardRepository:
         return list(result.scalars().all())
 
     async def get_statement(self, card_id: uuid.UUID, period: str):
-        from app.credit.models import CreditCardStatement
-
         result = await self.session.execute(
             select(CreditCardStatement).where(
                 CreditCardStatement.credit_card_id == card_id,
@@ -191,9 +209,16 @@ class CreditCardRepository:
         )
         return result.scalars().first()
 
-    async def list_unpaid_statement_charges_for_update(self, card_id: uuid.UUID) -> list:
-        from app.credit.models import CreditCardStatement, CreditCardStatementCharge
+    async def get_statement_for_update(self, statement_id: uuid.UUID) -> CreditCardStatement | None:
+        result = await self.session.execute(
+            select(CreditCardStatement)
+            .where(CreditCardStatement.id == statement_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one_or_none()
 
+    async def list_unpaid_statement_charges_for_update(self, card_id: uuid.UUID) -> list:
         result = await self.session.execute(
             select(CreditCardStatementCharge)
             .join(CreditCardStatement)
@@ -203,5 +228,168 @@ class CreditCardRepository:
             )
             .order_by(CreditCardStatementCharge.created_at.asc())
             .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return list(result.scalars().all())
+
+    # ── Canonical Primitives (Goal 2 Foundation) ─────────────────────────────
+
+    async def add_billing_cycle(self, cycle: CreditCardBillingCycle) -> None:
+        self.session.add(cycle)
+        await self.session.flush()
+
+    async def get_billing_cycle(self, cycle_id: uuid.UUID) -> CreditCardBillingCycle | None:
+        result = await self.session.execute(
+            select(CreditCardBillingCycle).where(CreditCardBillingCycle.id == cycle_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_billing_cycle_for_update(
+        self, cycle_id: uuid.UUID
+    ) -> CreditCardBillingCycle | None:
+        result = await self.session.execute(
+            select(CreditCardBillingCycle)
+            .where(CreditCardBillingCycle.id == cycle_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_billing_cycle_by_period(
+        self, card_id: uuid.UUID, billing_period: str
+    ) -> CreditCardBillingCycle | None:
+        result = await self.session.execute(
+            select(CreditCardBillingCycle).where(
+                CreditCardBillingCycle.credit_card_id == card_id,
+                CreditCardBillingCycle.billing_period == billing_period,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def add_payment(self, payment: CreditCardPayment) -> None:
+        self.session.add(payment)
+        await self.session.flush()
+
+    async def get_payment_by_id(self, payment_id: uuid.UUID) -> CreditCardPayment | None:
+        result = await self.session.execute(
+            select(CreditCardPayment).where(CreditCardPayment.id == payment_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_payment_for_update(self, payment_id: uuid.UUID) -> CreditCardPayment | None:
+        result = await self.session.execute(
+            select(CreditCardPayment)
+            .where(CreditCardPayment.id == payment_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_payment_by_command_id(
+        self, user_id: uuid.UUID, command_id: uuid.UUID
+    ) -> CreditCardPayment | None:
+        result = await self.session.execute(
+            select(CreditCardPayment).where(
+                CreditCardPayment.user_id == user_id,
+                CreditCardPayment.command_id == command_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def add_payment_allocations(
+        self, allocations: list[CreditCardPaymentAllocation]
+    ) -> None:
+        self.session.add_all(allocations)
+        await self.session.flush()
+
+    async def list_allocations_for_payment(
+        self, payment_id: uuid.UUID
+    ) -> list[CreditCardPaymentAllocation]:
+        result = await self.session.execute(
+            select(CreditCardPaymentAllocation)
+            .where(CreditCardPaymentAllocation.payment_id == payment_id)
+            .order_by(CreditCardPaymentAllocation.allocation_order.asc())
+        )
+        return list(result.scalars().all())
+
+    async def add_statement_components(
+        self, components: list[CreditCardStatementComponent]
+    ) -> None:
+        self.session.add_all(components)
+        await self.session.flush()
+
+    async def list_components_for_statement(
+        self, statement_id: uuid.UUID
+    ) -> list[CreditCardStatementComponent]:
+        result = await self.session.execute(
+            select(CreditCardStatementComponent)
+            .where(CreditCardStatementComponent.statement_id == statement_id)
+            .order_by(CreditCardStatementComponent.created_at.asc())
+        )
+        return list(result.scalars().all())
+
+    async def add_statement_facts(
+        self, facts: list[CreditCardStatementFact]
+    ) -> None:
+        self.session.add_all(facts)
+        await self.session.flush()
+
+    async def list_facts_for_statement(
+        self, statement_id: uuid.UUID
+    ) -> list[CreditCardStatementFact]:
+        result = await self.session.execute(
+            select(CreditCardStatementFact)
+            .where(CreditCardStatementFact.statement_id == statement_id)
+            .order_by(CreditCardStatementFact.created_at.asc())
+        )
+        return list(result.scalars().all())
+
+    async def add_adjustment(self, adjustment: CreditCardAdjustment) -> None:
+        self.session.add(adjustment)
+        await self.session.flush()
+
+    async def get_adjustment_by_id(
+        self, adjustment_id: uuid.UUID
+    ) -> CreditCardAdjustment | None:
+        result = await self.session.execute(
+            select(CreditCardAdjustment).where(CreditCardAdjustment.id == adjustment_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_adjustment_for_update(
+        self, adjustment_id: uuid.UUID
+    ) -> CreditCardAdjustment | None:
+        result = await self.session.execute(
+            select(CreditCardAdjustment)
+            .where(CreditCardAdjustment.id == adjustment_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_adjustment_by_command_id(
+        self, user_id: uuid.UUID, command_id: uuid.UUID
+    ) -> CreditCardAdjustment | None:
+        result = await self.session.execute(
+            select(CreditCardAdjustment).where(
+                CreditCardAdjustment.user_id == user_id,
+                CreditCardAdjustment.command_id == command_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def add_adjustment_allocations(
+        self, allocations: list[CreditCardAdjustmentAllocation]
+    ) -> None:
+        self.session.add_all(allocations)
+        await self.session.flush()
+
+    async def list_allocations_for_adjustment(
+        self, adjustment_id: uuid.UUID
+    ) -> list[CreditCardAdjustmentAllocation]:
+        result = await self.session.execute(
+            select(CreditCardAdjustmentAllocation)
+            .where(CreditCardAdjustmentAllocation.adjustment_id == adjustment_id)
+            .order_by(CreditCardAdjustmentAllocation.allocation_order.asc())
         )
         return list(result.scalars().all())

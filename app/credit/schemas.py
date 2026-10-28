@@ -223,3 +223,175 @@ class CreditCardStatementRead(BaseModel):
     frozen_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ── Canonical Schema Foundations (Goal 2) ────────────────────────────────────
+
+
+class CreditCardBillingCycleRead(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    credit_card_id: uuid.UUID
+    billing_period: str
+    start_date: date
+    cutoff_date: date
+    due_date: date
+    status: str
+    provenance: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CreditCardStatementComponentRead(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    credit_card_id: uuid.UUID
+    statement_id: uuid.UUID
+    component_type: str
+    amount: Decimal
+    currency: str
+    principal_amount: Decimal = Decimal("0.00")
+    interest_amount: Decimal = Decimal("0.00")
+    fee_amount: Decimal = Decimal("0.00")
+    transaction_id: uuid.UUID | None = None
+    installment_id: uuid.UUID | None = None
+    statement_charge_id: uuid.UUID | None = None
+    provenance: str
+    description: str | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CreditCardStatementFactRead(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    credit_card_id: uuid.UUID
+    statement_id: uuid.UUID
+    fact_type: str
+    amount: Decimal | None = None
+    currency: str | None = None
+    provenance: str
+    observed_at: datetime
+    effective_at: datetime | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CreditCardPaymentRead(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    credit_card_id: uuid.UUID
+    account_id: uuid.UUID | None = None
+    payment_transaction_id: uuid.UUID | None = None
+    event_id: uuid.UUID | None = None
+    booked_amount: Decimal
+    booked_currency: str = "COP"
+    source_amount: Decimal | None = None
+    source_currency: str | None = None
+    fx_rate: Decimal | None = None
+    fx_quote_id: uuid.UUID | None = None
+    fx_rate_snapshot_id: uuid.UUID | None = None
+    principal_applied: Decimal = Decimal("0.00")
+    interest_applied: Decimal = Decimal("0.00")
+    fee_applied: Decimal = Decimal("0.00")
+    unallocated_amount: Decimal = Decimal("0.00")
+    payment_date: date
+    status: str
+    provenance: str
+    allocation_source: str
+    command_id: uuid.UUID | None = None
+    command_fingerprint: str | None = None
+    created_at: datetime
+
+    @property
+    def amount(self) -> Decimal:
+        """Compatibility alias for booked_amount."""
+        return self.booked_amount
+
+    @property
+    def currency(self) -> str:
+        """Compatibility alias for booked_currency."""
+        return self.booked_currency
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CreditCardPaymentAllocationRead(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    credit_card_id: uuid.UUID
+    payment_id: uuid.UUID
+    target_installment_id: uuid.UUID | None = None
+    target_charge_id: uuid.UUID | None = None
+    target_statement_component_id: uuid.UUID | None = None
+    allocated_amount: Decimal
+    allocated_principal: Decimal = Decimal("0.00")
+    allocated_interest: Decimal = Decimal("0.00")
+    allocated_fees: Decimal = Decimal("0.00")
+    allocation_order: int = 1
+    allocation_source: str
+    provenance: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CreditCardAdjustmentRead(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    credit_card_id: uuid.UUID
+    original_transaction_id: uuid.UUID | None = None
+    event_id: uuid.UUID | None = None
+    adjustment_type: str
+    booked_amount: Decimal
+    booked_currency: str = "COP"
+    original_amount: Decimal | None = None
+    original_currency: str | None = None
+    fx_rate: Decimal | None = None
+    fx_rate_snapshot_id: uuid.UUID | None = None
+    fx_quote_id: uuid.UUID | None = None
+    fx_provider: str | None = None
+    fx_rate_timestamp: datetime | None = None
+    status: str
+    provenance: str
+    allocation_source: str
+    command_id: uuid.UUID | None = None
+    command_fingerprint: str | None = None
+    reason: str | None = None
+    occurred_at: datetime
+    created_at: datetime
+
+    @property
+    def amount(self) -> Decimal:
+        """Compatibility alias for booked_amount."""
+        return self.booked_amount
+
+    @property
+    def currency(self) -> str:
+        """Compatibility alias for booked_currency."""
+        return self.booked_currency
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CreditCardAdjustmentAllocationRead(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    credit_card_id: uuid.UUID
+    adjustment_id: uuid.UUID
+    target_installment_id: uuid.UUID | None = None
+    target_transaction_id: uuid.UUID | None = None
+    target_charge_id: uuid.UUID | None = None
+    allocated_amount: Decimal
+    allocated_principal: Decimal = Decimal("0.00")
+    allocated_interest: Decimal = Decimal("0.00")
+    allocated_fees: Decimal = Decimal("0.00")
+    allocation_order: int = 1
+    allocation_source: str
+    provenance: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

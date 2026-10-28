@@ -99,4 +99,8 @@
 ---
 
 ## Exact Next Step
-- **Exact next step:** No Goal 2 work is authorized. Preserve this checkpoint until the Founder resolves section 27 and explicitly starts Goal 2.
+- **Goal 2 authorization:** Approved on 2026-10-28 with the five Founder clarifications governing correction loops, legacy `amount`, non-fabricated legacy history, staged forward migrations, and Nexum-modeled waterfall provenance.
+- **Goal 2 branch:** `feature/credit-canonical-closure`, based on verified `origin/main` `9fc5d14f724fd7c9defd620dde3e730e3d24feac`.
+- **Phase A checkpoint:** Canonical additive schema foundation implemented and independently reviewed. It introduces explicit canonical/legacy partitioning, cycle/statement/component facts, canonical payments and exact allocations, adjustments/refunds/reversals, FX/provenance fields, UUID command identifiers, stable errors, request fingerprints, and a forward correction of the installment payment ceiling. No ambiguous legacy financial history is backfilled.
+- **Phase A validation:** 23 synchronous foundation tests pass locally; Ruff, Alembic single-head validation, diff hygiene, unrelated-file review, and secret scan are green. Three async repository tests cannot start under the local Windows Python 3.14 Proactor event loop and remain assigned to the authoritative Linux/PostgreSQL gate; no production code was changed for that environment limitation.
+- **Exact next step:** Commit and push the green Phase A checkpoint, then implement Phase B canonical cycle, purchase, installment, and FX behavior without synthesizing legacy history or changing the legacy meaning of `amount`.
