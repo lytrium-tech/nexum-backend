@@ -1,8 +1,8 @@
 # Nexum Credit Domain Goal 1 — Continuity State
 
 ## Checkpoint
-- **checkpoint:** `phase-b-domain-reconstruction-draft`
-- **timestamp:** 2026-10-27T23:44:00-05:00
+- **checkpoint:** `phase-c-financial-invariants-draft`
+- **timestamp:** 2026-10-27T23:55:00-05:00
 - **domain:** Credit Domain (`app/credit`)
 - **current_role:** Single-tier Execution Worker
 - **target_artifact:** `docs/agent/audits/credit-domain-goal1-audit.md`
@@ -10,73 +10,79 @@
 ---
 
 ## Completed Scope
-1. **End-to-End Lifecycle Call Path Reconstruction:**
-   - Traced complete call paths, entities, values, transaction ownership, API representations, and unit tests for:
-     - Card creation (`POST /cards` -> `service.create_card` -> `repo.add` -> `_enrich_card`).
-     - Purchase execution (`POST /purchases` -> limit check -> `LedgerEventCreate` [neutral] -> `CreditCardTransaction` -> `_build_installments`).
-     - Cycle assignment and installment creation (`_installment_amounts` with last-installment residual quantization).
-     - Billed vs unbilled status calculation (`_calculate_card_status` -> `repo.get_card_status_data`).
-     - Statement endpoints (`GET /statements` -> select from unpopulated `credit_card_statements`).
-     - Bill payment (`POST /payments` -> account lock -> FX rate lookup -> overpayment check -> Ledger event [outflow] -> `account.balance` debit -> `CreditCardTransaction` [payment] -> `_apply_payment_to_waterfall`).
-     - Waterfall allocation and installment mutation (`inst.paid_amount += applied`).
-     - Next cycle progression (passive on-read boundary advancement).
-2. **Cutoff Semantics & Date Rule Proof:**
-   - Proved cutoff semantics across three operational dates (before cutoff, on cutoff, after cutoff).
-   - Uncovered critical defect: `_build_installments` unconditionally derives `scheduled_period = today.strftime("%Y-%m")` (`service.py:112`), ignoring cutoff days. Post-cutoff purchases within the same calendar month are immediately classified as `billed` by `_calculate_card_status` (`service.py:818`, `repository.py:129`), demanding payment in the current cycle rather than the next cycle.
-   - Clarified that `scheduled_period` is month-only (`YYYY-MM`) and on-cutoff vs post-cutoff behavior depends on the status evaluation date, avoiding claims that unproduced closed statements were mutated.
-   - Identified all uses of `date.today()`, `financial_date()`, `America/Bogota`, database `now()`, and `scheduled_period`.
-   - Proved timezone split-brain between Python naive local `date.today()` and PostgreSQL `now() AT TIME ZONE 'America/Bogota'`. Credit completely bypasses Nexum's canonical `financial_date()`.
-3. **One-Installment vs Multi-Installment Mechanics:**
-   - Documented `_installment_amounts` quantization assigning rounding residuals to the final installment.
-   - Reconstructed flat interest formula on isolated installment principals.
-   - Documented single-installment interest penalty: 1-installment purchases incur interest whenever `monthly_interest_rate > 0`.
-   - Proved overpayment wall: standard payments permit paying ahead only for revolving unbilled debt (`installments_total == 1`). Cardholders with multi-installment debt cannot pay ahead via standard payments.
-   - Reconstructed `/pay_early` eligibility and principal schedule compression.
-4. **Interest Storage & Amortization Formulas:**
-   - Cataloged interest fields and rate units (monthly percentage).
-   - Reconstructed current formula: `interest = (principal * rate / 100).quantize(0.01)`.
-   - Documented explicit placeholders, absence of French/German amortization, absence of daily average balance (ADB) accrual, and lack of compounding.
-5. **Minimum Payment & Read Model Contradiction Matrix:**
-   - Reconstructed minimum payment formula (5% or 50,000 COP / 15 USD).
-   - Exposed severe API contradictions:
-     - `/cards` returns `statement_balance = null`, while `/status` returns `billed_debt`.
-     - `/cards` returns `minimum_payment = 0.00`, while `/status` returns the calculated formula.
-     - `v_credit_card_debt` aggregates transactions, contradicting active installment-based repository queries.
-6. **Payment Waterfall & Allocation Engine Reconstruction:**
-   - Traced step-by-step sequential waterfall execution (Tiers 1 through 7).
-   - Proved non-deterministic payment allocation ordering: `list_pending_installments_for_update` orders by `scheduled_period, installment_number` without tiebreakers. Equal installments allocate in arbitrary physical heap scan order.
-   - Proved complete loss of allocation auditability: no junction table links payment transactions to specific installments or statement charges.
-7. **Partial Payment, Overpayment & Prepayment Behavior:**
-   - Reconstructed partial payment behavior, overpayment rejection, and `/pay_early` execution.
-   - Proved `/pay_early` transaction void: early payments insert to `credit_card_early_payments` but create no row in `credit_card_transactions`.
-8. **Refunds, Reversals, Adjustments & Credit Balance Audit:**
-   - Proved total absence of merchant refunds, reversals, chargebacks, and adjustments.
-   - Proved immediate single-phase settlement (no pending/authorization states).
-   - Proved negative debt (saldo a favor / true credit balance) is mathematically and logically prohibited.
-9. **Multi-Currency & FX Engine Audit:**
-   - Clarified foreign purchase behavior: the API lacks original currency and amount inputs, implicitly trusting pre-converted input and recording the supplied amount as card currency.
-   - Reconstructed cross-currency payments, server-side FX rate lookup, and JSONB audit trails.
-10. **Candidate Findings Register:**
-    - Formulated 12 concrete candidate findings categorized with provisional P0, P1, and P2 severities and exact source references.
-11. **Alignment with Founder Directions:**
-    - Removed invented product decisions.
-    - Explicitly recorded only approved Founder directions (bank authority, statement snapshots, post-cutoff attribution, prepayment concept, overpayment cap, atomic reconciliation, goal reservation balance reduction, currency separation, canonical Bogota clock).
-    - Cataloged open business rules in Section 27.
-12. **Restored 28-Section Canonical Structure:**
-    - Document organized under the exact 28 required sections, with sections 12-13 marked PENDING PHASE C, 19-20 marked PENDING VERIFICATION, and 24-28 marked PENDING PHASE E / OPEN PRODUCT DECISION.
+1. **Transaction and Session Ownership Boundary (Primary Question 25):**
+   - Traced Unit of Work lifecycle across all mutating endpoints (`POST /cards`, `PATCH /cards/{id}`, `DELETE /cards/{id}`, `POST /purchases`, `POST /payments`, `POST /pay_early`, `POST /pay_early/preview`).
+   - Proved that UoW begins in FastAPI routers via `uow = UnitOfWork(session)` and `async with uow.transaction():`.
+   - Proved that commit/rollback is managed by `UnitOfWork.transaction()` in `app/core/uow.py:28-40` with outer safety in `get_db_session()` (`app/core/database.py:117-145`).
+   - Proved that in all Credit mutating flows, `LedgerEvent` (`financial_events`), `Account` balance debit, `CreditCardTransaction`, `CreditCardInstallment` mutations, and `CreditCardStatementCharge` mutations share the **exact same `AsyncSession`** and execute within **one atomic PostgreSQL database transaction**.
+   - Identified that conversational routes (`POST /api/v1/conversations/message`) do not open an explicit `UnitOfWork`, relying on `get_db_session()` session lifecycle.
+2. **Idempotency Engine, Savepoint & Retry Flow (Primary Question 26):**
+   - Proved idempotency is enforced exclusively at the Ledger level via `financial_events` and partial unique index `idx_financial_events_command_id`.
+   - Traced savepoint flow: `LedgerRepository.record_event` executes inside `async with self.session.begin_nested():`. On `IntegrityError`, it rolls back to the savepoint and retrieves the existing event without aborting the parent transaction.
+   - Proved that resource locks (`credit_cards`, `accounts`, `credit_card_installments`) are acquired **before** idempotency detection in all flows.
+   - Documented returned values on retry: endpoints return DTOs with `status = "idempotent_retry"`, re-evaluating live debt dynamically rather than returning original historical responses.
+   - Uncovered blind retry vulnerability (**F-16**): `CreditCardService` fails to verify if the retrieved idempotent event matches the operation type, card, or amount, returning valid retry DTOs for foreign operations.
+   - Identified routes lacking `Idempotency-Key` or `command_id`: `POST /cards`, `PATCH /cards/{id}`, `DELETE /cards/{id}`.
+3. **Resource Lock Ordering & Deadlock Hazards (Primary Question 27):**
+   - Reconstructed physical lock order across all endpoints.
+   - Proved critical inverted lock ordering between standard bill payments and early prepayments (**F-14**):
+     - `create_payment`: Locks `accounts` -> `credit_cards` -> `installments` -> `charges`.
+     - `create_early_payment` and `preview_early_payment`: Lock `credit_cards` -> `installments` -> `accounts`.
+   - Proved concrete deadlock risk: concurrent standard and early payments on the same card and account produce cyclical waits and trigger PostgreSQL deadlock detection (`40P01`).
+   - Discovered exclusive row locking and mutating transactions in the read-only preview endpoint (**F-17**): `preview_early_payment` locks card, installments, and account `FOR UPDATE` in a `uow.transaction()` while calling external FX services.
+4. **Concurrency Audit (Primary Question 28):**
+   - Proved card credit limit enforcement is safely serialized under PostgreSQL `READ COMMITTED` by row lock on `credit_cards`.
+   - Proved account cash debit is safely serialized by row lock on `accounts`.
+   - Audited concurrent standard vs early payment deadlock hazard (**F-14**).
+   - Audited duplicate `command_id` replay across disparate operations (**F-16**).
+   - Audited post-mutation response calculations: responses return transient in-memory derivations (`estimated_debt - applied_amount`) without re-querying database state, risking subtle divergence.
+5. **ORM Identity-Map Hazards (Primary Question 29):**
+   - Identified that `CreditCardRepository.get_card_debt` executes raw SQL (`session.execute(text(...))`), bypassing SQLAlchemy's identity map.
+   - Identified that `_apply_payment_to_waterfall` mutates in-memory ORM objects without flushing before returning, meaning raw SQL queries within the same transaction would see stale data.
+   - Analyzed savepoint rollback behavior: savepoint rollbacks in `record_event` discard `FinancialEvent` but retain previously loaded ORM objects in session memory (`expire_on_commit=False`).
+6. **Goal Reservations Enforcement (Primary Question 30):**
+   - Located authoritative reservation calculation in `GoalRepository.calculate_reserved_by_account` and spendable balance definition in `AccountService._set_available_balance` (`available_balance = account.balance - reserved`).
+   - Proved that `CreditCardService.create_payment` and `create_early_payment` inspect only raw `account.balance`, completely ignoring Goal reservations (**F-13**).
+   - Formulated mathematical proof showing that accounts with reserved goal funds can be drained down to zero spendable cash by credit card payments.
+   - Classified severity as **Candidate P0** (Accounting Invariant Violation / Fund Reservation Compromise).
+7. **Ownership & Authorization Audit (Primary Question 31):**
+   - Verified strict card ownership checks across CRUD, purchases, and status endpoints.
+   - Verified account ownership checks in payments, noting error handling inconsistency (`AccountForbiddenError` in payments vs generic `ValueError` in early payments).
+   - Verified transaction, installment, and statement authorization through card linking.
+8. **Financial Reconciliation & Money Conservation (Primary Question 32):**
+   - Cataloged exact amount and currency storage across Accounts, Ledger, and Credit layers.
+   - Proved that Account debit strictly equals Ledger event source amount.
+   - Proved that Account debit equals the Ledger event source amount inside one database transaction.
+   - Identified that end-to-end Credit debt reduction is not proven when statement charges exist: the waterfall can allocate to charges while the guard and response use installment-only debt.
+   - Proved atomic rollback from the shared UoW structure; physical rollback scenarios remain pending CT101.
+   - Proved that post-commit auditability is broken due to total lack of payment allocation junction records (**F-05**) and the omission of `credit_card_transactions` rows for early payments (**F-08**).
+9. **Alembic Physical Constraints Cross-Check (Primary Question 33):**
+   - Uncovered critical check constraint defect in `alembic/versions/v1_5_baseline.py:677` (**F-15**): `credit_card_installments_paid_check` enforces `paid_amount <= principal_amount`. When an installment incurs interest, paying it in full sets `paid_amount` to `total_amount > principal_amount`, causing PostgreSQL to abort transactions with `CheckViolation`.
+   - Identified missing `command_id` on credit entities.
+   - Identified unindexed and non-unique foreign keys on `credit_card_transactions.event_id` and `credit_card_early_payments.event_id`, causing sequential table scans on retry lookups (**F-18**).
+10. **Updated Audit Sections & Candidate Findings Register:**
+    - Updated report sections 1, 5, 12, 13, 21, 22, 23, 25, 28 while strictly preserving the 28 top-level section structure.
+    - Added candidate findings **F-13** through **F-18** with exact file paths, line references, consequences, and Goal 2 remediation items.
+    - Formalized 8 canonical financial invariants in Section 25.
 
 ---
 
 ## Evidence Pending
-- **CT101 Physical Gate Verification:** Execution of physical PostgreSQL 17 test passes on isolated LXC CT101 (Proxmox) to observe query execution plans, locking behavior, and physical heap scan order on equal installments.
-- **Production Database Validation:** Inspection of production databases for customer purchases made post-cutoff that suffered premature billing.
-- **Early Payment Reconciliation Audit:** Verification of whether production databases contain divergence between Ledger event totals and `credit_card_transactions` due to early prepayments.
+- **CT101 Physical Gate Verification (PostgreSQL 17):**
+  1. Physical reproduction of `40P01` deadlock under concurrent execution of standard payments and early prepayments (or early payment previews) on CT101.
+  2. Physical confirmation of `CheckViolation: credit_card_installments_paid_check` when applying payments to interest-bearing installments on real PostgreSQL.
+  3. Execution of `EXPLAIN ANALYZE` on `get_transaction_by_event` to measure table scan cost on unindexed `event_id`.
+  4. Physical confirmation of heap scan order non-determinism in `list_pending_installments_for_update`.
+- **Production Database Validation:**
+  1. Inspection of live accounts to verify if credit card payments have historically reduced account balances below `goal_reserved_amount`.
+  2. Inspection of production databases for orphaned `credit_card_early_payments` missing from `credit_card_transactions`.
+  3. Inspection of live databases for drift in persisted `credit_cards.current_debt`.
 
 ---
 
 ## Exact Next Step
-- **Codex independent verification, checkpoint commit/push, then Phase C invariants:**
+- **Codex independent verification, checkpoint commit/push, then Phase D PostgreSQL:**
   1. Codex reviews the updated audit (`docs/agent/audits/credit-domain-goal1-audit.md`) and continuity (`docs/agent/audits/credit-domain-goal1-continuity.md`).
-  2. Codex performs independent code inspections and verifies the candidate findings.
-  3. Codex commits and pushes the Phase B checkpoint.
-  4. Progression to Phase C financial invariants definition.
+  2. Codex independently verifies the control flow proofs, lock inversion deadlock hazard, Alembic check constraint conflict, and goal reservation bypass findings.
+  3. Codex commits and pushes the Phase C checkpoint.
+  4. Progression to Phase D PostgreSQL physical validation on CT101.
