@@ -1,8 +1,8 @@
 # Nexum Credit Domain Goal 1 — Continuity State
 
 ## Checkpoint
-- **checkpoint:** `phase-d-postgresql-physical-verified`
-- **timestamp:** 2026-10-28T00:26:00-05:00
+- **checkpoint:** `goal1-final-publication-verified`
+- **timestamp:** 2026-10-28T00:21:00-05:00
 - **domain:** Credit Domain (`app/credit`)
 - **current_role:** Single-tier Execution Worker
 - **target_artifact:** `docs/agent/audits/credit-domain-goal1-audit.md`
@@ -10,6 +10,15 @@
 ---
 
 ## Completed Scope
+0. **Phase E External Reconciliation and Canonical Design:**
+   - Accessed NAS successfully through the authorized external route and reconciled Domain Map, Financial Engine archive, legacy context and pre-refactor SQL snapshot.
+   - Read Outline Database Schema, Financial Engine, Ledger & Idempotency, Domain Map, Current State and Backend Changelog via MCP; recorded contradictions.
+   - Inspected the Supabase MCP capability boundary before any production query. Because it permits writes and supplies no read-only credential/role attestation, did not connect and recorded `production_not_verified`.
+   - Completed the required eight-column source-of-truth matrix, documentary entity/cardinality model, canonical invariants, Intelligence readiness, Founder decisions and proposed Goal 2 scope.
+   - Phase E AntiGravity conversation `600274f6-3858-433f-80ba-2bdfe55597f8` was interrupted after it stalled without repository edits; Codex completed and independently owns the draft.
+   - NAS publication readback matched local SHA-256 for both audit and continuity artifacts.
+   - Outline summary published and read back as document `7059016a-90fb-4ccf-aabc-8b1a381db757` (`Credit Goal 1 — Audit & Canonical Model`).
+   - Final local Credit pytest invocation stalled without output and was interrupted; it is not represented as passed or failed.
 0. **Phase D PostgreSQL 17 Physical Gate:**
    - Validated exact disposable target CT101/VMID 101, host `lab`, canonical gate path, database/user `nexum_release_gate_test`, and absence of production identifiers.
    - Reset to an empty schema and migrated with real Alembic to head `obligations_v1_7_auto_payments` on PostgreSQL 17.11.
@@ -85,12 +94,9 @@
   1. Inspection of live accounts to verify if credit card payments have historically reduced account balances below `goal_reserved_amount`.
   2. Inspection of production databases for orphaned `credit_card_early_payments` missing from `credit_card_transactions`.
   3. Inspection of live databases for drift in persisted `credit_cards.current_debt`.
+- **No required Goal 1 evidence remains pending.** Deferred physical scenarios and production verification are explicitly bounded findings, not hidden completion claims.
 
 ---
 
 ## Exact Next Step
-- **Codex independent verification, checkpoint commit/push, then external-source reconciliation and Phase E:**
-  1. Codex reviews the updated audit (`docs/agent/audits/credit-domain-goal1-audit.md`) and continuity (`docs/agent/audits/credit-domain-goal1-continuity.md`).
-  2. Codex checks physical evidence labels, removes temporary probes, and verifies CT101 remains stopped.
-  3. Codex commits and pushes the Phase D checkpoint.
-  4. Reconcile NAS and Outline, determine production read-only guarantee or record `production_not_verified`, then complete Phase E canonical design.
+- **Exact next step:** No Goal 2 work is authorized. Preserve this checkpoint until the Founder resolves section 27 and explicitly starts Goal 2.

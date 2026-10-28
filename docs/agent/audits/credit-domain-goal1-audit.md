@@ -1,18 +1,18 @@
-# Nexum Credit Domain Goal 1 — Phase C Financial Invariants & Technical Audit
+# Nexum Credit Domain Goal 1 — Consolidated Audit & Canonical Model
 
 **Audit Metadata:**
-- **Goal:** Credit Domain Goal 1 Audit (Phase C Financial Invariants)
+- **Goal:** Credit Domain Goal 1 Audit and Documentary Canonical Model
 - **Target System:** Nexum Core Financial Engine — Credit Domain (`app/credit`)
-- **Author/Worker:** Execution Worker (Phase C Financial Invariants)
+- **Author/Worker:** Codex with single-tier AntiGravity investigation
 - **Reviewer:** Codex (Architect & Independent Verifier)
-- **Status:** Phase C Financial Invariants Complete / Awaiting Codex Review
+- **Status:** Consolidated Goal 1 audit / Final publication verification
 - **Standards of Evidence:**
   - `[CURRENT REALITY]`: Grounded directly in active repository code (`app/credit`, `app/ledger`, `app/accounts`, `app/goals`, `app/obligations`, `alembic/`).
   - `[VERIFIED]`: Proven via AST, line-by-line control flow, schema constraints, or SQL queries.
   - `[TESTED]`: Verified by existing automated unit/smoke test suites.
   - `[DOCUMENTED CLAIM]`: Found in historical documentation or docstrings without active runtime enforcement.
-  - `[PENDING VERIFICATION]`: Awaiting physical CT101 PostgreSQL 17 execution or production database verification.
-  - `[PENDING PHASE E]`: Reserved for Phase E canonical architecture and forward proposals.
+  - `[PENDING VERIFICATION]`: Evidence not yet physically or externally proven.
+  - `[PROPOSED CANONICAL MODEL]`: Documentary Goal 2 recommendation; not implemented.
   - `[OPEN PRODUCT DECISION]`: Unresolved business rules requiring Founder decision.
 
 ---
@@ -150,21 +150,26 @@ Key Executive Findings:
 ---
 
 ## 4 Source-of-Truth matrix
-`[CURRENT REALITY]`
+`[CURRENT REALITY]` and `[PROPOSED CANONICAL MODEL]`
 
-| Financial Primitive | Primary Implementation Source | Secondary / Candidate Sources | Current Reality & Contradiction Evidence |
-| :--- | :--- | :--- | :--- |
-| **1. Credit Limit** | `credit_cards.credit_limit` (`models.py:32`) | `CreditCardRead.credit_limit`, `CreditSummaryRead.total_credit_limit` | `[VERIFIED]` Single schema source; manual input fallback. |
-| **2. Current Debt** | Dynamic sum in `CreditCardRepository.get_card_debt` (`installments`) | `credit_cards.current_debt` (stale col), `v_credit_card_debt` (view), `CreditCardStatusRead.current_debt` | `[VERIFIED]` **Severe Contradiction:** Stale DB column (`0.00`); view aggregates transactions; repository aggregates installments; docstrings and metadata contradict code. |
-| **3. Used Credit** | Derived as `current_debt` / `total_debt` | `CreditCardRead.total_debt` | `[VERIFIED]` Synonymous with dynamically computed debt in read models. |
-| **4. Available Credit** | `max(0, limit - total_debt)` in `_calculate_card_status` (`service.py:835`) | `CreditCardRead.estimated_available_credit`, `CreditSummaryRead.total_available_credit` | `[VERIFIED]` Deterministic derivation; clippers prevent negative availability. |
-| **5. Statement Balance** | In `/status`: set to `billed_debt` (`service.py:837`) | `credit_card_statements.statement_balance` (empty DB col), `CreditCardRead.statement_balance` (`None`) | `[VERIFIED]` **Contradiction:** Returns `None` on `/cards` list (`service.py:204`), but returns `billed_debt` on `/cards/{id}/status`. |
-| **6. Amount Due** | `payment_required` in `_calculate_card_status` (= `statement_balance`) | `CreditCardRead.payment_required` | `[VERIFIED]` Reflects billed installments dynamically while statement engine is dormant. |
-| **7. Minimum Payment** | Formula in `_calculate_card_status` (5% or COP 50k / USD 15) | `credit_card_statements.minimum_payment` (DB col), `CreditCardRead.minimum_payment` (returns `0.00`) | `[VERIFIED]` **Contradiction:** `/cards` list defaults to `0.00`, whereas `/status` calculates dynamic 5% formula. |
-| **8. Installment Principal** | `credit_card_installments.principal_amount` (`models.py:102`) | `CreditCardTransaction.monthly_amount` | `[VERIFIED]` Stored across installment rows; recompressed upon early payment. |
-| **9. Interest** | `credit_card_installments.interest_amount` (`models.py:106`) | `credit_cards.monthly_interest_rate`, `credit_card_statements.interest_total` | `[VERIFIED]` Flat percentage placeholder; no compounding or amortization curve. |
-| **10. Payment Allocation** | `_apply_payment_to_waterfall` in Python (`service.py:119`) | Cumulative `inst.paid_amount` | `[VERIFIED]` Waterfall executes in application memory; no junction table preserves allocation auditability. |
-| **11. FX Booked Amount** | Serialized in `financial_events.metadata` & `credit_card_transactions.metadata` | `PaymentPreviewResult` (transient DTO) | `[VERIFIED]` Captured in event JSONB; no dedicated database schema columns. |
+| Concept | Current stored source | Current derived source | API source | Bank-authoritative future? | Manual fallback? | Duplicated? | Canonical recommendation |
+| :--- | :--- | :--- | :--- | :---: | :---: | :---: | :--- |
+| Credit limit | `credit_cards.credit_limit` | none | card/status/summary | Yes | Yes | No | Store provenance and effective dates; issuer fact wins. |
+| Total debt | stale `credit_cards.current_debt`; transactions; installments | `SUM(principal + interest - paid)` over installments | `current_debt`, `total_debt` | Yes | Yes | **Yes** | Derive from posted components/allocations; remove ambiguity, not necessarily data, in Goal 2. |
+| Billed debt | installment rows by `scheduled_period` | `_calculate_card_status` | `/status`, summary | Yes | Yes | Yes | Closed statement outstanding balance is canonical after cutoff. |
+| Unbilled debt | future installment rows | `_calculate_card_status` | `/status`, summary | Yes | Yes | No | Derive from posted transactions not assigned to a closed statement plus future principal. |
+| Available credit | no dedicated canonical fact | `max(0, limit - total_debt)` | card/status/summary | Yes | Yes | Yes | Prefer issuer availability when connected; otherwise label Nexum estimate. |
+| Statement balance | dormant `credit_card_statements.statement_balance` | currently equated to billed debt | `/cards` = null; `/status` = billed debt | Yes | Yes | Yes | Immutable closed-statement snapshot with corrections as events. |
+| Due date | card `due_day`; dormant statement `due_date` | `calculate_credit_card_dates` | status/statement | Yes | Yes | Yes | Statement-specific date is canonical; card day is a scheduling rule only. |
+| Minimum payment | dormant statement field | hard-coded 5%/floor formula | `/cards` = 0; `/status` = derived | Yes | Yes | Yes | Issuer statement fact; no universal fallback without an approved product rule. |
+| Interest | card rates; installment interest; statement total | flat per-installment placeholder | purchase/status | Yes | Yes | Yes | Store assessed interest components and provenance; policy remains open. |
+| Installments | `credit_card_installments`; transaction summary fields | schedule builder/recompression | purchase/status/prepay | Yes | Yes | Yes | Plan owns ordered installments; posted statement components reference them. |
+| Payments | Ledger event; transaction; early-payment row; Account balance | service response | payment/prepay endpoints | Yes | Yes | Yes | One immutable Payment fact linked to Ledger and source account. |
+| Payment allocations | only cumulative `paid_amount` | in-memory waterfall | not exposed | Yes | Yes | No (missing) | Immutable allocation rows by payment and debt component. |
+| FX | JSON metadata; optional snapshots in adjacent domain | quote/conversion service | preview/payment | Yes | Yes | Yes | Persist original, source, booked amounts, currencies, rate snapshot and provider/time. |
+| Refund/reversal | none | none | none | Yes | Yes | No (missing) | Explicit events linked to original purchase/allocation; never destructive mutation. |
+| Fees/charges | statement-charge rows | waterfall tiers | partial read exposure | Yes | Yes | Yes | Typed statement components included in debt guard, allocations and response. |
+| Cutoff/cycle | card days; dormant statement dates | month-only `scheduled_period` plus date utility | status/statement | Yes | Yes | Yes | Canonical Bogotá clock and immutable BillingCycle boundaries. |
 
 ---
 
@@ -598,12 +603,10 @@ Allowing credit card payments to spend cash reserved for goals violates accounti
 ---
 
 ## 19 Production reality
-`[PENDING VERIFICATION]`
-- Physical inspection of live databases on Vulcano / CT101 required to verify:
-  1. Extent of drift in persisted `credit_cards.current_debt` across active customer cards.
-  2. Prevalence of customer purchases made post-cutoff that suffered premature billing.
-  3. Total count and volume of orphaned `credit_card_early_payments` missing from `credit_card_transactions`.
-  4. Historical instances of accounts where `account.balance < reserved` caused by credit card payments bypassing reservations.
+`production_not_verified`
+- No production query was executed. Before connecting, Codex inspected the available Supabase MCP capability boundary: it exposes arbitrary `execute_sql` and multiple mutation operations, and does not expose a pre-query credential/role attestation proving that the session cannot write.
+- Because technical read-only could not be guaranteed independently of query intent, the approved fail-closed rule applied. This is **not** a claim that Supabase or production was unavailable.
+- Consequently, customer prevalence, persisted drift, early-payment orphans and historical Goal-reservation impact remain unknown. CT101 evidence in section 20 is disposable test evidence and must never be represented as production reality.
 
 ---
 
@@ -636,6 +639,7 @@ Allowing credit card payments to spend cash reserved for goals violates accounti
   - All existing unit tests mock repositories and bypass real PostgreSQL constraints. The check constraint crash on `paid_amount <= principal_amount` was hidden because SQLite/mocks do not evaluate the Alembic schema.
   - Concurrency, locking, deadlocks, and goal reservation enforcement are completely untested.
   - Phase D added no permanent harness. A one-off CT101 probe verified migration, catalog constraints/indexes, the interest-payment failure, and rollback, then was removed.
+  - Final local Credit baseline invocation was interrupted after several minutes without output; it is not counted as passed or failed. No application code changed during Goal 1.
 
 ---
 
@@ -676,20 +680,33 @@ Allowing credit card payments to spend cash reserved for goals violates accounti
 5. **Alembic Check Constraint vs Installment Model Design:** Migration `v1_5_baseline.py:677` documents `credit_card_installments_paid_check` as `paid_amount <= principal_amount`, contradicting `models.py:107` and `service.py:150-174`, which define `total_amount = principal_amount + interest_amount` and accumulate payments toward `total_amount`.
 6. **Preview Endpoint Contract vs Transaction State:** Route docstring in `router.py:210-237` represents preview as a safe read-only quote calculation, yet the implementation wraps the call in `uow.transaction()` and executes `SELECT ... FOR UPDATE` across multiple database tables.
 7. **Accounts / Obligations Reservation Invariant vs Credit Practice:** System architectural documentation (`docs/project/01-architecture.md`, `13-accounts-wallets.md`) mandates that all cash outflows must respect goal reservations, but `CreditCardService` bypasses reservations unconditionally.
+8. **NAS Financial Engine / SQL Snapshot vs Runtime:** NAS defines Credit debt as purchases minus payments and treats views as financial authority; the active repository derives debt from installments, while early prepayments never enter the transaction-based view.
+9. **NAS Domain Map vs Runtime Statements:** NAS says Credit models statement generation and cutoff dates; statement persistence/endpoints are dormant and cutoff assignment is month-only.
+10. **Outline Financial Engine / Database Schema vs Runtime:** Outline repeats transaction-derived debt, PostgreSQL/view authority, and purchases/payments as the Credit transaction record. This conflicts with installment-derived runtime debt and the early-payment transaction void.
+11. **Outline Ledger & Idempotency vs Runtime:** Outline says a `command_id` collision returns a safe retry. Runtime verifies uniqueness only, not operation, entity or amount, so cross-operation reuse is not proven safe.
+12. **Outline Current State:** The document itself states production runtime was not revalidated; it cannot substitute for the read-only production check required by this audit.
 
 ---
 
 ## 24 Canonical Credit model proposal
-`[PENDING PHASE E]` *(Demonstrated architectural needs cataloged)*
-1. **Explicit Allocation Junction Entity:** Introduction of `credit_card_payment_allocations` linking `payment_transaction_id` to `installment_id`, capturing exact principal, interest, and fee amounts settled.
-2. **Statement Snapshot Architecture:** Immutable closed statement records representing frozen cycle state, modified only via explicit correction events.
-3. **Multi-Currency Purchase Model:** Inclusion of `original_amount`, `original_currency`, `fx_rate`, and `booked_amount` on `credit_card_transactions`.
-4. **Transaction State Machine:** Support for `pending` (authorized) vs `posted` (cleared) transactions.
+`[PROPOSED CANONICAL MODEL — DOCUMENTARY ONLY]`
+1. **CreditLine/Card (1 → many BillingCycles, Purchases, Payments):** owns issuer identity, base currency, limit facts and provenance; it does not persist an independently mutable debt total.
+2. **BillingCycle (Card 1 → many):** owns immutable start, cutoff and due boundaries in the canonical Bogotá financial calendar. One cycle may produce zero or one closed Statement.
+3. **Purchase (Card 1 → many):** immutable commercial fact with lifecycle `pending | posted | reversed`; owns original and booked currency facts and may own one InstallmentPlan.
+4. **InstallmentPlan (Purchase 0..1 → 1; Plan 1 → many Installments):** records approved schedule policy/version. Each Installment owns ordered principal and assessed-interest components; rounding residual is explicit.
+5. **Statement (BillingCycle 0..1 → 1; Statement 1 → many StatementComponents):** immutable issuer/manual snapshot after close. Components reference purchases, installments, fees, interest, refunds and adjustments.
+6. **Payment (Card 1 → many):** immutable fact linked one-to-one to its Ledger event and source Account debit; source amount/currency and booked amount/card currency are distinct.
+7. **PaymentAllocation (Payment 1 → many; DebtComponent 1 → many):** immutable junction recording principal, interest and fee amounts applied in deterministic order.
+8. **Refund / Reversal / Adjustment:** immutable events linked to an original fact; they create compensating components and never erase financial history.
+9. **FXEvidence:** rate snapshot/provider/timestamp plus original, source and booked amounts/currencies, linked to the purchase or payment it priced.
+10. **Provenance:** every issuer-imported or manual fact records source, observed/effective time and confidence. Issuer facts outrank manual fallback; Nexum estimates are explicitly labeled.
+
+Canonical balance vocabulary: `posted_total_debt`, `closed_statement_balance`, `closed_statement_outstanding`, `unbilled_posted_debt`, `future_installment_principal`, `issuer_available_credit`, `estimated_available_credit`, `minimum_payment_due` and `account_spendable_balance`. These names are not interchangeable.
 
 ---
 
 ## 25 Canonical invariants proposal
-`[PENDING PHASE E]` *(Demonstrated mathematical and transactional invariants cataloged)*
+`[PROPOSED CANONICAL MODEL]`
 1. **Invariant 1 (Single Transaction Unit of Work):** Every mutating operation (Ledger event, Account debit, Credit transaction, installment mutation) must execute and commit within exactly one atomic database transaction. No partial states may persist across failures.
 2. **Invariant 2 (Spendable Balance & Goal Reservation Invariant):**
    $$\text{payment\_source\_amount} \le \text{account.balance} - \text{calculate\_reserved\_by\_account}(\text{account.id}, \text{user.id})$$
@@ -708,15 +725,22 @@ Allowing credit card payments to spend cash reserved for goals violates accounti
    $$\text{payment\_transaction.amount} = \sum_{\text{allocations}} (\text{allocated\_principal} + \text{allocated\_interest} + \text{allocated\_fees})$$
    Every payment transaction must produce immutable junction rows linking to settled installments.
 8. **Invariant 8 (Non-Negative Debt):** $\text{card.total\_debt} \ge 0.00$. Overpayment beyond total debt is blocked.
+9. **Statement Immutability:** a closed statement is never recomputed in place; refunds, reversals and corrections append typed components with provenance.
+10. **Canonical Time:** all cycle attribution uses `financial_date()` in `America/Bogota`; database and application boundaries must agree.
+11. **FX Evidence:** every cross-currency posting is reproducible from immutable source/booked amounts, currencies and rate snapshot; JSON metadata alone is insufficient authority.
+12. **Derived-State Rule:** debt, availability and payment due have exactly one named derivation per context; cached values must be versioned projections, never competing truth.
 
 ---
 
 ## 26 Intelligence readiness
-`[PENDING PHASE E]` *(Analysis of snapshot consumption)*
+`[CURRENT REALITY]` and `[PROPOSED CANONICAL MODEL]`
 - `app/intelligence/service.py:131` consumes `CreditCardService.get_credit_summary`.
 - `SnapshotDebt`: `credit_card_total_debt = billed_debt + unbilled_debt`.
 - `free_money`: Deducts `minus_credit_cards_required_payment` (`billed_debt`).
 - Snapshot consumption bypasses dormant SQL views cleanly, but inherits all upstream calculation defects (F-01, F-02, F-03, F-13).
+- Safe today only as labeled estimates: stored card limit/currency, Ledger event facts, Account balance, and raw posted Credit records.
+- Unsafe as authoritative intelligence inputs: current debt, statement balance, minimum payment, due pressure, interest burden, available credit and free money derived from them.
+- Intelligence-ready after Goal 2 only when statement/payment/allocation/FX provenance is immutable, reconciliation passes, and confidence distinguishes issuer facts from manual facts and Nexum estimates.
 
 ---
 
@@ -748,7 +772,7 @@ The following policies have been explicitly established:
 ---
 
 ## 28 Goal 2 scope proposal
-`[PENDING PHASE E]` Recommended remediation scope for Goal 2:
+`[PROPOSED CANONICAL MODEL — GOAL 2 NOT STARTED]` Recommended remediation scope:
 1. Fix Cutoff Cycle Assignment (`F-01`): Incorporate `cutoff_day` comparison in `_build_installments` to ensure post-cutoff purchases receive next month's `scheduled_period`.
 2. Standardize Canonical Clock (`F-02`): Replace all `date.today()` calls across `app/credit` with `app.core.financial_time.financial_date()`.
 3. Replace Unsupported Interest Logic (`F-03`): Implement only issuer-authoritative or Founder-approved interest and grace-period semantics selected after product review.
@@ -761,3 +785,8 @@ The following policies have been explicitly established:
 10. Fix Alembic Check Constraint on Installments (`F-15`): Update `credit_card_installments_paid_check` to `paid_amount <= total_amount`.
 11. Implement Deep Idempotency Guard (`F-16`): Compare incoming intent and entity parameters against cached event before accepting idempotent retries.
 12. Index Foreign Keys (`F-18`): Add database indexes and unique constraints on `credit_card_transactions.event_id` and `credit_card_early_payments.event_id`.
+13. Resolve F-19 by making debt guard, waterfall, persisted allocations and response use the same complete debt-component set.
+14. Implement immutable statements, refunds/reversals, allocation provenance and FX evidence only after Founder decisions in section 27.
+15. Add PostgreSQL integration/concurrency coverage for cutoff, statements, partial/pre/overpayment, Goals, duplicate commands, rollback and lock ordering.
+
+Dead-code disposition: retain dormant statement structures, stale debt sources and legacy views during Goal 1; classify them for Goal 2 removal/migration only after consumers and historical data paths are proven. No dead code was deleted in this audit.
