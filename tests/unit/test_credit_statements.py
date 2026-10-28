@@ -21,6 +21,11 @@ def mock_credit_repo():
     }
     repo.get_next_payment_estimate.return_value = Decimal("0.00")
     repo.list_pending_installments_for_update.return_value = []
+    repo.get_card_debt_partitioned.return_value = {
+        "canonical_debt": Decimal("0.00"),
+        "legacy_debt": Decimal("0.00"),
+        "total_debt": Decimal("0.00"),
+    }
     return repo
 
 
@@ -57,6 +62,7 @@ async def test_lazy_statement_generation(credit_service, mock_credit_repo, mock_
         id=card_id, user_id=user_id, credit_limit=Decimal("5000"), is_active=True, currency="COP",
         cutoff_day=15, due_day=30
     )
+    mock_credit_repo.get_by_id.return_value = mock_card
     mock_credit_repo.get_by_id_for_update.return_value = mock_card
     mock_credit_repo.get_card_debt.return_value = (0.0, 0.0)
 

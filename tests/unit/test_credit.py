@@ -30,6 +30,11 @@ def mock_credit_repo():
     }
     repo.get_next_payment_estimate.return_value = Decimal("0.00")
     repo.list_pending_installments_for_update.return_value = []
+    repo.get_card_debt_partitioned.return_value = {
+        "canonical_debt": Decimal("0.00"),
+        "legacy_debt": Decimal("0.00"),
+        "total_debt": Decimal("0.00"),
+    }
     return repo
 
 
@@ -88,8 +93,15 @@ async def test_create_purchase_success(credit_service, mock_credit_repo, mock_le
     mock_card = CreditCard(
         id=card_id, user_id=user_id, credit_limit=Decimal("5000"), is_active=True, currency="COP", cutoff_day=15, due_day=30
     )
+    mock_credit_repo.get_by_id.return_value = mock_card
+    mock_credit_repo.get_by_id.return_value = mock_card
     mock_credit_repo.get_by_id_for_update.return_value = mock_card
     mock_credit_repo.get_card_debt.return_value = (500.0, 100.0)
+    mock_credit_repo.get_card_debt_partitioned.return_value = {
+        "canonical_debt": Decimal("500.00"),
+        "legacy_debt": Decimal("0.00"),
+        "total_debt": Decimal("500.00"),
+    }
 
     mock_event = AsyncMock()
     mock_event.id = uuid.uuid4()
@@ -121,9 +133,15 @@ async def test_create_purchase_limit_exceeded(credit_service, mock_credit_repo):
     mock_card = CreditCard(
         id=card_id, user_id=user_id, credit_limit=Decimal("5000"), is_active=True, currency="COP"
     )
+    mock_credit_repo.get_by_id.return_value = mock_card
     mock_credit_repo.get_by_id_for_update.return_value = mock_card
     # Debt is 4500, limit is 5000, available is 500
     mock_credit_repo.get_card_debt.return_value = (4500.0, 100.0)
+    mock_credit_repo.get_card_debt_partitioned.return_value = {
+        "canonical_debt": Decimal("4500.00"),
+        "legacy_debt": Decimal("0.00"),
+        "total_debt": Decimal("4500.00"),
+    }
 
     with pytest.raises(CreditLimitExceededError):
         await credit_service.create_purchase(user_id, card_id, payload, uuid.uuid4())

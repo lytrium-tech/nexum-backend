@@ -50,13 +50,7 @@ async def test_waterfall_allocation():
             return date(2099, 1, 1), date(2099, 1, 15), date(2099, 1, 30)
         app.credit.utils.calculate_credit_card_dates = fake_calc
         
-        class FakeDate:
-            @classmethod
-            def today(cls):
-                return date(2099, 1, 10)
-        
-        import app.credit.service
-        app.credit.service.date = FakeDate
+        service._get_financial_date = lambda as_of=None: date(2099, 1, 10)
         
         # Payment amount: 100 (past due) + 20 (interest) + 10 (fees) + 80 (billed inst principal) + 50 (billed revol) + 30 (unbilled revol) = 290
         # If we pay 200:
@@ -84,5 +78,3 @@ async def test_waterfall_allocation():
             
     finally:
         app.credit.utils.calculate_credit_card_dates = original_calc
-        import datetime
-        app.credit.service.date = datetime.date

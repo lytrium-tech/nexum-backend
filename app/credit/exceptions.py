@@ -109,11 +109,11 @@ class CreditAllocationError(CreditDomainError):
 class CreditBillingCycleClosedError(CreditDomainError):
     status_code = 409
     error_code = "credit_billing_cycle_closed"
-    message = "El ciclo de facturación se encuentra cerrado."
+    message = "El ciclo de facturación se encuentra cerrado o liquidado."
 
     def __init__(
         self,
-        message: str = "Billing cycle is already closed",
+        message: str = "Billing cycle is already closed or settled",
         detail: dict | None = None,
     ) -> None:
         super().__init__(message=message, detail=detail)
@@ -166,6 +166,45 @@ class CreditInstallmentCeilingError(CreditDomainError):
     def __init__(
         self,
         message: str = "Payment exceeds installment ceiling (principal + assessed interest)",
+        detail: dict | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class CreditLifecycleInvalidityError(CreditDomainError):
+    status_code = 400
+    error_code = "credit_lifecycle_invalidity"
+    message = "Transición o estado de ciclo de vida de crédito no válido."
+
+    def __init__(
+        self,
+        message: str = "Invalid credit lifecycle status or transition",
+        detail: dict | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class CreditAmbiguousAmountError(CreditDomainError):
+    status_code = 400
+    error_code = "credit_ambiguous_amount"
+    message = "Monto de compra ambiguo o en conflicto."
+
+    def __init__(
+        self,
+        message: str = "Conflicting or ambiguous purchase amounts supplied",
+        detail: dict | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class CreditActivationBoundaryError(CreditDomainError):
+    status_code = 400
+    error_code = "credit_activation_boundary_violation"
+    message = "La fecha de la compra precede la activación canónica de la tarjeta."
+
+    def __init__(
+        self,
+        message: str = "Purchase occurred_at predates canonical activation boundary",
         detail: dict | None = None,
     ) -> None:
         super().__init__(message=message, detail=detail)

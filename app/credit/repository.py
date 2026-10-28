@@ -48,24 +48,46 @@ class CreditCardRepository:
         self.session.add(card)
         await self.session.flush()
 
-    async def get_card_debt(self, card_id: uuid.UUID) -> tuple[float, float]:
-        """Returns (credit_card_debt, monthly_cc_payment) directly from credit_card_installments.
+    async def get_card_debt_partitioned(self, card_id: uuid.UUID) -> dict[str, Decimal]:
+        """Calculates canonical debt and legacy compatibility debt in mutually exclusive partitions.
 
-        Note: credit_cards.current_debt and v_credit_card_debt view are non-authoritative
-        legacy artifacts retained physically for backwards compatibility.
+        Guarantees:
+        total_debt = canonical_debt + legacy_debt (zero double-counting).
         """
         query = text("""
             SELECT 
-                COALESCE(SUM(principal_amount + interest_amount - paid_amount), 0) as credit_card_debt,
-                COALESCE(SUM(CASE WHEN scheduled_period = to_char((now() AT TIME ZONE 'America/Bogota'), 'YYYY-MM') THEN principal_amount + interest_amount - paid_amount ELSE 0 END), 0) as monthly_cc_payment
+                COALESCE(SUM(CASE WHEN debt_partition = 'canonical' THEN principal_amount + COALESCE(assessed_interest_amount, interest_amount) - paid_amount ELSE 0 END), 0) as canonical_debt,
+                COALESCE(SUM(CASE WHEN debt_partition != 'canonical' OR debt_partition IS NULL THEN principal_amount + interest_amount - paid_amount ELSE 0 END), 0) as legacy_debt,
+                COALESCE(SUM(CASE WHEN scheduled_period = to_char((now() AT TIME ZONE 'America/Bogota'), 'YYYY-MM') THEN principal_amount + COALESCE(assessed_interest_amount, interest_amount) - paid_amount ELSE 0 END), 0) as monthly_cc_payment
             FROM credit_card_installments 
             WHERE credit_card_id = :card_id AND status != 'paid'
         """)
         result = await self.session.execute(query, {"card_id": card_id})
         row = result.fetchone()
         if row:
-            return float(row[0]), float(row[1])
-        return 0.0, 0.0
+            c_debt = Decimal(str(row[0]))
+            l_debt = Decimal(str(row[1]))
+            monthly = Decimal(str(row[2]))
+            return {
+                "canonical_debt": c_debt,
+                "legacy_debt": l_debt,
+                "total_debt": c_debt + l_debt,
+                "monthly_cc_payment": monthly,
+            }
+        return {
+            "canonical_debt": Decimal("0.00"),
+            "legacy_debt": Decimal("0.00"),
+            "total_debt": Decimal("0.00"),
+            "monthly_cc_payment": Decimal("0.00"),
+        }
+
+    async def get_card_debt(self, card_id: uuid.UUID) -> tuple[float, float]:
+        """Returns (credit_card_debt, monthly_cc_payment) directly from credit_card_installments.
+
+        Combines mutually exclusive canonical and legacy partitions without double-counting.
+        """
+        part = await self.get_card_debt_partitioned(card_id)
+        return float(part["total_debt"]), float(part["monthly_cc_payment"])
 
     async def add_transaction(self, transaction: CreditCardTransaction) -> None:
         self.session.add(transaction)
@@ -265,6 +287,30 @@ class CreditCardRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    async def get_billing_cycle_by_period_for_update(
+        self, card_id: uuid.UUID, billing_period: str
+    ) -> CreditCardBillingCycle | None:
+        result = await self.session.execute(
+            select(CreditCardBillingCycle)
+            .where(
+                CreditCardBillingCycle.credit_card_id == card_id,
+                CreditCardBillingCycle.billing_period == billing_period,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_billing_cycles_for_card(
+        self, card_id: uuid.UUID
+    ) -> list[CreditCardBillingCycle]:
+        result = await self.session.execute(
+            select(CreditCardBillingCycle)
+            .where(CreditCardBillingCycle.credit_card_id == card_id)
+            .order_by(CreditCardBillingCycle.billing_period.asc())
+        )
+        return list(result.scalars().all())
 
     async def add_payment(self, payment: CreditCardPayment) -> None:
         self.session.add(payment)

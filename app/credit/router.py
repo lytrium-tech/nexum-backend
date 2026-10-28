@@ -6,8 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db_session
 from app.core.uow import UnitOfWork
 from app.credit.exceptions import (
+    CreditBillingCycleClosedError,
     CreditCardInactiveError,
     CreditCardNotFoundError,
+    CreditDomainError,
+    CreditIdempotencyConflictError,
     CreditLimitExceededError,
     InvalidPaymentAmountError,
 )
@@ -132,6 +135,12 @@ async def create_purchase(
             raise HTTPException(status_code=400, detail="Credit card is inactive")
         except CreditLimitExceededError:
             raise HTTPException(status_code=409, detail="Credit limit exceeded")
+        except CreditBillingCycleClosedError as e:
+            raise HTTPException(status_code=409, detail=e.message)
+        except CreditIdempotencyConflictError as e:
+            raise HTTPException(status_code=409, detail=e.message)
+        except CreditDomainError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.post("/cards/{card_id}/payments", response_model=CreditCardPaymentResult)

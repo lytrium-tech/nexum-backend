@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 
 class CreditCardBase(BaseModel):
@@ -20,7 +20,7 @@ class CreditCardBase(BaseModel):
 
 
 class CreditCardCreate(CreditCardBase):
-    pass
+    model_config = ConfigDict(extra="forbid")
 
 
 class CreditCardUpdate(BaseModel):
@@ -36,6 +36,8 @@ class CreditCardUpdate(BaseModel):
     franchise: str | None = None
     is_active: bool | None = None
 
+    model_config = ConfigDict(extra="forbid")
+
 
 class CreditCardRead(CreditCardBase):
     id: uuid.UUID
@@ -46,10 +48,15 @@ class CreditCardRead(CreditCardBase):
     billed_debt: Decimal = Decimal("0.00")
     unbilled_debt: Decimal = Decimal("0.00")
     payment_required: Decimal = Decimal("0.00")
-    minimum_payment: Decimal = Decimal("0.00")
+    minimum_payment: Decimal | None = None
     next_payment_estimate: Decimal = Decimal("0.00")
     statement_balance: Decimal | None = None
     data_quality: dict[str, str] = Field(default_factory=dict)
+    # Canonical lifecycle and provenance
+    canonical_mode: bool = False
+    canonical_activated_at: datetime | None = None
+    provenance: str | None = None
+    lifecycle_status: str | None = None
     # Deprecated aliases kept temporarily for frontend compatibility.
     estimated_current_debt: Decimal = Decimal("0.00")
     monthly_cc_payment: Decimal = Decimal("0.00")
@@ -63,12 +70,25 @@ class CreditCardRead(CreditCardBase):
 
 
 class CreditCardPurchaseCreate(BaseModel):
-    amount: Decimal = Field(..., gt=0)
+    amount: Decimal | None = Field(default=None, gt=0)
     category_id: uuid.UUID | None = None
     description: str | None = None
     installments_total: int = Field(default=1, ge=1)
     source_message_id: uuid.UUID | None = None
     raw_message: str | None = None
+    # Multi-currency and canonical lifecycle
+    original_amount: Decimal | None = Field(default=None, gt=0)
+    original_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    fx_quote_id: uuid.UUID | None = None
+    lifecycle_status: str | None = Field(default="posted", pattern=r"^(pending|posted)$")
+    occurred_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_amount_presence(self) -> "CreditCardPurchaseCreate":
+        if self.amount is None and self.original_amount is None:
+            raise ValueError("Either amount or original_amount must be provided")
+        return self
 
 
 class CreditCardPurchaseResult(BaseModel):
@@ -80,6 +100,18 @@ class CreditCardPurchaseResult(BaseModel):
     available_credit: Decimal
     estimated_current_debt: Decimal
     estimated_available_credit: Decimal
+    # Explicit cycle, multi-currency, FX evidence and partition
+    cycle_id: uuid.UUID | None = None
+    billing_period: str | None = None
+    original_amount: Decimal | None = None
+    original_currency: str | None = None
+    booked_amount: Decimal | None = None
+    booked_currency: str | None = None
+    fx_rate: Decimal | None = None
+    fx_rate_snapshot_id: uuid.UUID | None = None
+    lifecycle_status: str | None = None
+    debt_partition: str | None = None
+    provenance: str | None = None
 
 
 class CreditCardPaymentCreate(BaseModel):
@@ -147,7 +179,7 @@ class CreditCardStatusRead(BaseModel):
     unbilled_debt: Decimal
     available_credit: Decimal
     payment_required: Decimal = Decimal("0.00")
-    minimum_payment: Decimal = Decimal("0.00")
+    minimum_payment: Decimal | None = None
     next_payment_estimate: Decimal = Decimal("0.00")
     statement_balance: Decimal | None = None
     monthly_cc_payment: Decimal
@@ -183,6 +215,17 @@ class CreditCardInstallmentRead(BaseModel):
     total_amount: Decimal = Decimal("0.00")
     scheduled_due_date: date | None = None
     revision_id: int = 1
+    # Multi-currency, cycle identity, assessed vs estimated interest, provenance and partition
+    original_amount: Decimal | None = None
+    original_currency: str | None = None
+    booked_amount: Decimal | None = None
+    booked_currency: str | None = None
+    cycle_id: uuid.UUID | None = None
+    assessed_interest_amount: Decimal | None = None
+    estimated_interest_amount: Decimal | None = None
+    lifecycle_status: str | None = None
+    provenance: str | None = None
+    debt_partition: str | None = None
 
     @computed_field
     @property
@@ -192,9 +235,9 @@ class CreditCardInstallmentRead(BaseModel):
     @computed_field
     @property
     def is_pay_early_eligible(self) -> bool:
-        from datetime import date
+        from app.core.financial_time import financial_date
 
-        current_period = date.today().strftime("%Y-%m")
+        current_period = financial_date().strftime("%Y-%m")
         return (
             self.installments_total > 1
             and self.status != "paid"
