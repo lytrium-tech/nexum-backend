@@ -1,8 +1,8 @@
 # Nexum Credit Domain Goal 1 — Continuity State
 
 ## Checkpoint
-- **checkpoint:** `phase-c-financial-invariants-draft`
-- **timestamp:** 2026-10-27T23:55:00-05:00
+- **checkpoint:** `phase-d-postgresql-physical-verified`
+- **timestamp:** 2026-10-28T00:26:00-05:00
 - **domain:** Credit Domain (`app/credit`)
 - **current_role:** Single-tier Execution Worker
 - **target_artifact:** `docs/agent/audits/credit-domain-goal1-audit.md`
@@ -10,6 +10,14 @@
 ---
 
 ## Completed Scope
+0. **Phase D PostgreSQL 17 Physical Gate:**
+   - Validated exact disposable target CT101/VMID 101, host `lab`, canonical gate path, database/user `nexum_release_gate_test`, and absence of production identifiers.
+   - Reset to an empty schema and migrated with real Alembic to head `obligations_v1_7_auto_payments` on PostgreSQL 17.11.
+   - Physically reproduced SQLSTATE `23514` from `credit_card_installments_paid_check` when an interest-bearing installment was settled to `total_amount` (F-15).
+   - Physically confirmed zero `event_id` indexes on Credit transactions/early payments (F-18 schema fact).
+   - Rolled back all synthetic evidence rows and confirmed zero residue.
+   - Verified final authoritative CT101 state `stopped`; destructive opt-in disabled.
+   - AntiGravity Phase D conversation: `b76b4c60-09c9-4461-a799-a34f358e9ece`.
 1. **Transaction and Session Ownership Boundary (Primary Question 25):**
    - Traced Unit of Work lifecycle across all mutating endpoints (`POST /cards`, `PATCH /cards/{id}`, `DELETE /cards/{id}`, `POST /purchases`, `POST /payments`, `POST /pay_early`, `POST /pay_early/preview`).
    - Proved that UoW begins in FastAPI routers via `uow = UnitOfWork(session)` and `async with uow.transaction():`.
@@ -70,9 +78,9 @@
 ## Evidence Pending
 - **CT101 Physical Gate Verification (PostgreSQL 17):**
   1. Physical reproduction of `40P01` deadlock under concurrent execution of standard payments and early prepayments (or early payment previews) on CT101.
-  2. Physical confirmation of `CheckViolation: credit_card_installments_paid_check` when applying payments to interest-bearing installments on real PostgreSQL.
-  3. Execution of `EXPLAIN ANALYZE` on `get_transaction_by_event` to measure table scan cost on unindexed `event_id`.
-  4. Physical confirmation of heap scan order non-determinism in `list_pending_installments_for_update`.
+  2. Execution-plan cost at representative cardinality for unindexed `event_id` lookups; the missing index itself is physically confirmed.
+  3. Physical confirmation of heap scan order non-determinism in `list_pending_installments_for_update`.
+  4. Service-level physical scenarios for Goal reservations, cross-operation replay, and statement-charge response mismatch.
 - **Production Database Validation:**
   1. Inspection of live accounts to verify if credit card payments have historically reduced account balances below `goal_reserved_amount`.
   2. Inspection of production databases for orphaned `credit_card_early_payments` missing from `credit_card_transactions`.
@@ -81,8 +89,8 @@
 ---
 
 ## Exact Next Step
-- **Codex independent verification, checkpoint commit/push, then Phase D PostgreSQL:**
+- **Codex independent verification, checkpoint commit/push, then external-source reconciliation and Phase E:**
   1. Codex reviews the updated audit (`docs/agent/audits/credit-domain-goal1-audit.md`) and continuity (`docs/agent/audits/credit-domain-goal1-continuity.md`).
-  2. Codex independently verifies the control flow proofs, lock inversion deadlock hazard, Alembic check constraint conflict, and goal reservation bypass findings.
-  3. Codex commits and pushes the Phase C checkpoint.
-  4. Progression to Phase D PostgreSQL physical validation on CT101.
+  2. Codex checks physical evidence labels, removes temporary probes, and verifies CT101 remains stopped.
+  3. Codex commits and pushes the Phase D checkpoint.
+  4. Reconcile NAS and Outline, determine production read-only guarantee or record `production_not_verified`, then complete Phase E canonical design.

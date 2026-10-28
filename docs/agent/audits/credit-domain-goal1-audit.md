@@ -608,12 +608,19 @@ Allowing credit card payments to spend cash reserved for goals violates accounti
 ---
 
 ## 20 PostgreSQL evidence
-`[PENDING VERIFICATION]`
-- Physical CT101 PostgreSQL 17 test passes required to confirm:
-  1. Exact heap scan order behavior in `list_pending_installments_for_update` when multiple purchases share equal `scheduled_period` and `installment_number`.
-  2. Execution of `credit_card_installments_paid_check` under real PostgreSQL when paying interest-bearing installments.
-  3. Physical deadlock reproduction (`40P01`) under concurrent standard payments and early prepayments.
-  4. Execution plan cost of unindexed sequential scans on `credit_card_transactions.event_id`.
+`[VERIFIED — CT101 PHYSICAL GATE, 2026-10-28]`
+- Safety preflight proved the target was exactly disposable CT101 (VMID 101), host `lab` (`192.168.0.245`), database/user `nexum_release_gate_test`, with zero production identifiers. CT101 was stopped before execution.
+- The canonical reset recreated an empty `public` schema. Real Alembic then migrated transactionally from no revision through `v1_5_baseline` to head `obligations_v1_7_auto_payments` on PostgreSQL `17.11`.
+- Catalog readback returned `credit_card_installments_paid_check = CHECK ((paid_amount <= principal_amount))`.
+- A rolled-back synthetic installment with principal `100000`, interest `10000`, and total `110000` reproduced SQLSTATE `23514` on `paid_amount = total_amount`; PostgreSQL named `credit_card_installments_paid_check`. This physically confirms F-15.
+- Catalog readback found zero indexes containing `event_id` on `credit_card_transactions` or `credit_card_early_payments`, physically confirming the missing-index portion of F-18. Runtime cost at production cardinality was not measured.
+- The probe wrapped all synthetic rows in an outer transaction and rolled it back. Readback was `before=0`, `after=0`, confirming zero residue for that physical rollback scenario.
+- Every reset/run lifecycle requested graceful shutdown in `finally`; final authoritative status readback was `CT101 stopped` and destructive opt-in returned to disabled.
+
+`[PENDING PHYSICAL REPRODUCTION]`
+1. Equal-key heap ordering for waterfall allocations (F-06).
+2. Application-level `40P01` reproduction for the inverted lock order (F-14).
+3. Service-level Goal reservation bypass (F-13), cross-operation idempotency replay (F-16), and statement-charge response mismatch (F-19). Their code paths are statically verified but were not mislabeled as physically executed.
 
 ---
 
@@ -628,6 +635,7 @@ Allowing credit card payments to spend cash reserved for goals violates accounti
 - **Testing Blindspots Identified (`[VERIFIED]`):**
   - All existing unit tests mock repositories and bypass real PostgreSQL constraints. The check constraint crash on `paid_amount <= principal_amount` was hidden because SQLite/mocks do not evaluate the Alembic schema.
   - Concurrency, locking, deadlocks, and goal reservation enforcement are completely untested.
+  - Phase D added no permanent harness. A one-off CT101 probe verified migration, catalog constraints/indexes, the interest-payment failure, and rollback, then was removed.
 
 ---
 
@@ -651,10 +659,10 @@ Allowing credit card payments to spend cash reserved for goals violates accounti
 | **F-12** | **P1 (Candidate)** | `[VERIFIED]` | **API Read Model Contradictions for Statement Balance and Minimum Payment.** `/cards` returns `statement_balance = null` and `minimum_payment = 0.00`, whereas `/status` computes different derived values. This is an important financial contract inconsistency; neither representation is issuer-authoritative today. | `app/credit/service.py:204` vs `app/credit/service.py:837,845`. |
 | **F-13** | **P0 (Candidate)** | `[VERIFIED]` | **Goal Reservation Bypass and Spendable Balance Breach.** `create_payment` and `create_early_payment` validate against raw `account.balance` rather than spendable balance (`account.balance - reserved`), allowing goal-reserved cash to be spent. | `app/credit/service.py:370,600`, `app/goals/repository.py:226`, `app/accounts/service.py:53`. |
 | **F-14** | **P1 (Candidate)** | `[VERIFIED STATIC HAZARD; PENDING PHYSICAL REPRODUCTION]` | **Inverted Lock Ordering & Deadlock Hazard Between Payments and Early Payments.** Standard payment locks `accounts` then `credit_cards`, while early payment/preview locks `credit_cards` then `accounts`. Concurrent operations on the same rows can form a `40P01` wait cycle; occurrence still requires physical reproduction. | `app/credit/service.py:357,375` vs `app/credit/service.py:507,540` and `714,748`. |
-| **F-15** | **P0 (Candidate)** | `[VERIFIED]` | **Destructive Alembic Check Constraint Violation on Interest Installment Payments.** Alembic enforces `paid_amount <= principal_amount`. When interest is paid, `paid_amount` reaches `total_amount > principal_amount`, causing PostgreSQL to abort transactions with `CheckViolation`. | `alembic/versions/v1_5_baseline.py:677`, `app/credit/service.py:150-174`. |
+| **F-15** | **P0 (Candidate)** | `[VERIFIED PHYSICALLY ON CT101]` | **Destructive Alembic Check Constraint Violation on Interest Installment Payments.** Alembic enforces `paid_amount <= principal_amount`. A real PostgreSQL 17.11 transaction setting an interest-bearing installment to its `total_amount` failed with SQLSTATE `23514` and this constraint name. | `alembic/versions/v1_5_baseline.py:677`, `app/credit/service.py:150-174`; CT101 Phase D probe. |
 | **F-16** | **P1 (Candidate)** | `[VERIFIED]` | **Blind Idempotent Retry and Command ID Cross-Operation Replay Vulnerability.** `CreditCardService` relies entirely on `financial_events.command_id` without verifying event type, card ownership, or payload match. Reusing a `command_id` across different operations returns an invalid `idempotent_retry` citing an unrelated event. | `app/credit/service.py:299-310, 446-457`, `app/ledger/repository.py:148-175`. |
 | **F-17** | **P2 (Candidate)** | `[VERIFIED]` | **Exclusive Row Locking and Mutating Transaction in Read Preview Endpoint.** `POST .../pay_early/preview` opens a write transaction (`uow.transaction()`) and acquires `FOR UPDATE` row locks on card, installments, and account while performing an external FX quote, causing unnecessary lock contention. | `app/credit/router.py:218`, `app/credit/service.py:714,724,748`. |
-| **F-18** | **P2 (Candidate)** | `[VERIFIED]` | **Missing Foreign Key Indexes and Sequential Table Scans on High-Frequency Lookups.** `credit_card_transactions` lacks an index and unique constraint on `event_id`, forcing sequential table scans during every idempotent retry lookup (`get_transaction_by_event`). | `alembic/versions/v1_5_baseline.py:516-603`, `app/credit/repository.py:92-96`. |
+| **F-18** | **P2 (Candidate)** | `[VERIFIED SCHEMA; COST NOT BENCHMARKED]` | **Missing Foreign Key Indexes on High-Frequency Lookups.** PostgreSQL catalog readback found zero `event_id` indexes on transactions and early payments. The lookup can require a sequential scan; production-cardinality cost was not measured. | `alembic/versions/v1_5_baseline.py:516-603`, `app/credit/repository.py:92-96`; CT101 Phase D catalog readback. |
 | **F-19** | **P0 (Candidate)** | `[VERIFIED STATIC PATH; PENDING PHYSICAL SCENARIO]` | **Statement-Charge Payment Can Return False Remaining Debt.** The debt guard and `new_debt` use installment-only debt, while the waterfall first allocates part of the payment to statement charges. The response subtracts the full applied amount from installment debt even when only the remainder reached installments. | `app/credit/repository.py:35-48`, `app/credit/service.py:153-168, 418, 480-483`. |
 
 ---
