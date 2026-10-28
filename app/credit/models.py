@@ -8,17 +8,21 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     UniqueConstraint,
+    event,
     func,
+    inspect,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.credit.exceptions import CreditStatementImmutableError
 
 # ── Partition & Provenance Constants ─────────────────────────────────────────
 
@@ -167,7 +171,9 @@ class CreditCardInstallment(Base):
     scheduled_period: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, server_default="pending")
     paid_amount: Mapped[Decimal] = mapped_column(Numeric, nullable=False, default=Decimal("0.00"))
-    interest_amount: Mapped[Decimal] = mapped_column(Numeric, nullable=False, default=Decimal("0.00"))
+    interest_amount: Mapped[Decimal] = mapped_column(
+        Numeric, nullable=False, default=Decimal("0.00")
+    )
     total_amount: Mapped[Decimal] = mapped_column(Numeric, nullable=False, default=Decimal("0.00"))
     scheduled_due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     revision_id: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
@@ -212,6 +218,12 @@ class CreditCardStatement(Base):
     __tablename__ = "credit_card_statements"
     __table_args__ = (
         UniqueConstraint("credit_card_id", "billing_period", name="uq_cc_statement_period"),
+        Index(
+            "uq_cc_statements_canonical_cycle_id",
+            "cycle_id",
+            unique=True,
+            postgresql_where=text("cycle_id IS NOT NULL AND debt_partition = 'canonical'"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -232,7 +244,7 @@ class CreditCardStatement(Base):
     interest_total: Mapped[Decimal] = mapped_column(Numeric, default=Decimal("0.00"))
     payments_received: Mapped[Decimal] = mapped_column(Numeric, default=Decimal("0.00"))
     statement_balance: Mapped[Decimal] = mapped_column(Numeric, default=Decimal("0.00"))
-    minimum_payment: Mapped[Decimal] = mapped_column(Numeric, default=Decimal("0.00"))
+    minimum_payment: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True, default=None)
     status: Mapped[str] = mapped_column(String, nullable=False, default="open")
     frozen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -278,9 +290,7 @@ class CreditCardEarlyPayment(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
     allocation_mode: Mapped[str] = mapped_column(String, nullable=False)
     event_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
-    applied_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
 
     # Link to transactions, explicit currency/amounts, provenance and partition
@@ -392,7 +402,7 @@ class CreditCardStatementComponent(Base):
             name="chk_cc_stmt_comp_conservation",
         ),
         CheckConstraint(
-            "component_type = ANY (ARRAY['purchase'::text, 'installment'::text, 'fee'::text, 'interest'::text, 'refund'::text, 'reversal'::text, 'adjustment'::text, 'payment'::text])",
+            "component_type = ANY (ARRAY['purchase'::text, 'installment'::text, 'fee'::text, 'interest'::text, 'refund'::text, 'reversal'::text, 'adjustment'::text, 'payment'::text, 'prior_balance'::text, 'prior_credit'::text])",
             name="chk_cc_stmt_comp_type",
         ),
         CheckConstraint(
@@ -489,9 +499,7 @@ class CreditCardStatementFact(Base):
     )
     fact_type: Mapped[str] = mapped_column(String, nullable=False)
     # May be NULL when fact is absent/unknown; never fabricate 0.00
-    amount: Mapped[Decimal | None] = mapped_column(
-        Numeric(precision=14, scale=2), nullable=True
-    )
+    amount: Mapped[Decimal | None] = mapped_column(Numeric(precision=14, scale=2), nullable=True)
     currency: Mapped[str | None] = mapped_column(String, nullable=True)
     provenance: Mapped[str] = mapped_column(
         String,
@@ -502,9 +510,7 @@ class CreditCardStatementFact(Base):
     observed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    effective_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Append-only: created_at without updated_at
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -562,9 +568,7 @@ class CreditCardPayment(Base):
         UUID(as_uuid=True), ForeignKey("financial_events.id", ondelete="SET NULL"), nullable=True
     )
     # Explicit booked amount & currency in card currency
-    booked_amount: Mapped[Decimal] = mapped_column(
-        Numeric(precision=14, scale=2), nullable=False
-    )
+    booked_amount: Mapped[Decimal] = mapped_column(Numeric(precision=14, scale=2), nullable=False)
     booked_currency: Mapped[str] = mapped_column(
         String, default="COP", server_default=text("'COP'::text"), nullable=False
     )
@@ -750,6 +754,10 @@ class CreditCardAdjustment(Base):
             "allocation_source = ANY (ARRAY['nexum_modeled'::text, 'issuer_authoritative'::text, 'user_directed'::text])",
             name="chk_cc_adjustments_alloc_source",
         ),
+        CheckConstraint(
+            "direction IS NULL OR direction = ANY (ARRAY['debit'::text, 'credit'::text])",
+            name="chk_cc_adjustments_direction",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -770,10 +778,10 @@ class CreditCardAdjustment(Base):
         UUID(as_uuid=True), ForeignKey("financial_events.id", ondelete="SET NULL"), nullable=True
     )
     adjustment_type: Mapped[str] = mapped_column(String, nullable=False)
+    # Explicit additive direction for canonical manual/statement adjustments ('debit' or 'credit')
+    direction: Mapped[str | None] = mapped_column(String, nullable=True)
     # Explicit booked amount and currency
-    booked_amount: Mapped[Decimal] = mapped_column(
-        Numeric(precision=14, scale=2), nullable=False
-    )
+    booked_amount: Mapped[Decimal] = mapped_column(Numeric(precision=14, scale=2), nullable=False)
     booked_currency: Mapped[str] = mapped_column(
         String, default="COP", server_default=text("'COP'::text"), nullable=False
     )
@@ -927,4 +935,62 @@ class CreditCardAdjustmentAllocation(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+# ── Closed Statement and Component Immutability Listeners ────────────────────
+
+_IMMUTABLE_STATEMENT_STATUSES = frozenset({"closed", "settled"})
+
+
+@event.listens_for(CreditCardStatement, "before_update")
+def _statement_before_update(mapper, connection, target: CreditCardStatement) -> None:
+    state = inspect(target)
+    history = state.get_history("status", False)
+    committed_status = state.committed_state.get("status")
+    was_immutable = bool(
+        committed_status in _IMMUTABLE_STATEMENT_STATUSES
+        or (
+            history.has_changes()
+            and history.deleted
+            and history.deleted[0] in _IMMUTABLE_STATEMENT_STATUSES
+        )
+    )
+    is_transition_from_mutable = bool(
+        history.has_changes()
+        and history.deleted
+        and history.deleted[0] not in _IMMUTABLE_STATEMENT_STATUSES
+    )
+    if is_transition_from_mutable:
+        return
+
+    if was_immutable or target.status in _IMMUTABLE_STATEMENT_STATUSES:
+        raise CreditStatementImmutableError(
+            message=f"Credit card statement is immutable in status '{target.status}'; no in-place updates allowed",
+            detail={"statement_id": str(target.id), "status": target.status},
+        )
+
+
+@event.listens_for(CreditCardStatement, "before_delete")
+def _statement_before_delete(mapper, connection, target: CreditCardStatement) -> None:
+    if target.status in _IMMUTABLE_STATEMENT_STATUSES:
+        raise CreditStatementImmutableError(
+            message=f"Credit card statement snapshot in status '{target.status}' cannot be deleted",
+            detail={"statement_id": str(target.id), "status": target.status},
+        )
+
+
+@event.listens_for(CreditCardStatementComponent, "before_update")
+def _component_before_update(mapper, connection, target: CreditCardStatementComponent) -> None:
+    raise CreditStatementImmutableError(
+        message="Statement components are immutable and cannot be updated in place",
+        detail={"component_id": str(target.id)},
+    )
+
+
+@event.listens_for(CreditCardStatementComponent, "before_delete")
+def _component_before_delete(mapper, connection, target: CreditCardStatementComponent) -> None:
+    raise CreditStatementImmutableError(
+        message="Statement components are immutable and cannot be deleted",
+        detail={"component_id": str(target.id)},
     )

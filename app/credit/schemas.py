@@ -1,6 +1,7 @@
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
@@ -149,9 +150,11 @@ class CreditCardEarlyPaymentResult(BaseModel):
     available_credit: Decimal
     account_balance: Decimal
 
+
 class CreditCardEarlyPaymentPreviewCreate(BaseModel):
     account_id: uuid.UUID
     amount: Decimal | None = Field(None, gt=0)
+
 
 class PaymentPreviewResult(BaseModel):
     source_amount: Decimal
@@ -247,27 +250,6 @@ class CreditCardInstallmentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class CreditCardStatementRead(BaseModel):
-    id: uuid.UUID
-    credit_card_id: uuid.UUID
-    billing_period: str
-    billing_period_start: date | None = None
-    cutoff_date: date | None = None
-    due_date: date | None = None
-    previous_balance: Decimal
-    new_purchases: Decimal
-    billed_installments: Decimal
-    fees_total: Decimal
-    interest_total: Decimal
-    payments_received: Decimal
-    statement_balance: Decimal
-    minimum_payment: Decimal
-    status: str
-    frozen_at: datetime | None = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 # ── Canonical Schema Foundations (Goal 2) ────────────────────────────────────
 
 
@@ -318,9 +300,55 @@ class CreditCardStatementFactRead(BaseModel):
     provenance: str
     observed_at: datetime
     effective_at: datetime | None = None
-    created_at: datetime
+    created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class CreditCardStatementRead(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID | None = None
+    credit_card_id: uuid.UUID
+    billing_period: str
+    cycle_id: uuid.UUID | None = None
+    billing_period_start: date | None = None
+    cutoff_date: date | None = None
+    due_date: date | None = None
+    previous_balance: Decimal = Decimal("0.00")
+    new_purchases: Decimal = Decimal("0.00")
+    billed_installments: Decimal = Decimal("0.00")
+    fees_total: Decimal = Decimal("0.00")
+    interest_total: Decimal = Decimal("0.00")
+    payments_received: Decimal = Decimal("0.00")
+    statement_balance: Decimal = Decimal("0.00")
+    minimum_payment: Decimal | None = None
+    status: str = "open"
+    currency: str | None = None
+    assessed_interest: Decimal | None = None
+    estimated_interest: Decimal | None = None
+    provenance: str | None = None
+    debt_partition: str | None = None
+    frozen_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    components: list[CreditCardStatementComponentRead] = Field(default_factory=list)
+    facts: list[CreditCardStatementFactRead] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CreditCardCycleClosureSummary(BaseModel):
+    as_of_date: date
+    cards_inspected: int = 0
+    cycles_eligible: int = 0
+    cycles_closed: int = 0
+    statements_created: int = 0
+    statements_skipped: int = 0
+    components_created: int = 0
+    technical_failures: int = 0
+    has_remaining_catchup: bool = False
+    remaining_catchup_cycles: int = 0
+    card_summaries: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class CreditCardPaymentRead(BaseModel):
@@ -389,6 +417,7 @@ class CreditCardAdjustmentRead(BaseModel):
     original_transaction_id: uuid.UUID | None = None
     event_id: uuid.UUID | None = None
     adjustment_type: str
+    direction: str | None = None
     booked_amount: Decimal
     booked_currency: str = "COP"
     original_amount: Decimal | None = None

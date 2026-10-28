@@ -1,11 +1,13 @@
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.credit.exceptions import CreditStatementImmutableError
 from app.credit.models import (
+    DEBT_PARTITION_CANONICAL,
     CreditCard,
     CreditCardAdjustment,
     CreditCardAdjustmentAllocation,
@@ -214,7 +216,7 @@ class CreditCardRepository:
         result = await self.session.execute(query, {"card_id": card_id})
         return Decimal(str(result.scalar_one_or_none() or 0))
 
-    async def list_statements(self, card_id: uuid.UUID) -> list:
+    async def list_statements(self, card_id: uuid.UUID) -> list[CreditCardStatement]:
         result = await self.session.execute(
             select(CreditCardStatement)
             .where(CreditCardStatement.credit_card_id == card_id)
@@ -222,7 +224,7 @@ class CreditCardRepository:
         )
         return list(result.scalars().all())
 
-    async def get_statement(self, card_id: uuid.UUID, period: str):
+    async def get_statement(self, card_id: uuid.UUID, period: str) -> CreditCardStatement | None:
         result = await self.session.execute(
             select(CreditCardStatement).where(
                 CreditCardStatement.credit_card_id == card_id,
@@ -230,6 +232,43 @@ class CreditCardRepository:
             )
         )
         return result.scalars().first()
+
+    async def get_statement_by_id(self, statement_id: uuid.UUID) -> CreditCardStatement | None:
+        result = await self.session.execute(
+            select(CreditCardStatement).where(CreditCardStatement.id == statement_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_statement_by_cycle_id(self, cycle_id: uuid.UUID) -> CreditCardStatement | None:
+        result = await self.session.execute(
+            select(CreditCardStatement).where(CreditCardStatement.cycle_id == cycle_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_statement_by_cycle_id_for_update(
+        self, cycle_id: uuid.UUID
+    ) -> CreditCardStatement | None:
+        result = await self.session.execute(
+            select(CreditCardStatement)
+            .where(CreditCardStatement.cycle_id == cycle_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one_or_none()
+
+    async def add_statement(self, statement: CreditCardStatement) -> None:
+        self.session.add(statement)
+        await self.session.flush()
+
+    async def save_statement(self, statement: CreditCardStatement) -> None:
+        if statement.status in ("closed", "settled"):
+            if statement in self.session.dirty:
+                raise CreditStatementImmutableError(
+                    message="Closed or settled statement snapshot is immutable and cannot be updated in place",
+                    detail={"statement_id": str(statement.id), "status": statement.status},
+                )
+        self.session.add(statement)
+        await self.session.flush()
 
     async def get_statement_for_update(self, statement_id: uuid.UUID) -> CreditCardStatement | None:
         result = await self.session.execute(
@@ -253,6 +292,93 @@ class CreditCardRepository:
             .execution_options(populate_existing=True)
         )
         return list(result.scalars().all())
+
+    async def list_active_canonical_card_ids(
+        self, user_id: uuid.UUID | None = None
+    ) -> list[uuid.UUID]:
+        """Queries eligible canonical card IDs without write locks.
+
+        Used by batch processors to list candidate cards before locking each
+        card independently in its own transaction.
+        """
+        stmt = (
+            select(CreditCard.id)
+            .where(
+                CreditCard.is_active.is_(True),
+                CreditCard.canonical_mode.is_(True),
+                CreditCard.canonical_activated_at.is_not(None),
+            )
+            .order_by(CreditCard.created_at.asc(), CreditCard.id.asc())
+        )
+        if user_id is not None:
+            stmt = stmt.where(CreditCard.user_id == user_id)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_active_canonical_cards_for_update(
+        self, user_id: uuid.UUID | None = None
+    ) -> list[CreditCard]:
+        stmt = (
+            select(CreditCard)
+            .where(
+                CreditCard.is_active.is_(True),
+                CreditCard.canonical_mode.is_(True),
+                CreditCard.canonical_activated_at.is_not(None),
+            )
+            .order_by(CreditCard.created_at.asc())
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if user_id is not None:
+            stmt = stmt.where(CreditCard.user_id == user_id)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_open_cycles_for_card_for_update(
+        self, card_id: uuid.UUID
+    ) -> list[CreditCardBillingCycle]:
+        result = await self.session.execute(
+            select(CreditCardBillingCycle)
+            .where(
+                CreditCardBillingCycle.credit_card_id == card_id,
+                CreditCardBillingCycle.status == "open",
+            )
+            .order_by(CreditCardBillingCycle.billing_period.asc())
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return list(result.scalars().all())
+
+    async def list_installments_for_period_for_update(
+        self, card_id: uuid.UUID, billing_period: str
+    ) -> list[CreditCardInstallment]:
+        result = await self.session.execute(
+            select(CreditCardInstallment)
+            .where(
+                CreditCardInstallment.credit_card_id == card_id,
+                CreditCardInstallment.debt_partition == DEBT_PARTITION_CANONICAL,
+                CreditCardInstallment.lifecycle_status == "active",
+                CreditCardInstallment.scheduled_period == billing_period,
+            )
+            .order_by(
+                CreditCardInstallment.installment_number.asc(),
+                CreditCardInstallment.created_at.asc(),
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return list(result.scalars().all())
+
+    async def get_fact_for_statement(
+        self, statement_id: uuid.UUID, fact_type: str
+    ) -> CreditCardStatementFact | None:
+        result = await self.session.execute(
+            select(CreditCardStatementFact).where(
+                CreditCardStatementFact.statement_id == statement_id,
+                CreditCardStatementFact.fact_type == fact_type,
+            )
+        )
+        return result.scalar_one_or_none()
 
     # ── Canonical Primitives (Goal 2 Foundation) ─────────────────────────────
 
@@ -342,9 +468,7 @@ class CreditCardRepository:
         )
         return result.scalar_one_or_none()
 
-    async def add_payment_allocations(
-        self, allocations: list[CreditCardPaymentAllocation]
-    ) -> None:
+    async def add_payment_allocations(self, allocations: list[CreditCardPaymentAllocation]) -> None:
         self.session.add_all(allocations)
         await self.session.flush()
 
@@ -374,9 +498,7 @@ class CreditCardRepository:
         )
         return list(result.scalars().all())
 
-    async def add_statement_facts(
-        self, facts: list[CreditCardStatementFact]
-    ) -> None:
+    async def add_statement_facts(self, facts: list[CreditCardStatementFact]) -> None:
         self.session.add_all(facts)
         await self.session.flush()
 
@@ -394,9 +516,7 @@ class CreditCardRepository:
         self.session.add(adjustment)
         await self.session.flush()
 
-    async def get_adjustment_by_id(
-        self, adjustment_id: uuid.UUID
-    ) -> CreditCardAdjustment | None:
+    async def get_adjustment_by_id(self, adjustment_id: uuid.UUID) -> CreditCardAdjustment | None:
         result = await self.session.execute(
             select(CreditCardAdjustment).where(CreditCardAdjustment.id == adjustment_id)
         )
@@ -437,5 +557,136 @@ class CreditCardRepository:
             select(CreditCardAdjustmentAllocation)
             .where(CreditCardAdjustmentAllocation.adjustment_id == adjustment_id)
             .order_by(CreditCardAdjustmentAllocation.allocation_order.asc())
+        )
+        return list(result.scalars().all())
+
+    async def get_previous_canonical_statement(
+        self, card_id: uuid.UUID, current_period: str
+    ) -> CreditCardStatement | None:
+        """Finds the immediately preceding canonical closed statement for a card."""
+        result = await self.session.execute(
+            select(CreditCardStatement)
+            .where(
+                CreditCardStatement.credit_card_id == card_id,
+                CreditCardStatement.debt_partition == DEBT_PARTITION_CANONICAL,
+                CreditCardStatement.status == "closed",
+                CreditCardStatement.billing_period < current_period,
+            )
+            .order_by(CreditCardStatement.billing_period.desc())
+            .limit(1)
+        )
+        return result.scalars().first()
+
+    async def list_adjustments_for_cycle_for_update(
+        self, card_id: uuid.UUID, start_date: date, cutoff_date: date
+    ) -> list[CreditCardAdjustment]:
+        """Queries posted canonical adjustments within the cycle boundaries with row locks."""
+        start_dt = datetime.combine(start_date, time.min, tzinfo=UTC)
+        cutoff_dt = datetime.combine(cutoff_date, time.max, tzinfo=UTC)
+        result = await self.session.execute(
+            select(CreditCardAdjustment)
+            .where(
+                CreditCardAdjustment.credit_card_id == card_id,
+                CreditCardAdjustment.status == "posted",
+                CreditCardAdjustment.occurred_at >= start_dt,
+                CreditCardAdjustment.occurred_at <= cutoff_dt,
+            )
+            .order_by(CreditCardAdjustment.occurred_at.asc(), CreditCardAdjustment.id.asc())
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return list(result.scalars().all())
+
+    async def list_payment_allocations_for_components(
+        self, component_ids: list[uuid.UUID]
+    ) -> list[CreditCardPaymentAllocation]:
+        if not component_ids:
+            return []
+        result = await self.session.execute(
+            select(CreditCardPaymentAllocation)
+            .where(CreditCardPaymentAllocation.target_statement_component_id.in_(component_ids))
+            .order_by(CreditCardPaymentAllocation.created_at.asc())
+        )
+        return list(result.scalars().all())
+
+    async def list_payment_allocations_for_installments(
+        self, installment_ids: list[uuid.UUID]
+    ) -> list[CreditCardPaymentAllocation]:
+        if not installment_ids:
+            return []
+        result = await self.session.execute(
+            select(CreditCardPaymentAllocation)
+            .where(CreditCardPaymentAllocation.target_installment_id.in_(installment_ids))
+            .order_by(CreditCardPaymentAllocation.created_at.asc())
+        )
+        return list(result.scalars().all())
+
+    async def list_payment_allocations_for_charges(
+        self, charge_ids: list[uuid.UUID]
+    ) -> list[CreditCardPaymentAllocation]:
+        if not charge_ids:
+            return []
+        result = await self.session.execute(
+            select(CreditCardPaymentAllocation)
+            .where(CreditCardPaymentAllocation.target_charge_id.in_(charge_ids))
+            .order_by(CreditCardPaymentAllocation.created_at.asc())
+        )
+        return list(result.scalars().all())
+
+    async def list_adjustment_allocations_for_installments(
+        self, installment_ids: list[uuid.UUID]
+    ) -> list[CreditCardAdjustmentAllocation]:
+        if not installment_ids:
+            return []
+        result = await self.session.execute(
+            select(CreditCardAdjustmentAllocation)
+            .where(CreditCardAdjustmentAllocation.target_installment_id.in_(installment_ids))
+            .order_by(CreditCardAdjustmentAllocation.created_at.asc())
+        )
+        return list(result.scalars().all())
+
+    async def list_statement_charges_for_statement(
+        self, statement_id: uuid.UUID
+    ) -> list[CreditCardStatementCharge]:
+        result = await self.session.execute(
+            select(CreditCardStatementCharge)
+            .where(CreditCardStatementCharge.statement_id == statement_id)
+            .order_by(CreditCardStatementCharge.created_at.asc())
+        )
+        return list(result.scalars().all())
+
+    async def list_closed_canonical_periods_for_card(self, card_id: uuid.UUID) -> set[str]:
+        """Returns the set of billing_period strings for cycles or statements that are already closed."""
+        stmt_cycle = select(CreditCardBillingCycle.billing_period).where(
+            CreditCardBillingCycle.credit_card_id == card_id,
+            CreditCardBillingCycle.status.in_(["closed", "settled"]),
+        )
+        res_cycle = await self.session.execute(stmt_cycle)
+        closed_periods = set(res_cycle.scalars().all())
+
+        stmt_stmt = select(CreditCardStatement.billing_period).where(
+            CreditCardStatement.credit_card_id == card_id,
+            CreditCardStatement.debt_partition == DEBT_PARTITION_CANONICAL,
+            CreditCardStatement.status == "closed",
+        )
+        res_stmt = await self.session.execute(stmt_stmt)
+        closed_periods.update(res_stmt.scalars().all())
+        return closed_periods
+
+    async def list_payments_for_cycle_for_update(
+        self, card_id: uuid.UUID, start_date: date, cutoff_date: date
+    ) -> list[CreditCardPayment]:
+        """Queries posted canonical payments within the cycle window with row locks."""
+        result = await self.session.execute(
+            select(CreditCardPayment)
+            .where(
+                CreditCardPayment.credit_card_id == card_id,
+                CreditCardPayment.status == "posted",
+                CreditCardPayment.payment_date >= start_date,
+                CreditCardPayment.payment_date <= cutoff_date,
+            )
+            .order_by(CreditCardPayment.payment_date.asc(), CreditCardPayment.id.asc())
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         return list(result.scalars().all())

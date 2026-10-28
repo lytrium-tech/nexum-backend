@@ -78,29 +78,30 @@ def get_script_directory() -> ScriptDirectory:
 
 
 def test_alembic_linear_head():
-    """Verify Alembic lineage forms a single linear DAG ending at credit_v2_canonical_check."""
+    """Verify Alembic lineage forms a single linear DAG ending at credit_v2_canonical_closure."""
     script_dir = get_script_directory()
     heads = script_dir.get_heads()
     assert len(heads) == 1
-    assert heads[0] == "credit_v2_canonical_check"
+    assert heads[0] == "credit_v2_canonical_closure"
 
 
 def test_alembic_upgrade_path_from_empty_database():
     """Verify that a fresh database (current_rev=None) resolves the complete chain
 
-    starting with v1_5_baseline and ending with credit_v2_canonical_check.
+    starting with v1_5_baseline and ending with credit_v2_canonical_closure.
     """
     script_dir = get_script_directory()
     steps = script_dir._upgrade_revs(destination="head", current_rev=None)
     all_revisions = [step.revision.revision for step in steps]
 
     assert all_revisions[0] == "v1_5_baseline"
-    assert all_revisions[-2] == "credit_v2_canonical_schema"
-    assert all_revisions[-1] == "credit_v2_canonical_check"
+    assert all_revisions[-3] == "credit_v2_canonical_schema"
+    assert all_revisions[-2] == "credit_v2_canonical_check"
+    assert all_revisions[-1] == "credit_v2_canonical_closure"
     assert "obligations_v1_7_auto_payments" in all_revisions
 
-    # Exactly 12 revisions in linear chain
-    assert len(all_revisions) == 12
+    # Exactly 13 revisions in linear chain
+    assert len(all_revisions) == 13
 
 
 def test_alembic_upgrade_path_from_prior_head():
@@ -114,13 +115,18 @@ def test_alembic_upgrade_path_from_prior_head():
     )
     upgrade_revisions = [step.revision.revision for step in steps]
 
-    assert upgrade_revisions == ["credit_v2_canonical_schema", "credit_v2_canonical_check"]
+    assert upgrade_revisions == [
+        "credit_v2_canonical_schema",
+        "credit_v2_canonical_check",
+        "credit_v2_canonical_closure",
+    ]
 
 
 def test_alembic_revision_identifier_lengths():
     """Ensure all credit revision identifiers are <= 32 characters for database safety."""
     assert len("credit_v2_canonical_schema") <= 32
     assert len("credit_v2_canonical_check") <= 32
+    assert len("credit_v2_canonical_closure") <= 32
 
 
 # ── 2. Additive Migration Contract & Execution via Recorder ──────────────────
@@ -137,6 +143,15 @@ class MigrationRecorder:
         self.dropped_constraints: list[str] = []
         self.dropped_columns: list[tuple[str, str]] = []
         self.dropped_tables: list[str] = []
+        self.altered_columns: list[tuple[str, str]] = []
+        self.created_unique_constraints: list[str] = []
+        self.dropped_indexes: list[str] = []
+
+    def alter_column(self, table_name, column_name, *args, **kwargs):
+        self.altered_columns.append((table_name, column_name))
+
+    def create_unique_constraint(self, name, table_name, columns, *args, **kwargs):
+        self.created_unique_constraints.append(name)
 
     def create_table(self, name, *args, **kwargs):
         self.created_tables.append(name)
@@ -166,7 +181,7 @@ class MigrationRecorder:
         self.dropped_tables.append(name)
 
     def drop_index(self, name, *args, **kwargs):
-        pass
+        self.dropped_indexes.append(name)
 
 
 def _load_migration(module_name: str, file_name: str):
@@ -242,6 +257,47 @@ def test_credit_v2_canonical_check_forward_supersession(monkeypatch):
     assert "ADD CONSTRAINT credit_card_installments_paid_check" in sql_down
     assert "CHECK (paid_amount <= principal_amount)" in sql_down
     assert "NOT VALID" in sql_down
+
+
+def test_credit_v2_canonical_closure_forward_migration(monkeypatch):
+    """Verify forward-only closure migration relaxes minimum_payment nullability and creates uniqueness indexes."""
+    mod = _load_migration("credit_v2_canonical_closure", "credit_v2_canonical_closure.py")
+    recorder = MigrationRecorder()
+    monkeypatch.setattr(mod, "op", recorder)
+
+    mod.upgrade()
+    assert ("credit_card_statements", "minimum_payment") in recorder.altered_columns
+    assert "uq_cc_statements_canonical_cycle_id" in recorder.created_indexes
+    assert "uq_cc_stmt_comp_statement_installment" in recorder.created_indexes
+    assert "uq_cc_stmt_comp_statement_tx" in recorder.created_indexes
+    assert "uq_cc_stmt_comp_statement_charge" in recorder.created_indexes
+    assert "uq_cc_stmt_facts_stmt_fact_type" in recorder.created_indexes
+    assert ("credit_card_adjustments", "direction") in recorder.added_columns
+    assert "chk_cc_adjustments_direction" in recorder.created_checks
+    assert "chk_cc_stmt_comp_type" in recorder.created_checks
+    sql_up = " ".join(recorder.executed_statements)
+    assert "trg_cc_statements_immutable" in sql_up
+    assert "trg_fn_prevent_statement_mutation" in sql_up
+    assert "trg_cc_stmt_comp_immutable" in sql_up
+    assert "trg_fn_prevent_statement_component_mutation" in sql_up
+
+    # Test downgrade
+    mod.downgrade()
+    sql_down = " ".join(recorder.executed_statements)
+    assert "DROP TRIGGER IF EXISTS trg_cc_stmt_comp_immutable" in sql_down
+    assert "DROP FUNCTION IF EXISTS trg_fn_prevent_statement_component_mutation" in sql_down
+    assert "DROP TRIGGER IF EXISTS trg_cc_statements_immutable" in sql_down
+    assert "DROP FUNCTION IF EXISTS trg_fn_prevent_statement_mutation" in sql_down
+    assert "uq_cc_stmt_facts_stmt_fact_type" in recorder.dropped_indexes
+    assert "uq_cc_stmt_comp_statement_charge" in recorder.dropped_indexes
+    assert "uq_cc_stmt_comp_statement_tx" in recorder.dropped_indexes
+    assert "uq_cc_stmt_comp_statement_installment" in recorder.dropped_indexes
+    assert "chk_cc_stmt_comp_type" in recorder.dropped_constraints
+    assert "chk_cc_adjustments_direction" in recorder.dropped_constraints
+    assert ("credit_card_adjustments", "direction") in recorder.dropped_columns
+    assert "uq_cc_statements_canonical_cycle_id" in recorder.dropped_indexes
+    # Safe downgrade guard: minimum_payment is NOT forced NOT NULL on downgrade
+    assert ("credit_card_statements", "minimum_payment") not in recorder.dropped_columns
 
 
 # ── 3. Legacy Semantics & Ambiguous Legacy Rows Preservation ─────────────────
@@ -731,8 +787,12 @@ def test_canonical_orm_and_migration_parity_and_types():
     # Verify command_id is PostgreSQL UUID dialect on ORM tables
     payment_cmd_type = CreditCardPayment.__table__.c.command_id.type
     adj_cmd_type = CreditCardAdjustment.__table__.c.command_id.type
-    assert isinstance(payment_cmd_type, PG_UUID), "CreditCardPayment.command_id must be PostgreSQL UUID"
-    assert isinstance(adj_cmd_type, PG_UUID), "CreditCardAdjustment.command_id must be PostgreSQL UUID"
+    assert isinstance(payment_cmd_type, PG_UUID), (
+        "CreditCardPayment.command_id must be PostgreSQL UUID"
+    )
+    assert isinstance(adj_cmd_type, PG_UUID), (
+        "CreditCardAdjustment.command_id must be PostgreSQL UUID"
+    )
 
     # Verify check constraint names parity
     expected_constraints = {
@@ -967,7 +1027,9 @@ async def test_repository_locked_queries_populate_existing():
     assert len(executed_statements) == 8
     for stmt in executed_statements:
         opts = stmt._execution_options
-        assert opts.get("populate_existing") is True, f"Statement {stmt} missing populate_existing=True"
+        assert opts.get("populate_existing") is True, (
+            f"Statement {stmt} missing populate_existing=True"
+        )
 
 
 @pytest.mark.asyncio
@@ -1039,5 +1101,3 @@ async def test_repository_get_by_command_id_uuid():
 
     adj = await repo.get_adjustment_by_command_id(u_id, cmd_id)
     assert adj is None
-
-

@@ -32,11 +32,14 @@ from app.credit.models import (
     CreditCard,
     CreditCardBillingCycle,
     CreditCardInstallment,
+    CreditCardStatement,
+    CreditCardStatementComponent,
     CreditCardTransaction,
 )
 from app.credit.repository import CreditCardRepository
 from app.credit.schemas import (
     CreditCardCreate,
+    CreditCardCycleClosureSummary,
     CreditCardEarlyPaymentCreate,
     CreditCardEarlyPaymentPreviewCreate,
     CreditCardEarlyPaymentResult,
@@ -147,7 +150,9 @@ class CreditCardService:
                 inst_due = (
                     cycle.due_date
                     if cycle
-                    else get_cycle_dates_for_period(inst_year, inst_month, card.cutoff_day, card.due_day)[2]
+                    else get_cycle_dates_for_period(
+                        inst_year, inst_month, card.cutoff_day, card.due_day
+                    )[2]
                 )
             else:
                 offset = index - 1
@@ -165,7 +170,11 @@ class CreditCardService:
             total_amount = principal
 
             # Projected interest estimate for informational/modeling purposes only on multi-installment purchases
-            if installments_total > 1 and card.monthly_interest_rate and card.monthly_interest_rate > 0:
+            if (
+                installments_total > 1
+                and card.monthly_interest_rate
+                and card.monthly_interest_rate > 0
+            ):
                 estimated_interest = (
                     principal * (card.monthly_interest_rate / Decimal("100"))
                 ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -350,7 +359,12 @@ class CreditCardService:
         if not card or card.user_id != user_id or not card.is_active:
             raise CreditCardNotFoundError()
 
-        disallowed_keys = {"canonical_mode", "canonical_activated_at", "provenance", "lifecycle_status"}
+        disallowed_keys = {
+            "canonical_mode",
+            "canonical_activated_at",
+            "provenance",
+            "lifecycle_status",
+        }
         for key, value in payload.model_dump(exclude_unset=True).items():
             if key not in disallowed_keys:
                 setattr(card, key, value)
@@ -388,7 +402,9 @@ class CreditCardService:
             )
 
         # 2. Multi-currency and amount ambiguity resolution (pre-lock)
-        raw_orig_currency = payload.original_currency or payload.currency or preliminary_card.currency
+        raw_orig_currency = (
+            payload.original_currency or payload.currency or preliminary_card.currency
+        )
         original_currency = raw_orig_currency.upper()
         booked_currency = (preliminary_card.currency or "COP").upper()
 
@@ -420,7 +436,8 @@ class CreditCardService:
             fx_rate_snapshot_id = None
             provenance = (
                 preliminary_card.provenance
-                if preliminary_card.provenance in (PROVENANCE_ISSUER_AUTHORITATIVE, PROVENANCE_MANUAL)
+                if preliminary_card.provenance
+                in (PROVENANCE_ISSUER_AUTHORITATIVE, PROVENANCE_MANUAL)
                 else PROVENANCE_MANUAL
             )
         else:
@@ -552,7 +569,9 @@ class CreditCardService:
                     "booked_amount": str(booked_amount),
                     "booked_currency": booked_currency,
                     "fx_rate": str(fx_rate),
-                    "fx_rate_snapshot_id": str(fx_rate_snapshot_id) if fx_rate_snapshot_id else None,
+                    "fx_rate_snapshot_id": str(fx_rate_snapshot_id)
+                    if fx_rate_snapshot_id
+                    else None,
                     "debt_partition": debt_partition,
                 },
             )
@@ -584,14 +603,22 @@ class CreditCardService:
                     available_credit=estimated_available,
                     estimated_current_debt=estimated_debt,
                     estimated_available_credit=estimated_available,
-                    cycle_id=transaction.cycle_id if (transaction and retry_lifecycle == "posted") else None,
-                    billing_period=transaction.period if (transaction and retry_lifecycle == "posted") else None,
+                    cycle_id=transaction.cycle_id
+                    if (transaction and retry_lifecycle == "posted")
+                    else None,
+                    billing_period=transaction.period
+                    if (transaction and retry_lifecycle == "posted")
+                    else None,
                     original_amount=transaction.original_amount if transaction else original_amount,
-                    original_currency=transaction.original_currency if transaction else original_currency,
+                    original_currency=transaction.original_currency
+                    if transaction
+                    else original_currency,
                     booked_amount=transaction.booked_amount if transaction else booked_amount,
                     booked_currency=transaction.booked_currency if transaction else booked_currency,
                     fx_rate=transaction.fx_rate if transaction else fx_rate,
-                    fx_rate_snapshot_id=transaction.fx_rate_snapshot_id if transaction else fx_rate_snapshot_id,
+                    fx_rate_snapshot_id=transaction.fx_rate_snapshot_id
+                    if transaction
+                    else fx_rate_snapshot_id,
                     lifecycle_status=retry_lifecycle,
                     debt_partition=transaction.debt_partition if transaction else debt_partition,
                     provenance=transaction.provenance if transaction else provenance,
@@ -605,7 +632,9 @@ class CreditCardService:
                     purchase_date, card.cutoff_day, card.due_day
                 )
 
-                existing_cycle = await self.repo.get_billing_cycle_by_period_for_update(card.id, billing_period)
+                existing_cycle = await self.repo.get_billing_cycle_by_period_for_update(
+                    card.id, billing_period
+                )
                 if existing_cycle and isinstance(existing_cycle, CreditCardBillingCycle):
                     if existing_cycle.status in ("closed", "settled"):
                         raise CreditBillingCycleClosedError(
@@ -1074,6 +1103,7 @@ class CreditCardService:
         transaction = await self.repo.get_transaction_by_id(purchase_id)
         if not transaction or transaction.credit_card_id != card.id:
             from app.credit.exceptions import CreditDomainError
+
             raise CreditDomainError("Purchase not found or does not belong to this card")
 
         # Get pending installments
@@ -1081,6 +1111,7 @@ class CreditCardService:
         installments = [i for i in all_installments if i.status != "paid"]
 
         from app.credit.exceptions import CreditDomainError
+
         if any(i.installments_total == 1 for i in all_installments):
             raise CreditDomainError(
                 "PAY_EARLY_NOT_ELIGIBLE: Single-installment purchases are not eligible for early payment."
@@ -1257,21 +1288,111 @@ class CreditCardService:
         return [CreditCardInstallmentRead.model_validate(i) for i in installments]
 
     async def list_statements(
-        self, user_id: uuid.UUID, card_id: uuid.UUID
+        self, user_id: uuid.UUID, card_id: uuid.UUID, auto_catchup: bool = False
     ) -> list[CreditCardStatementRead]:
         card = await self.repo.get_by_id(card_id)
         if not card or card.user_id != user_id:
             raise CreditCardNotFoundError()
+
+        if auto_catchup and card.canonical_mode and card.canonical_activated_at:
+            from app.credit.closure_service import CreditCycleClosureService
+
+            closure_service = CreditCycleClosureService(self.session, self.repo)
+            await closure_service.close_eligible_cycles_for_card(card.id)
+
         statements = await self.repo.list_statements(card_id)
-        return [CreditCardStatementRead.model_validate(s) for s in statements]
+        return [await self._statement_to_read_dto(s) for s in statements]
 
     async def get_statement(
-        self, user_id: uuid.UUID, card_id: uuid.UUID, period: str
+        self, user_id: uuid.UUID, card_id: uuid.UUID, period: str, auto_catchup: bool = False
     ) -> CreditCardStatementRead | None:
         card = await self.repo.get_by_id(card_id)
         if not card or card.user_id != user_id:
             raise CreditCardNotFoundError()
+
         statement = await self.repo.get_statement(card_id, period)
+        if not statement and auto_catchup and card.canonical_mode and card.canonical_activated_at:
+            from app.credit.closure_service import CreditCycleClosureService
+
+            closure_service = CreditCycleClosureService(self.session, self.repo)
+            await closure_service.close_eligible_cycles_for_card(card.id)
+            statement = await self.repo.get_statement(card_id, period)
+
         if not statement:
             return None
-        return CreditCardStatementRead.model_validate(statement)
+        return await self._statement_to_read_dto(statement)
+
+    async def _statement_to_read_dto(
+        self, statement: CreditCardStatement
+    ) -> CreditCardStatementRead:
+        components = await self.repo.list_components_for_statement(statement.id)
+        facts = await self.repo.list_facts_for_statement(statement.id)
+        min_fact = next((f for f in facts if f.fact_type == "minimum_payment_due"), None)
+        minimum_payment = min_fact.amount if min_fact else statement.minimum_payment
+
+        from app.credit.schemas import (
+            CreditCardStatementComponentRead,
+            CreditCardStatementFactRead,
+        )
+
+        return CreditCardStatementRead(
+            id=statement.id,
+            user_id=statement.user_id,
+            credit_card_id=statement.credit_card_id,
+            billing_period=statement.billing_period,
+            cycle_id=statement.cycle_id,
+            billing_period_start=statement.billing_period_start,
+            cutoff_date=statement.cutoff_date,
+            due_date=statement.due_date,
+            previous_balance=statement.previous_balance,
+            new_purchases=statement.new_purchases,
+            billed_installments=statement.billed_installments,
+            fees_total=statement.fees_total,
+            interest_total=statement.interest_total,
+            payments_received=statement.payments_received,
+            statement_balance=statement.statement_balance,
+            minimum_payment=minimum_payment,
+            status=statement.status,
+            currency=statement.currency,
+            assessed_interest=statement.assessed_interest,
+            estimated_interest=statement.estimated_interest,
+            provenance=statement.provenance,
+            debt_partition=statement.debt_partition,
+            frozen_at=statement.frozen_at,
+            created_at=statement.created_at,
+            updated_at=statement.updated_at,
+            components=[CreditCardStatementComponentRead.model_validate(c) for c in components],
+            facts=[CreditCardStatementFactRead.model_validate(f) for f in facts],
+        )
+
+    async def close_eligible_cycles(
+        self,
+        as_of_date: date | None = None,
+        batch_size: int = 50,
+        user_id: uuid.UUID | None = None,
+        card_id: uuid.UUID | None = None,
+    ) -> CreditCardCycleClosureSummary:
+        from app.credit.closure_service import CreditCycleClosureService
+
+        closure_service = CreditCycleClosureService(self.session, self.repo)
+        return await closure_service.close_all_eligible_cycles(
+            as_of_date=as_of_date,
+            batch_size=batch_size,
+            user_id=user_id,
+            card_id=card_id,
+        )
+
+    async def close_eligible_cycles_for_card(
+        self,
+        card_id: uuid.UUID,
+        as_of_date: date | None = None,
+        max_cycles_per_card: int = 24,
+    ) -> tuple[list[CreditCardStatement], list[CreditCardStatementComponent], int, bool, int]:
+        from app.credit.closure_service import CreditCycleClosureService
+
+        closure_service = CreditCycleClosureService(self.session, self.repo)
+        return await closure_service.close_eligible_cycles_for_card(
+            card_id=card_id,
+            as_of_date=as_of_date,
+            max_cycles_per_card=max_cycles_per_card,
+        )
