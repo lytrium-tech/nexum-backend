@@ -206,7 +206,7 @@ def test_pg01_alembic_linear_head_graph():
 # ==============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg02_f15_installment_check_constraint_physical(
     session: AsyncSession, fixture: GateFixture
 ):
@@ -288,7 +288,7 @@ async def test_pg02_f15_installment_check_constraint_physical(
 # ==============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg03a_cycle_assignment_and_bogota_cutoff_boundary(
     session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
 ):
@@ -336,7 +336,7 @@ async def test_pg03a_cycle_assignment_and_bogota_cutoff_boundary(
     assert cycle2.billing_period == "2026-11"
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg03b_statement_exactly_once_partial_unique_index(
     session: AsyncSession, fixture: GateFixture
 ):
@@ -407,7 +407,7 @@ async def test_pg03b_statement_exactly_once_partial_unique_index(
     assert "uq_cc_statements_canonical_cycle_id" in str(exc_info.value).lower()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg03c_bounded_catchup_repeated_progression(
     session: AsyncSession, fixture: GateFixture
 ):
@@ -467,7 +467,7 @@ async def test_pg03c_bounded_catchup_repeated_progression(
     assert rem_count2 == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg03d_immutable_statements_and_components_at_postgres_trigger_level(
     session: AsyncSession, fixture: GateFixture
 ):
@@ -564,7 +564,7 @@ async def test_pg03d_immutable_statements_and_components_at_postgres_trigger_lev
 # ==============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg04a_standard_partial_and_generic_prepayment_conservation(
     session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
 ):
@@ -635,7 +635,7 @@ async def test_pg04a_standard_partial_and_generic_prepayment_conservation(
     assert acc.balance == Decimal("700000.00")
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg04b_targeted_early_payment_records_prepayment_transaction(
     session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
 ):
@@ -686,7 +686,7 @@ async def test_pg04b_targeted_early_payment_records_prepayment_transaction(
     assert len(txs) >= 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg04c_voluntary_overpayment_rejection(
     session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
 ):
@@ -720,7 +720,7 @@ async def test_pg04c_voluntary_overpayment_rejection(
     assert acc.balance == Decimal("2000000.00")
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg04d_payment_reversal_full_amount_conservation(
     session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
 ):
@@ -768,7 +768,7 @@ async def test_pg04d_payment_reversal_full_amount_conservation(
     assert acc.balance == Decimal("1000000.00")
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg04e_legitimate_already_paid_refund_card_credit(
     session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
 ):
@@ -819,7 +819,7 @@ async def test_pg04e_legitimate_already_paid_refund_card_credit(
 # ==============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg05_f13_goal_reservation_enforced_under_lock_zero_mutation(
     session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
 ):
@@ -874,7 +874,7 @@ async def test_pg05_f13_goal_reservation_enforced_under_lock_zero_mutation(
 # ==============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg06_cross_currency_purchase_and_payment_equality(
     session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
 ):
@@ -928,7 +928,7 @@ async def test_pg06_cross_currency_purchase_and_payment_equality(
 # ==============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg07_f16_exact_idempotent_retry_and_conflicting_replay(
     session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
 ):
@@ -981,7 +981,7 @@ async def test_pg07_f16_exact_idempotent_retry_and_conflicting_replay(
 # ==============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg08a_duplicate_concurrent_statement_workers_serialization(
     engine: AsyncEngine, fixture: GateFixture
 ):
@@ -1033,7 +1033,7 @@ async def test_pg08a_duplicate_concurrent_statement_workers_serialization(
         assert stmt_count == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg08b_concurrent_purchases_near_limit_serialized(
     engine: AsyncEngine, fixture: GateFixture, static_fx: StaticFxRateProvider
 ):
@@ -1061,7 +1061,7 @@ async def test_pg08b_concurrent_purchases_near_limit_serialized(
     assert sorted([res1, res2]) == [False, True]
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg08c_concurrent_payments_physical_lock_wait(
     engine: AsyncEngine, fixture: GateFixture, static_fx: StaticFxRateProvider
 ):
@@ -1136,7 +1136,7 @@ async def test_pg08c_concurrent_payments_physical_lock_wait(
     assert res2 is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg08d_f14_standard_vs_early_payment_deadlock_elimination(
     engine: AsyncEngine, fixture: GateFixture, static_fx: StaticFxRateProvider
 ):
@@ -1199,7 +1199,7 @@ async def test_pg08d_f14_standard_vs_early_payment_deadlock_elimination(
     assert "deadlock" not in out2.lower()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg08e_stale_identity_map_refresh_on_payment(
     engine: AsyncEngine, fixture: GateFixture, static_fx: StaticFxRateProvider
 ):
@@ -1237,7 +1237,7 @@ async def test_pg08e_stale_identity_map_refresh_on_payment(
             await svc1.create_payment(fixture.user_id, card.id, pmt, command_id=cmd1)
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg08f_deterministic_waterfall_physical_allocation_order(
     session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
 ):
@@ -1396,7 +1396,7 @@ async def test_pg08f_deterministic_waterfall_physical_allocation_order(
 # ==============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg09a_atomic_rollback_on_ledger_failure(
     session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
 ):
@@ -1450,7 +1450,7 @@ async def test_pg09a_atomic_rollback_on_ledger_failure(
     assert len(payments) == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg09b_atomic_rollback_on_allocation_failure(
     session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
 ):
@@ -1522,7 +1522,7 @@ async def test_pg09b_atomic_rollback_on_allocation_failure(
 # ==============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg10_f19_payable_set_consistency_mirrored_charge_no_double_count(
     session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
 ):
@@ -1623,7 +1623,7 @@ async def test_pg10_f19_payable_set_consistency_mirrored_charge_no_double_count(
 # ==============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg11_canonical_and_legacy_debt_partitioning_no_double_count(
     session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
 ):
@@ -1729,7 +1729,7 @@ async def test_pg11_canonical_and_legacy_debt_partitioning_no_double_count(
 # ==============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg12_harness_cleanup_and_residue_verification(
     session: AsyncSession, fixture: GateFixture
 ):
