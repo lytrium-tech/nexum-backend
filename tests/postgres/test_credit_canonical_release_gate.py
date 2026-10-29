@@ -63,6 +63,7 @@ from app.fx.provider import StaticFxRateProvider
 from app.ledger.models import FinancialEvent
 from tests.unit.postgres_helpers import (
     GateFixture,
+    get_fixture_timestamps,
     get_session_backend_pid,
     verify_statement_triggers_enabled,
     wait_for_blocked,
@@ -207,7 +208,7 @@ async def test_pg02_f15_installment_check_constraint_physical(
 ):
     """PostgreSQL physically accepts assessed-interest full settlement and rejects paid_amount > total_amount."""
     card = await fixture.add_credit_card(currency="COP", canonical_mode=True)
-    now_utc = datetime.now(UTC)
+    now_utc, now_naive = get_fixture_timestamps()
 
     tx = CreditCardTransaction(
         id=uuid.uuid4(),
@@ -223,7 +224,7 @@ async def test_pg02_f15_installment_check_constraint_physical(
         debt_partition="canonical",
         provenance="nexum_modeled",
         lifecycle_status="posted",
-        created_at=now_utc,
+        created_at=now_naive,
         updated_at=now_utc,
     )
     session.add(tx)
@@ -1240,7 +1241,7 @@ async def test_pg08f_deterministic_waterfall_physical_allocation_order(
     card = await fixture.add_credit_card(currency="COP", credit_limit=Decimal("5000000.00"))
     fixture.account.balance = Decimal("2000000.00")
     fixture.account.currency = "COP"
-    now_utc = datetime.now(UTC)
+    now_utc, now_naive = get_fixture_timestamps()
 
     # 1. Standalone statement charge (10,000 COP)
     stmt = CreditCardStatement(
@@ -1280,7 +1281,7 @@ async def test_pg08f_deterministic_waterfall_physical_allocation_order(
         debt_partition="canonical",
         provenance="nexum_modeled",
         lifecycle_status="posted",
-        created_at=now_utc,
+        created_at=now_naive,
         updated_at=now_utc,
     )
     session.add(tx)
@@ -1523,7 +1524,7 @@ async def test_pg10_f19_payable_set_consistency_mirrored_charge_no_double_count(
 ):
     """Installment + mirrored statement charge: total payable debt, guard, and waterfall never double count."""
     card = await fixture.add_credit_card(currency="COP", credit_limit=Decimal("5000000.00"))
-    now_utc = datetime.now(UTC)
+    now_utc, now_naive = get_fixture_timestamps()
 
     # 1. Statement
     stmt = CreditCardStatement(
@@ -1552,7 +1553,7 @@ async def test_pg10_f19_payable_set_consistency_mirrored_charge_no_double_count(
         debt_partition="canonical",
         provenance="nexum_modeled",
         lifecycle_status="posted",
-        created_at=now_utc,
+        created_at=now_naive,
         updated_at=now_utc,
     )
     session.add(tx)
@@ -1627,7 +1628,7 @@ async def test_pg11_canonical_and_legacy_debt_partitioning_no_double_count(
     card = await fixture.add_credit_card(
         currency="COP", canonical_mode=False, provenance="legacy_unknown"
     )
-    now_utc = datetime.now(UTC)
+    now_utc, now_naive = get_fixture_timestamps()
 
     # Add legacy installment of 150,000 COP
     legacy_tx = CreditCardTransaction(
@@ -1640,7 +1641,7 @@ async def test_pg11_canonical_and_legacy_debt_partitioning_no_double_count(
         debt_partition="legacy",
         provenance="legacy_unknown",
         lifecycle_status="posted",
-        created_at=now_utc,
+        created_at=now_naive,
         updated_at=now_utc,
     )
     session.add(legacy_tx)

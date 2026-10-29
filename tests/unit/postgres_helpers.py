@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import delete, func, select, text
@@ -35,6 +36,17 @@ from app.obligations.models import (
     ObligationPeriod,
 )
 from app.users.models import User
+
+
+def get_fixture_timestamps() -> tuple[datetime, datetime]:
+    """Return synchronized (now_utc, now_naive) pair for fixture entities.
+
+    - now_utc: timezone-aware UTC datetime (for TIMESTAMP WITH TIME ZONE / timestamptz).
+    - now_naive: offset-naive UTC datetime (for historical TIMESTAMP WITHOUT TIME ZONE).
+    """
+    now_utc = datetime.now(UTC)
+    now_naive = now_utc.replace(tzinfo=None)
+    return now_utc, now_naive
 
 
 class GateCleanupError(RuntimeError):
@@ -100,6 +112,7 @@ async def verify_statement_triggers_enabled(session: AsyncSession) -> bool:
     """Verify that immutable statement triggers are present and enabled ('O') in PostgreSQL.
 
     Raises RuntimeError fail-closed if any trigger is absent or not in status 'O' (enabled).
+    Accepts both str ('O') and bytes (b'O') driver representations.
     """
     stmt = text(
         """
@@ -114,10 +127,15 @@ async def verify_statement_triggers_enabled(session: AsyncSession) -> bool:
     if set(rows.keys()) != expected:
         missing = expected - set(rows.keys())
         raise RuntimeError(f"Missing expected immutability triggers: {missing}")
-    for name, status in rows.items():
-        if status != "O":
+    for name, raw_status in rows.items():
+        norm_status = (
+            raw_status.decode("ascii", errors="replace").strip()
+            if isinstance(raw_status, bytes)
+            else str(raw_status).strip()
+        )
+        if norm_status != "O":
             raise RuntimeError(
-                f"Immutability trigger '{name}' is not in enabled state 'O' (found: {status!r})"
+                f"Immutability trigger '{name}' is not in enabled state 'O' (found: {raw_status!r})"
             )
     return True
 
@@ -247,10 +265,8 @@ class GateFixture:
         canonical_mode: bool = True,
         provenance: str = "nexum_modeled",
     ) -> CreditCard:
-        from datetime import UTC, datetime
-
         resolved_due_day = due_day if payment_due_day is None else payment_due_day
-        now_utc = datetime.now(UTC)
+        now_utc, now_naive = get_fixture_timestamps()
         card = CreditCard(
             id=uuid.uuid4(),
             user_id=self.user.id,
@@ -266,12 +282,45 @@ class GateFixture:
             canonical_activated_at=now_utc if canonical_mode else None,
             provenance=provenance,
             lifecycle_status="active",
-            created_at=now_utc,
+            created_at=now_naive,
             updated_at=now_utc,
         )
         self.session.add(card)
         await self.session.flush()
         return card
+
+    async def add_transaction(
+        self,
+        card_id: uuid.UUID,
+        amount: Decimal,
+        type: str = "purchase",
+        occurred_at: datetime | None = None,
+        debt_partition: str = "canonical",
+        provenance: str = "nexum_modeled",
+        lifecycle_status: str = "posted",
+        currency: str = "COP",
+    ) -> CreditCardTransaction:
+        now_utc, now_naive = get_fixture_timestamps()
+        tx = CreditCardTransaction(
+            id=uuid.uuid4(),
+            user_id=self.user_id,
+            credit_card_id=card_id,
+            type=type,
+            amount=amount,
+            booked_amount=amount,
+            booked_currency=currency,
+            original_amount=amount,
+            original_currency=currency,
+            occurred_at=occurred_at or now_utc,
+            debt_partition=debt_partition,
+            provenance=provenance,
+            lifecycle_status=lifecycle_status,
+            created_at=now_naive,
+            updated_at=now_utc,
+        )
+        self.session.add(tx)
+        await self.session.flush()
+        return tx
 
     async def add_fx_quote(
         self,
@@ -352,153 +401,176 @@ class GateFixture:
     async def cleanup(self):
         errors: list[tuple[str, Exception]] = []
         try:
+            while self.session.in_nested_transaction():
+                await self.session.rollback()
             await self.session.rollback()
         except Exception as exc:
             errors.append(("initial_rollback", exc))
 
         uid = self.user_id
-
-        # Temporarily disable immutability triggers for synthetic test row cleanup
-        await _set_statement_triggers_enabled(self.session, False)
-
-        stages = [
-            (
-                "credit_card_adjustment_allocations",
-                delete(CreditCardAdjustmentAllocation).where(
-                    CreditCardAdjustmentAllocation.adjustment_id.in_(
-                        select(CreditCardAdjustment.id).where(CreditCardAdjustment.user_id == uid)
-                    )
-                ),
-            ),
-            (
-                "credit_card_payment_allocations",
-                delete(CreditCardPaymentAllocation).where(
-                    CreditCardPaymentAllocation.payment_id.in_(
-                        select(CreditCardPayment.id).where(CreditCardPayment.user_id == uid)
-                    )
-                ),
-            ),
-            (
-                "credit_card_statement_components",
-                delete(CreditCardStatementComponent).where(
-                    CreditCardStatementComponent.statement_id.in_(
-                        select(CreditCardStatement.id).where(CreditCardStatement.user_id == uid)
-                    )
-                ),
-            ),
-            (
-                "credit_card_statement_facts",
-                delete(CreditCardStatementFact).where(
-                    CreditCardStatementFact.statement_id.in_(
-                        select(CreditCardStatement.id).where(CreditCardStatement.user_id == uid)
-                    )
-                ),
-            ),
-            (
-                "credit_card_statement_charges",
-                delete(CreditCardStatementCharge).where(
-                    CreditCardStatementCharge.statement_id.in_(
-                        select(CreditCardStatement.id).where(CreditCardStatement.user_id == uid)
-                    )
-                ),
-            ),
-            (
-                "credit_card_adjustments",
-                delete(CreditCardAdjustment).where(CreditCardAdjustment.user_id == uid),
-            ),
-            (
-                "credit_card_payments",
-                delete(CreditCardPayment).where(CreditCardPayment.user_id == uid),
-            ),
-            (
-                "credit_card_early_payments",
-                delete(CreditCardEarlyPayment).where(CreditCardEarlyPayment.user_id == uid),
-            ),
-            (
-                "credit_card_installments",
-                delete(CreditCardInstallment).where(
-                    CreditCardInstallment.credit_card_id.in_(
-                        select(CreditCard.id).where(CreditCard.user_id == uid)
-                    )
-                ),
-            ),
-            (
-                "credit_card_transactions",
-                delete(CreditCardTransaction).where(CreditCardTransaction.user_id == uid),
-            ),
-            (
-                "credit_card_statements",
-                delete(CreditCardStatement).where(CreditCardStatement.user_id == uid),
-            ),
-            (
-                "credit_card_billing_cycles",
-                delete(CreditCardBillingCycle).where(
-                    CreditCardBillingCycle.credit_card_id.in_(
-                        select(CreditCard.id).where(CreditCard.user_id == uid)
-                    )
-                ),
-            ),
-            (
-                "credit_cards",
-                delete(CreditCard).where(CreditCard.user_id == uid),
-            ),
-            (
-                "obligation_auto_payment_runs",
-                delete(ObligationAutoPaymentRun).where(
-                    ObligationAutoPaymentRun.obligation_id.in_(
-                        select(Obligation.id).where(Obligation.user_id == uid)
-                    )
-                ),
-            ),
-            (
-                "obligation_auto_payment_configs",
-                delete(ObligationAutoPaymentConfig).where(
-                    ObligationAutoPaymentConfig.user_id == uid
-                ),
-            ),
-            (
-                "goal_transactions",
-                delete(GoalTransaction).where(GoalTransaction.user_id == uid),
-            ),
-            (
-                "obligation_payments",
-                delete(ObligationPayment).where(ObligationPayment.user_id == uid),
-            ),
-            (
-                "obligation_periods",
-                delete(ObligationPeriod).where(
-                    ObligationPeriod.obligation_id.in_(
-                        select(Obligation.id).where(Obligation.user_id == uid)
-                    )
-                ),
-            ),
-            ("obligations", delete(Obligation).where(Obligation.user_id == uid)),
-            ("financial_events", delete(FinancialEvent).where(FinancialEvent.user_id == uid)),
-            ("goals", delete(Goal).where(Goal.user_id == uid)),
-            ("accounts", delete(Account).where(Account.user_id == uid)),
-            ("fx_quotes", delete(FXQuote).where(FXQuote.user_id == uid)),
-        ]
-        if self.created_exchange_rate_ids:
-            stages.append(
-                (
-                    "exchange_rates",
-                    delete(ExchangeRate).where(
-                        ExchangeRate.id.in_(list(self.created_exchange_rate_ids))
-                    ),
-                )
-            )
-        stages.append(("users", delete(User).where(User.id == uid)))
-
         has_delete_error = False
+
         try:
-            for stage_name, stmt in stages:
-                try:
-                    await self.session.execute(stmt)
-                except Exception as exc:
-                    has_delete_error = True
-                    errors.append((stage_name, exc))
+            # Temporarily disable immutability triggers for synthetic test row cleanup
+            try:
+                await _set_statement_triggers_enabled(self.session, False)
+            except Exception as trg_dis_exc:
+                has_delete_error = True
+                errors.append(("disable_statement_triggers", trg_dis_exc))
+
+            if not has_delete_error:
+                stages = [
+                    (
+                        "credit_card_adjustment_allocations",
+                        delete(CreditCardAdjustmentAllocation).where(
+                            CreditCardAdjustmentAllocation.adjustment_id.in_(
+                                select(CreditCardAdjustment.id).where(
+                                    CreditCardAdjustment.user_id == uid
+                                )
+                            )
+                        ),
+                    ),
+                    (
+                        "credit_card_payment_allocations",
+                        delete(CreditCardPaymentAllocation).where(
+                            CreditCardPaymentAllocation.payment_id.in_(
+                                select(CreditCardPayment.id).where(CreditCardPayment.user_id == uid)
+                            )
+                        ),
+                    ),
+                    (
+                        "credit_card_statement_components",
+                        delete(CreditCardStatementComponent).where(
+                            CreditCardStatementComponent.statement_id.in_(
+                                select(CreditCardStatement.id).where(
+                                    CreditCardStatement.user_id == uid
+                                )
+                            )
+                        ),
+                    ),
+                    (
+                        "credit_card_statement_facts",
+                        delete(CreditCardStatementFact).where(
+                            CreditCardStatementFact.statement_id.in_(
+                                select(CreditCardStatement.id).where(
+                                    CreditCardStatement.user_id == uid
+                                )
+                            )
+                        ),
+                    ),
+                    (
+                        "credit_card_statement_charges",
+                        delete(CreditCardStatementCharge).where(
+                            CreditCardStatementCharge.statement_id.in_(
+                                select(CreditCardStatement.id).where(
+                                    CreditCardStatement.user_id == uid
+                                )
+                            )
+                        ),
+                    ),
+                    (
+                        "credit_card_adjustments",
+                        delete(CreditCardAdjustment).where(CreditCardAdjustment.user_id == uid),
+                    ),
+                    (
+                        "credit_card_payments",
+                        delete(CreditCardPayment).where(CreditCardPayment.user_id == uid),
+                    ),
+                    (
+                        "credit_card_early_payments",
+                        delete(CreditCardEarlyPayment).where(CreditCardEarlyPayment.user_id == uid),
+                    ),
+                    (
+                        "credit_card_installments",
+                        delete(CreditCardInstallment).where(
+                            CreditCardInstallment.credit_card_id.in_(
+                                select(CreditCard.id).where(CreditCard.user_id == uid)
+                            )
+                        ),
+                    ),
+                    (
+                        "credit_card_transactions",
+                        delete(CreditCardTransaction).where(CreditCardTransaction.user_id == uid),
+                    ),
+                    (
+                        "credit_card_statements",
+                        delete(CreditCardStatement).where(CreditCardStatement.user_id == uid),
+                    ),
+                    (
+                        "credit_card_billing_cycles",
+                        delete(CreditCardBillingCycle).where(
+                            CreditCardBillingCycle.credit_card_id.in_(
+                                select(CreditCard.id).where(CreditCard.user_id == uid)
+                            )
+                        ),
+                    ),
+                    (
+                        "credit_cards",
+                        delete(CreditCard).where(CreditCard.user_id == uid),
+                    ),
+                    (
+                        "obligation_auto_payment_runs",
+                        delete(ObligationAutoPaymentRun).where(
+                            ObligationAutoPaymentRun.obligation_id.in_(
+                                select(Obligation.id).where(Obligation.user_id == uid)
+                            )
+                        ),
+                    ),
+                    (
+                        "obligation_auto_payment_configs",
+                        delete(ObligationAutoPaymentConfig).where(
+                            ObligationAutoPaymentConfig.user_id == uid
+                        ),
+                    ),
+                    (
+                        "goal_transactions",
+                        delete(GoalTransaction).where(GoalTransaction.user_id == uid),
+                    ),
+                    (
+                        "obligation_payments",
+                        delete(ObligationPayment).where(ObligationPayment.user_id == uid),
+                    ),
+                    (
+                        "obligation_periods",
+                        delete(ObligationPeriod).where(
+                            ObligationPeriod.obligation_id.in_(
+                                select(Obligation.id).where(Obligation.user_id == uid)
+                            )
+                        ),
+                    ),
+                    ("obligations", delete(Obligation).where(Obligation.user_id == uid)),
+                    ("financial_events", delete(FinancialEvent).where(FinancialEvent.user_id == uid)),
+                    ("goals", delete(Goal).where(Goal.user_id == uid)),
+                    ("accounts", delete(Account).where(Account.user_id == uid)),
+                    ("fx_quotes", delete(FXQuote).where(FXQuote.user_id == uid)),
+                ]
+                if self.created_exchange_rate_ids:
+                    stages.append(
+                        (
+                            "exchange_rates",
+                            delete(ExchangeRate).where(
+                                ExchangeRate.id.in_(list(self.created_exchange_rate_ids))
+                            ),
+                        )
+                    )
+                stages.append(("users", delete(User).where(User.id == uid)))
+
+                for stage_name, stmt in stages:
+                    try:
+                        await self.session.execute(stmt)
+                    except Exception as exc:
+                        has_delete_error = True
+                        errors.append((stage_name, exc))
         finally:
             try:
+                # If delete stages failed or session was in aborted state, roll back before re-enabling triggers
+                if has_delete_error or errors:
+                    try:
+                        while self.session.in_nested_transaction():
+                            await self.session.rollback()
+                        await self.session.rollback()
+                    except Exception as rb_exc:
+                        errors.append(("pre_trigger_restore_rollback", rb_exc))
                 await _set_statement_triggers_enabled(self.session, True)
                 await verify_statement_triggers_enabled(self.session)
             except Exception as trg_exc:
@@ -730,6 +802,8 @@ class GateFixture:
 async def cleanup_all_gate_users(session: AsyncSession):
     errors: list[tuple[str, Exception]] = []
     try:
+        while session.in_nested_transaction():
+            await session.rollback()
         await session.rollback()
     except Exception as exc:
         errors.append(("initial_rollback", exc))
@@ -743,7 +817,6 @@ async def cleanup_all_gate_users(session: AsyncSession):
         uids = []
 
     if uids:
-        await _set_statement_triggers_enabled(session, False)
         stages = [
             (
                 "credit_card_adjustment_allocations",
@@ -874,14 +947,28 @@ async def cleanup_all_gate_users(session: AsyncSession):
 
         has_delete_error = False
         try:
-            for stage_name, delete_stmt in stages:
-                try:
-                    await session.execute(delete_stmt)
-                except Exception as exc:
-                    has_delete_error = True
-                    errors.append((stage_name, exc))
+            try:
+                await _set_statement_triggers_enabled(session, False)
+            except Exception as trg_dis_exc:
+                has_delete_error = True
+                errors.append(("disable_statement_triggers", trg_dis_exc))
+
+            if not has_delete_error:
+                for stage_name, delete_stmt in stages:
+                    try:
+                        await session.execute(delete_stmt)
+                    except Exception as exc:
+                        has_delete_error = True
+                        errors.append((stage_name, exc))
         finally:
             try:
+                if has_delete_error or errors:
+                    try:
+                        while session.in_nested_transaction():
+                            await session.rollback()
+                        await session.rollback()
+                    except Exception as rb_exc:
+                        errors.append(("pre_trigger_restore_rollback", rb_exc))
                 await _set_statement_triggers_enabled(session, True)
                 await verify_statement_triggers_enabled(session)
             except Exception as trg_exc:
@@ -943,6 +1030,8 @@ async def cleanup_all_gate_users(session: AsyncSession):
                         errors.append((f"check_{check_name}", exc))
         else:
             try:
+                while session.in_nested_transaction():
+                    await session.rollback()
                 await session.rollback()
             except Exception as rb_exc:
                 errors.append(("error_rollback", rb_exc))

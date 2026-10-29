@@ -33,11 +33,17 @@ from app.credit.models import (
 )
 from app.credit.repository import CreditCardRepository
 from app.credit.service import CreditCardService
+from tests.unit.postgres_helpers import (
+    GateCleanupError,
+    GateFixture,
+    get_fixture_timestamps,
+    verify_statement_triggers_enabled,
+)
 
 
 def test_credit_card_mapped_constructor_contract():
     """CreditCard accepts all mapped attributes and rejects nonexistent legacy kwargs."""
-    now_utc = datetime.now(UTC)
+    now_utc, now_naive = get_fixture_timestamps()
     card_id = uuid.uuid4()
     user_id = uuid.uuid4()
 
@@ -61,7 +67,7 @@ def test_credit_card_mapped_constructor_contract():
         canonical_activated_at=now_utc,
         provenance="nexum_modeled",
         lifecycle_status="active",
-        created_at=now_utc,
+        created_at=now_naive,
         updated_at=now_utc,
     )
     assert card.id == card_id
@@ -215,6 +221,7 @@ def test_credit_card_statement_fact_mapped_constructor_contract():
 
 def test_credit_card_transaction_mapped_constructor_contract():
     """CreditCardTransaction accepts type and credit_card_id, rejecting card_id and transaction_type."""
+    now_utc, now_naive = get_fixture_timestamps()
     tx = CreditCardTransaction(
         id=uuid.uuid4(),
         user_id=uuid.uuid4(),
@@ -225,7 +232,7 @@ def test_credit_card_transaction_mapped_constructor_contract():
         installments_paid=0,
         monthly_amount=Decimal("100000.00"),
         interest_amount=Decimal("0.00"),
-        occurred_at=datetime.now(UTC),
+        occurred_at=now_utc,
         source="manual",
         original_amount=Decimal("100000.00"),
         original_currency="COP",
@@ -235,8 +242,8 @@ def test_credit_card_transaction_mapped_constructor_contract():
         lifecycle_status="posted",
         provenance="nexum_modeled",
         debt_partition="canonical",
-        created_at=datetime.now(UTC),
-        updated_at=datetime.now(UTC),
+        created_at=now_naive,
+        updated_at=now_utc,
     )
     assert tx.type == "purchase"
     assert tx.credit_card_id is not None
@@ -738,3 +745,185 @@ def test_debt_partitioning_financial_conservation_pure_logic():
     assert res_c["canonical_debt"] == Decimal("110000.00")
     assert res_c["legacy_debt"] == Decimal("0.00")
     assert res_c["total_debt"] == Decimal("110000.00")
+
+
+def test_credit_domain_models_timezone_column_contracts():
+    """Historical timestamp columns must be naive DateTime; canonical columns must be aware timestamptz."""
+    from sqlalchemy import inspect
+    from sqlalchemy.types import DateTime
+
+    card_mapper = inspect(CreditCard)
+    assert card_mapper.columns["created_at"].type.timezone is False
+    assert card_mapper.columns["updated_at"].type.timezone is True
+    assert card_mapper.columns["canonical_activated_at"].type.timezone is True
+
+    tx_mapper = inspect(CreditCardTransaction)
+    assert tx_mapper.columns["created_at"].type.timezone is False
+    assert tx_mapper.columns["occurred_at"].type.timezone is True
+    assert tx_mapper.columns["updated_at"].type.timezone is True
+
+    # Canonical models require DateTime(timezone=True) exclusively
+    for model_cls in [
+        CreditCardInstallment,
+        CreditCardStatement,
+        CreditCardBillingCycle,
+        CreditCardEarlyPayment,
+        CreditCardStatementCharge,
+        CreditCardStatementComponent,
+        CreditCardStatementFact,
+        CreditCardPayment,
+        CreditCardPaymentAllocation,
+        CreditCardAdjustment,
+        CreditCardAdjustmentAllocation,
+    ]:
+        mapper = inspect(model_cls)
+        for col in mapper.columns:
+            if isinstance(col.type, DateTime):
+                assert (
+                    col.type.timezone is True
+                ), f"{model_cls.__name__}.{col.name} must be timezone-aware DateTime(timezone=True)"
+
+
+@pytest.mark.asyncio
+async def test_gate_fixture_factory_timestamps_and_entities_contract():
+    """GateFixture factory produces naive timestamps for historical columns and aware for timestamptz."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    now_utc, now_naive = get_fixture_timestamps()
+    assert now_utc.tzinfo is not None
+    assert now_naive.tzinfo is None
+    assert now_naive == now_utc.replace(tzinfo=None)
+
+    mock_session = AsyncMock()
+    mock_session.add = MagicMock()
+    mock_session.flush = AsyncMock()
+
+    fixture = GateFixture(mock_session)
+    card = await fixture.add_credit_card(currency="COP", canonical_mode=True)
+
+    assert card.created_at.tzinfo is None, "CreditCard.created_at must be offset-naive UTC"
+    assert card.updated_at.tzinfo is not None, "CreditCard.updated_at must be offset-aware UTC"
+    assert (
+        card.canonical_activated_at.tzinfo is not None
+    ), "CreditCard.canonical_activated_at must be offset-aware UTC"
+
+    tx = await fixture.add_transaction(card.id, Decimal("100000.00"), type="purchase")
+    assert tx.created_at.tzinfo is None, "CreditCardTransaction.created_at must be offset-naive UTC"
+    assert tx.occurred_at.tzinfo is not None, "CreditCardTransaction.occurred_at must be aware UTC"
+    assert tx.updated_at.tzinfo is not None, "CreditCardTransaction.updated_at must be aware UTC"
+
+
+@pytest.mark.asyncio
+async def test_verify_statement_triggers_enabled_contract():
+    """verify_statement_triggers_enabled accepts str ('O') and bytes (b'O'), rejecting disabled fail-closed."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    session = AsyncMock()
+
+    # Case A: Driver returns bytes b'O'
+    result_bytes = MagicMock()
+    result_bytes.all.return_value = [
+        ("trg_cc_statements_immutable", b"O"),
+        ("trg_cc_stmt_comp_immutable", b"O"),
+    ]
+    session.execute.return_value = result_bytes
+    assert await verify_statement_triggers_enabled(session) is True
+
+    # Case B: Driver returns str 'O'
+    result_str = MagicMock()
+    result_str.all.return_value = [
+        ("trg_cc_statements_immutable", "O"),
+        ("trg_cc_stmt_comp_immutable", "O"),
+    ]
+    session.execute.return_value = result_str
+    assert await verify_statement_triggers_enabled(session) is True
+
+    # Case C: Disabled trigger b'D' fails closed
+    result_disabled = MagicMock()
+    result_disabled.all.return_value = [
+        ("trg_cc_statements_immutable", b"D"),
+        ("trg_cc_stmt_comp_immutable", b"O"),
+    ]
+    session.execute.return_value = result_disabled
+    with pytest.raises(RuntimeError, match="not in enabled state 'O'"):
+        await verify_statement_triggers_enabled(session)
+
+    # Case D: Missing trigger fails closed
+    result_missing = MagicMock()
+    result_missing.all.return_value = [
+        ("trg_cc_statements_immutable", b"O"),
+    ]
+    session.execute.return_value = result_missing
+    with pytest.raises(RuntimeError, match="Missing expected immutability triggers"):
+        await verify_statement_triggers_enabled(session)
+
+
+@pytest.mark.asyncio
+async def test_gate_fixture_cleanup_safely_recovers_from_aborted_session():
+    """GateFixture cleanup rolls back before trigger restoration, recovering from aborted sessions without masking errors."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    session = AsyncMock()
+    nested_states = [True, False]
+
+    def mock_in_nested():
+        if nested_states:
+            return nested_states.pop(0)
+        return False
+
+    session.in_nested_transaction = MagicMock(side_effect=mock_in_nested)
+    session.rollback = AsyncMock()
+
+    # Case A: Clean cleanup with successful stages
+    session.execute = AsyncMock()
+    # Trigger verification returns enabled
+    result_triggers = MagicMock()
+    result_triggers.all.return_value = [
+        ("trg_cc_statements_immutable", b"O"),
+        ("trg_cc_stmt_comp_immutable", b"O"),
+    ]
+    # Residue checks return 0
+    result_residue = MagicMock()
+    result_residue.scalar_one.return_value = 0
+
+    def mock_execute(stmt, *args, **kwargs):
+        stmt_str = str(stmt)
+        if "pg_trigger" in stmt_str:
+            return result_triggers
+        return result_residue
+
+    session.execute.side_effect = mock_execute
+
+    fixture = GateFixture(session)
+    await fixture.cleanup()
+    # initial_rollback and nested rollbacks executed
+    assert session.rollback.await_count >= 1
+
+    # Case B: Delete stage failure rolls back before trigger restoration and raises GateCleanupError
+    session_b = AsyncMock()
+    session_b.in_nested_transaction = MagicMock(return_value=False)
+    session_b.rollback = AsyncMock()
+
+    call_count = 0
+
+    def mock_execute_with_failure(stmt, *args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        stmt_str = str(stmt)
+        if "pg_trigger" in stmt_str:
+            return result_triggers
+        if "credit_card_adjustment_allocations" in stmt_str:
+            raise RuntimeError("Simulated foreign key delete lock timeout")
+        return result_residue
+
+    session_b.execute.side_effect = mock_execute_with_failure
+
+    fixture_b = GateFixture(session_b)
+    with pytest.raises(GateCleanupError) as exc_info:
+        await fixture_b.cleanup()
+
+    assert any(
+        stage == "credit_card_adjustment_allocations" for stage, _ in exc_info.value.errors
+    ), "Stage failure must be preserved in GateCleanupError"
+    # pre_trigger_restore_rollback was called before trigger restoration
+    assert session_b.rollback.await_count >= 2
