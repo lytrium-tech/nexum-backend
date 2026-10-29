@@ -24,6 +24,7 @@ from decimal import Decimal
 from urllib.parse import urlsplit
 
 import pytest
+import pytest_asyncio
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import func, select, text
@@ -74,6 +75,9 @@ EXPECTED_USER = "nexum_release_gate_test"
 SAFE_TUNNEL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 EXPECTED_TUNNEL_PORT = 5433
 GATE_OPT_IN = "NEXUM_ALLOW_DESTRUCTIVE_TEST_DB"
+
+# The session-scoped async engine must remain bound to one loop on Windows/Python 3.14.
+pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 
 def get_db_url() -> str:
@@ -139,9 +143,13 @@ def db_url() -> str:
     return check_guards()
 
 
-@pytest.fixture(scope="session")
-def engine(db_url: str) -> AsyncEngine:
-    return create_async_engine(db_url, echo=False, pool_pre_ping=True)
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def engine(db_url: str) -> AsyncGenerator[AsyncEngine]:
+    engine = create_async_engine(db_url, echo=False, pool_pre_ping=True)
+    try:
+        yield engine
+    finally:
+        await engine.dispose()
 
 
 @pytest.fixture
@@ -161,13 +169,9 @@ async def fixture(session: AsyncSession) -> AsyncGenerator[GateFixture]:
 
 @pytest.fixture
 def static_fx() -> StaticFxRateProvider:
-    provider = StaticFxRateProvider()
-    provider.set_rate("USD", "COP", Decimal("4000.00"))
-    provider.set_rate("COP", "USD", Decimal("0.00025"))
-    provider.set_rate("EUR", "COP", Decimal("4300.00"))
-    provider.set_rate("COP", "COP", Decimal("1.00"))
-    provider.set_rate("USD", "USD", Decimal("1.00"))
-    return provider
+    return StaticFxRateProvider(
+        {"USD_COP": Decimal("4000.00"), "EUR_COP": Decimal("4300.00")}
+    )
 
 
 # ==============================================================================
