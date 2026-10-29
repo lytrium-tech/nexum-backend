@@ -8,7 +8,7 @@ Validates that:
 4. A fresh empty database (current_rev=None) resolves an upgrade path to HEAD starting
    with 'v1_5_baseline'.
 5. Upgrading from prior production-compatible head ('obligations_v1_7_auto_payments') to HEAD
-   ('credit_v2_canonical_closure') executes Credit V2 migrations linearly, and downgrading resolves back.
+   ('credit_v2_refund_type') executes Credit V2 migrations linearly, and downgrading resolves back.
 """
 
 from alembic.config import Config
@@ -24,10 +24,10 @@ def test_alembic_lineage_tree_root_and_head():
     """Verify that Alembic lineage forms a single linear DAG with v1_5_baseline as base."""
     script_dir = get_script_directory()
 
-    # Head must be credit_v2_canonical_closure
+    # Head must be credit_v2_refund_type
     heads = script_dir.get_heads()
     assert len(heads) == 1
-    assert heads[0] == "credit_v2_canonical_closure"
+    assert heads[0] == "credit_v2_refund_type"
 
     # Bases must be exactly v1_5_baseline
     bases = script_dir.get_bases()
@@ -70,6 +70,7 @@ def test_historical_revision_upgrades_to_head_without_executing_baseline():
         "credit_v2_canonical_schema",
         "credit_v2_canonical_check",
         "credit_v2_canonical_closure",
+        "credit_v2_refund_type",
     ]
     assert upgrade_revisions == expected_sequence
 
@@ -87,8 +88,8 @@ def test_fresh_empty_database_includes_v1_5_baseline_in_upgrade_path():
     # Full chain starting from v1_5_baseline up to head
     assert all_revisions[0] == "v1_5_baseline"
     assert all_revisions[1] == "v1_7_phase2_1"
-    assert all_revisions[-1] == "credit_v2_canonical_closure"
-    assert len(all_revisions) == 13
+    assert all_revisions[-1] == "credit_v2_refund_type"
+    assert len(all_revisions) == 14
 
 
 def test_prior_head_to_new_head_upgrade_and_downgrade_resolution():
@@ -107,14 +108,16 @@ def test_prior_head_to_new_head_upgrade_and_downgrade_resolution():
         "credit_v2_canonical_schema",
         "credit_v2_canonical_check",
         "credit_v2_canonical_closure",
+        "credit_v2_refund_type",
     ]
 
     # Downgrade step resolution back to prior head
     down_steps = script_dir._downgrade_revs(
-        destination="obligations_v1_7_auto_payments", current_rev="credit_v2_canonical_closure"
+        destination="obligations_v1_7_auto_payments", current_rev="credit_v2_refund_type"
     )
     downgrade_revisions = [step.revision.revision for step in down_steps]
     assert downgrade_revisions == [
+        "credit_v2_refund_type",
         "credit_v2_canonical_closure",
         "credit_v2_canonical_check",
         "credit_v2_canonical_schema",

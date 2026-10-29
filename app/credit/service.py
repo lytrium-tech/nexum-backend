@@ -18,6 +18,7 @@ from app.credit.exceptions import (
     CreditCardInactiveError,
     CreditCardNotFoundError,
     CreditDomainError,
+    CreditFXRateUnavailableError,
     CreditGoalReservationBreachError,
     CreditIdempotencyConflictError,
     CreditLifecycleInvalidityError,
@@ -105,6 +106,39 @@ class CreditCardService:
                 as_of = as_of.replace(tzinfo=UTC)
             return financial_date(as_of)
         return as_of
+
+    async def _get_fx_info(
+        self, source_currency: str, target_currency: str, *, persist_snapshot: bool
+    ) -> dict:
+        fx_service = FXService(
+            provider=self.fx_provider,
+            session=self.session if persist_snapshot else None,
+        )
+        try:
+            if persist_snapshot:
+                snapshot = await fx_service.get_rate_snapshot(
+                    source_currency, target_currency, commit=False
+                )
+                return {
+                    "fx_rate": snapshot.rate,
+                    "rate_source": snapshot.source,
+                    "rate_timestamp": snapshot.retrieved_at,
+                    "fx_rate_snapshot_id": snapshot.id,
+                    "from_currency": source_currency.upper(),
+                    "to_currency": target_currency.upper(),
+                }
+
+            latest = await fx_service.get_latest_rate(source_currency, target_currency)
+            return {
+                "fx_rate": latest.rates[target_currency.upper()],
+                "rate_source": latest.provider,
+                "rate_timestamp": latest.fetched_at,
+                "fx_rate_snapshot_id": None,
+                "from_currency": source_currency.upper(),
+                "to_currency": target_currency.upper(),
+            }
+        except (ValidationError, httpx.HTTPError, ValueError, InvalidOperation) as exc:
+            raise CreditFXRateUnavailableError() from exc
 
     def _data_quality(self) -> dict[str, str]:
         return {
@@ -1332,20 +1366,9 @@ class CreditCardService:
         acc_curr = source_currency
         card_curr = getattr(temp_card, "currency", None)
         if isinstance(acc_curr, str) and isinstance(card_curr, str) and acc_curr != card_curr:
-            from app.core.currency import FXProviderError, UnsupportedCurrencyError, get_fx_rate
-
-            try:
-                pre_fx_info = await get_fx_rate(acc_curr, card_curr)
-                pre_fx_info["from_currency"] = acc_curr
-                pre_fx_info["to_currency"] = card_curr
-            except UnsupportedCurrencyError as e:
-                from app.credit.exceptions import CreditUnsupportedCurrencyError
-
-                raise CreditUnsupportedCurrencyError(message=str(e))
-            except FXProviderError:
-                from app.credit.exceptions import CreditFXRateUnavailableError
-
-                raise CreditFXRateUnavailableError(message="FX provider error")
+            pre_fx_info = await self._get_fx_info(
+                acc_curr, card_curr, persist_snapshot=True
+            )
 
         # 3. GLOBAL LOCK ORDER: Account -> CreditCard -> Debt components (F-14)
         account = await self.account_repo.get_by_id_for_update(payload.account_id)
@@ -1392,6 +1415,7 @@ class CreditCardService:
             fx_rate = pre_fx_info["fx_rate"]
             rate_source = pre_fx_info["rate_source"]
             rate_timestamp = pre_fx_info["rate_timestamp"]
+            fx_rate_snapshot_id = pre_fx_info["fx_rate_snapshot_id"]
             is_estimated = True
             source_amount = payload.amount
             applied_amount = round_to_minimum_unit(payload.amount * fx_rate, target_currency)
@@ -1519,6 +1543,8 @@ class CreditCardService:
             account_id=payload.account_id,
             event_id=event.id,
             occurred_at=self._get_financial_date(),
+            fx_rate=fx_rate if is_estimated else None,
+            fx_rate_snapshot_id=fx_rate_snapshot_id if is_estimated else None,
             lifecycle_status="posted",
             provenance=PROVENANCE_NEXUM_MODELED,
             debt_partition=getattr(card, "debt_partition", None) or DEBT_PARTITION_CANONICAL,
@@ -1530,6 +1556,9 @@ class CreditCardService:
                 "fx_rate": str(fx_rate),
                 "rate_source": rate_source,
                 "rate_timestamp": rate_timestamp.isoformat() if rate_timestamp else None,
+                "fx_rate_snapshot_id": str(fx_rate_snapshot_id)
+                if is_estimated
+                else None,
                 "is_estimated": is_estimated,
             },
         )
@@ -1561,6 +1590,7 @@ class CreditCardService:
             source_amount=source_amount,
             source_currency=source_currency,
             fx_rate=fx_rate if is_estimated else None,
+            fx_rate_snapshot_id=fx_rate_snapshot_id if is_estimated else None,
             principal_applied=Decimal("0.00"),
             interest_applied=Decimal("0.00"),
             fee_applied=Decimal("0.00"),
@@ -1670,20 +1700,9 @@ class CreditCardService:
         acc_curr = source_currency
         card_curr = getattr(temp_card, "currency", None)
         if isinstance(acc_curr, str) and isinstance(card_curr, str) and acc_curr != card_curr:
-            from app.core.currency import FXProviderError, UnsupportedCurrencyError, get_fx_rate
-
-            try:
-                pre_fx_info = await get_fx_rate(acc_curr, card_curr)
-                pre_fx_info["from_currency"] = acc_curr
-                pre_fx_info["to_currency"] = card_curr
-            except UnsupportedCurrencyError as e:
-                from app.credit.exceptions import CreditUnsupportedCurrencyError
-
-                raise CreditUnsupportedCurrencyError(message=str(e))
-            except FXProviderError:
-                from app.credit.exceptions import CreditFXRateUnavailableError
-
-                raise CreditFXRateUnavailableError(message="FX provider error")
+            pre_fx_info = await self._get_fx_info(
+                acc_curr, card_curr, persist_snapshot=True
+            )
 
         # 3. GLOBAL LOCK ORDER: Account -> CreditCard -> Target installments (F-14)
         account = await self.account_repo.get_by_id_for_update(payload.account_id)
@@ -1776,6 +1795,7 @@ class CreditCardService:
             fx_rate = pre_fx_info["fx_rate"]
             rate_source = pre_fx_info["rate_source"]
             rate_timestamp = pre_fx_info["rate_timestamp"]
+            fx_rate_snapshot_id = pre_fx_info["fx_rate_snapshot_id"]
             is_estimated = True
 
         if payload.amount is None:
@@ -1856,6 +1876,8 @@ class CreditCardService:
             account_id=payload.account_id,
             event_id=event.id,
             occurred_at=self._get_financial_date(),
+            fx_rate=fx_rate if is_estimated else None,
+            fx_rate_snapshot_id=fx_rate_snapshot_id if is_estimated else None,
             lifecycle_status="posted",
             provenance=PROVENANCE_NEXUM_MODELED,
             debt_partition=getattr(card, "debt_partition", None) or DEBT_PARTITION_CANONICAL,
@@ -1868,6 +1890,9 @@ class CreditCardService:
                 "fx_rate": str(fx_rate),
                 "rate_source": rate_source,
                 "rate_timestamp": rate_timestamp.isoformat() if rate_timestamp else None,
+                "fx_rate_snapshot_id": str(fx_rate_snapshot_id)
+                if is_estimated
+                else None,
                 "is_estimated": is_estimated,
             },
         )
@@ -1889,6 +1914,7 @@ class CreditCardService:
         fp_hash = hash_credit_fingerprint(fp)
 
         payment = CreditCardPayment(
+            id=uuid.uuid4(),
             user_id=user_id,
             credit_card_id=card.id,
             account_id=payload.account_id,
@@ -1899,6 +1925,7 @@ class CreditCardService:
             source_amount=source_amount,
             source_currency=source_currency,
             fx_rate=fx_rate if is_estimated else None,
+            fx_rate_snapshot_id=fx_rate_snapshot_id if is_estimated else None,
             principal_applied=applied_amount,
             interest_applied=Decimal("0.00"),
             fee_applied=Decimal("0.00"),
@@ -1910,7 +1937,6 @@ class CreditCardService:
             command_id=cmd_uuid,
             command_fingerprint=fp_hash,
         )
-        await self.repo.add_payment(payment)
 
         # 9. Create Payment Allocations for the purchase's installments (F-19)
         rem_alloc = applied_amount
@@ -1961,6 +1987,7 @@ class CreditCardService:
                 == a.allocated_amount
             )
 
+        await self.repo.add_payment(payment)
         await self.repo.add_payment_allocations(allocations)
 
         # 10. Legacy CreditCardEarlyPayment row for compatibility
@@ -2065,15 +2092,9 @@ class CreditCardService:
             rate_source = "internal"
             is_estimated = False
         else:
-            from app.core.currency import FXProviderError, UnsupportedCurrencyError, get_fx_rate
-            from app.core.errors import ForbiddenError, FXProviderUnavailableError
-
-            try:
-                fx_info = await get_fx_rate(source_currency, target_currency)
-            except UnsupportedCurrencyError as e:
-                raise ForbiddenError(message=str(e))
-            except FXProviderError:
-                raise FXProviderUnavailableError()
+            fx_info = await self._get_fx_info(
+                source_currency, target_currency, persist_snapshot=False
+            )
 
             fx_rate = fx_info["fx_rate"]
             rate_source = fx_info["rate_source"]

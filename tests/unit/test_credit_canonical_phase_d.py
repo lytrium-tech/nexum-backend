@@ -76,6 +76,7 @@ from app.credit.schemas import (
     CreditCardPaymentCreate,
 )
 from app.credit.service import CreditCardService
+from app.fx.provider import StaticFxRateProvider
 from app.ledger.models import FinancialEvent
 from app.ledger.schemas import LedgerEventResult
 
@@ -655,7 +656,8 @@ class TestGlobalLockOrderF14:
         assert ctx.lock_trace[2] == ("installments_tx_update", tx_id)
 
     async def test_preview_is_strictly_read_only(self):
-        ctx = PhaseDTestContext()
+        ctx = PhaseDTestContext(account_currency="USD", card_currency="COP")
+        ctx.service.fx_provider = StaticFxRateProvider({"USD_COP": Decimal("4000.00")})
         tx_id = uuid.uuid4()
         ctx.installments.append(
             CreditCardInstallment(
@@ -692,7 +694,8 @@ class TestGlobalLockOrderF14:
         preview = await ctx.service.preview_early_payment(ctx.user_id, ctx.card.id, tx_id, payload)
 
         assert preview.source_amount == Decimal("100.00")
-        assert preview.target_amount == Decimal("100.00")
+        assert preview.target_amount == Decimal("400000.00")
+        assert preview.is_estimated is True
         # Assert NO locks were acquired
         assert len(ctx.lock_trace) == 0
         # Assert NO objects were added to session
@@ -1048,15 +1051,7 @@ class TestCrossCurrencyPayments:
         # Account in USD, Card in COP
         ctx = PhaseDTestContext(account_currency="USD", card_currency="COP")
 
-        # Mock get_fx_rate to return 4,000 COP per USD
-        async def mock_fx(source, target):
-            return {
-                "fx_rate": Decimal("4000.00"),
-                "rate_source": "banrep",
-                "rate_timestamp": datetime.now(UTC),
-            }
-
-        monkeypatch.setattr("app.core.currency.get_fx_rate", mock_fx)
+        ctx.service.fx_provider = StaticFxRateProvider({"USD_COP": Decimal("4000.00")})
 
         # 40,000 COP debt
         ctx.installments.append(
@@ -1098,6 +1093,8 @@ class TestCrossCurrencyPayments:
         assert payment.source_currency == "USD"
         assert payment.booked_amount == Decimal("40000.00")
         assert payment.booked_currency == "COP"
+        assert payment.fx_rate == Decimal("4000.00000000")
+        assert payment.fx_rate_snapshot_id is not None
 
         # Allocation conservation on card
         assert sum(a.allocated_amount for a in ctx.allocations) == Decimal("40000.00")
@@ -2196,17 +2193,12 @@ class TestCodexRequirements:
     async def test_item3_external_fx_under_locks_rejected_without_provider_call(self, monkeypatch):
         """Codex Item 3: If FX quote is missing or drifted under locks, raise stable error without external provider call."""
         ctx = PhaseDTestContext(account_currency="USD", card_currency="COP")
-        mock_get_fx = AsyncMock(
-            return_value={
-                "fx_rate": Decimal("4000.00"),
-                "rate_source": "test_provider",
-                "rate_timestamp": datetime.now(UTC),
-            }
-        )
+        mock_get_fx = AsyncMock(return_value=Decimal("4000.00"))
 
-        import app.core.currency
+        class MockFxProvider:
+            get_rate = mock_get_fx
 
-        monkeypatch.setattr(app.core.currency, "get_fx_rate", mock_get_fx)
+        ctx.service.fx_provider = MockFxProvider()
 
         inst = CreditCardInstallment(
             id=uuid.uuid4(),

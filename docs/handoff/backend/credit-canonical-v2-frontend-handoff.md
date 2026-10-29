@@ -3,7 +3,7 @@
 > [!IMPORTANT]
 > **Operational Status & Scope Notice:**
 > - **Frontend Status:** The frontend codebase remains **completely unchanged**; frontend QA, client component migration, and UI updates have **not yet begun**.
-> - **Backend Status:** The backend Credit Domain canonical closure implementation is fully completed, schema-migrated, and unit/service verified. Physical PostgreSQL 17 contention gate certification on CT101 is scheduled for Phase F.
+> - **Backend Status:** Implementation and physical PostgreSQL 17 verification are complete and the final evidence report is available at `docs/agent/reports/credit-domain-goal2-physical-release-gate-report.md`. This is a backend handoff contract; Founder GO/NO-GO for Frontend Sync + QA is still pending. Do not begin frontend work before that decision.
 > - **API Path:** The canonical path is strictly `/api/v1/credit`. There is **no `/v2` API version prefix**; canonical closure is an internal architectural closure under the established `/api/v1/credit` route tree.
 > - **Scope:** Revolving credit cards only. Fixed-schedule loans and obligations are governed strictly by `/api/v1.7/obligations`.
 > - **Alpha Environment Reality:** In Alpha, external bank integrations do not exist. All credit cards in the database are user-created (`provenance: "manual"` or `"manual_input"`). All credit limits, transaction records, and payments originate from manual input; statement generation, cycle cutoffs, and waterfall allocations are Nexum-modeled projections (`provenance: "nexum_modeled"`). Bank-authoritative facts (`provenance: "issuer_authoritative"`) are architected into the data model and schema contracts but are not claimed as existing in Alpha.
@@ -148,7 +148,8 @@ Returns `CreditSummaryRead`:
   - `original_amount` & `original_currency`: Merchant transaction amount and currency (e.g. 120.00 USD).
   - `currency`: Optional card currency assertion (e.g. "COP"). It asserts the client's expected card booked currency and must match the card's currency. It does **not** allow the client to dictate the converted booked amount or exchange rate.
   - Converted booked amount: The client never supplies `booked_amount` (not an input field) or a conflicting `amount`. The backend authoritative `FXService` derives `booked_amount` and exchange rate snapshot during execution.
-- Single-currency legacy compatibility: For purchases in the same currency as the card, providing `amount` books directly in card currency (`amount` is marked deprecated).
+- Legacy `amount` retains its historical meaning: it is the booked amount in the card's base currency. It is never reinterpreted as the foreign original amount. For same-currency requests, `original_amount == booked_amount` naturally. For cross-currency requests, use `original_amount` + `original_currency`; response `booked_amount` + `booked_currency` are the backend conversion result.
+- `amount` remains as a deprecated response alias for booked/base-currency amount for old clients. Do not send `amount` as a cross-currency purchase input when backend FX applies.
 - Rejects with `credit_limit_exceeded` (409) if purchase exceeds available credit line.
 - Purchases transacted after the card's `cutoff_day` deterministically schedule their first installment into the *subsequent* billing cycle.
 - Single-installment purchases (`installments_total = 1`) incur **$0.00 interest**. Flat interest formula has been eliminated.
@@ -195,7 +196,7 @@ Returns `CreditSummaryRead`:
 - Rejects with `credit_goal_reservation_breach` (409) if `amount > account.balance - calculate_reserved_by_account(...)`.
 - Rejects with `insufficient_funds` (409) if account nominal balance is lower than `amount`.
 - Rejects with `credit_payment_amount_invalid` (400) if payment exceeds total outstanding payable debt (voluntary overpayment beyond total debt is blocked).
-- Waterfall applies in deterministic order: (1) past-due statement charges, (2) past-due installment principal, (3) current period statement charges, (4) current period installment principal, (5) future multi-installment principal.
+- For manual cards Nexum models allocations deterministically in this order: (1) overdue/past-due components, (2) currently due closed-statement components, (3) current assessed components and principal by explicit priority, then (4) future principal ordered by due date, purchase chronology, and stable UUID. This is Nexum's neutral simulation policy, not a universal issuer rule. Future issuer-authoritative allocations can be recorded separately without replacing the historical Nexum-modeled allocations.
 
 - **Response Body (`CreditCardPaymentResult`):**
 ```json
@@ -210,6 +211,8 @@ Returns `CreditSummaryRead`:
 }
 ```
 *Crucial Contract Note:* `CreditCardPaymentResult` **does NOT return an allocations array**. Allocations are persisted internally in the database table `credit_card_payment_allocations`.
+
+Every `amount` on payment requests/responses is in the funding Account's currency. Payment records expose source and booked amounts/currencies separately; persisted FX snapshot evidence identifies modeled conversions.
 
 ---
 

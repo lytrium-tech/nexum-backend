@@ -36,7 +36,6 @@ from app.accounts.models import Account
 from app.accounts.repository import AccountRepository
 from app.credit.closure_service import CreditCycleClosureService
 from app.credit.exceptions import (
-    CreditDomainError,
     CreditGoalReservationBreachError,
     CreditIdempotencyConflictError,
     CreditLimitExceededError,
@@ -75,10 +74,6 @@ EXPECTED_USER = "nexum_release_gate_test"
 SAFE_TUNNEL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 EXPECTED_TUNNEL_PORT = 5433
 GATE_OPT_IN = "NEXUM_ALLOW_DESTRUCTIVE_TEST_DB"
-
-# The session-scoped async engine must remain bound to one loop on Windows/Python 3.14.
-pytestmark = pytest.mark.asyncio(loop_scope="session")
-
 
 def get_db_url() -> str:
     """Return verified test database URL or skip if absent."""
@@ -169,9 +164,7 @@ async def fixture(session: AsyncSession) -> AsyncGenerator[GateFixture]:
 
 @pytest.fixture
 def static_fx() -> StaticFxRateProvider:
-    return StaticFxRateProvider(
-        {"USD_COP": Decimal("4000.00"), "EUR_COP": Decimal("4300.00")}
-    )
+    return StaticFxRateProvider({"USD_COP": Decimal("4000.00"), "EUR_COP": Decimal("4300.00")})
 
 
 # ==============================================================================
@@ -180,13 +173,13 @@ def static_fx() -> StaticFxRateProvider:
 
 
 def test_pg01_alembic_linear_head_graph():
-    """Verify linear Alembic migration graph ending at final head credit_v2_canonical_closure."""
+    """Verify linear Alembic migration graph ending at final head credit_v2_refund_type."""
     cfg = Config("alembic.ini")
     script = ScriptDirectory.from_config(cfg)
     heads = script.get_heads()
 
     assert len(heads) == 1, f"Expected single linear migration HEAD, found multiple: {heads}"
-    assert heads[0] == "credit_v2_canonical_closure", f"Unexpected migration head: {heads[0]}"
+    assert heads[0] == "credit_v2_refund_type", f"Unexpected migration head: {heads[0]}"
 
     revisions = list(script.walk_revisions(base="base", head="heads"))
     rev_map = {r.revision: r for r in revisions}
@@ -195,8 +188,10 @@ def test_pg01_alembic_linear_head_graph():
     assert "credit_v2_canonical_schema" in rev_map
     assert "credit_v2_canonical_check" in rev_map
     assert "credit_v2_canonical_closure" in rev_map
+    assert "credit_v2_refund_type" in rev_map
 
     assert rev_map["credit_v2_canonical_closure"].down_revision == "credit_v2_canonical_check"
+    assert rev_map["credit_v2_refund_type"].down_revision == "credit_v2_canonical_closure"
     assert rev_map["credit_v2_canonical_check"].down_revision == "credit_v2_canonical_schema"
     assert rev_map["credit_v2_canonical_schema"].down_revision == "obligations_v1_7_auto_payments"
 
@@ -293,7 +288,12 @@ async def test_pg03a_cycle_assignment_and_bogota_cutoff_boundary(
     session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
 ):
     """Purchases on or before cutoff belong to current cycle; purchases after cutoff belong to next cycle."""
-    card = await fixture.add_credit_card(cutoff_day=15, due_day=5, currency="COP")
+    card = await fixture.add_credit_card(
+        cutoff_day=15,
+        due_day=5,
+        currency="COP",
+        canonical_activated_at=datetime(2026, 10, 1, 0, 0, tzinfo=UTC),
+    )
     service = CreditCardService(session, fx_provider=static_fx)
 
     # 1. Purchase on cutoff day in America/Bogota (2026-10-15 12:00 UTC = 2026-10-15 07:00 Bogota)
@@ -397,13 +397,11 @@ async def test_pg03b_statement_exactly_once_partial_unique_index(
         created_at=now_utc,
         updated_at=now_utc,
     )
-    session.add(stmt2)
-
     with pytest.raises(IntegrityError) as exc_info:
         async with session.begin_nested():
+            session.add(stmt2)
             await session.flush()
 
-    session.expunge(stmt2)
     assert "uq_cc_statements_canonical_cycle_id" in str(exc_info.value).lower()
 
 
@@ -412,7 +410,12 @@ async def test_pg03c_bounded_catchup_repeated_progression(
     session: AsyncSession, fixture: GateFixture
 ):
     """CreditCycleClosureService advances catch-up deterministically across repeated bounded invocations."""
-    card = await fixture.add_credit_card(currency="COP", cutoff_day=15, due_day=5)
+    card = await fixture.add_credit_card(
+        currency="COP",
+        cutoff_day=15,
+        due_day=5,
+        canonical_activated_at=datetime(2026, 7, 16, 5, 0, tzinfo=UTC),
+    )
     now_utc = datetime.now(UTC)
 
     # Insert two open cycles that have passed cutoff
@@ -706,19 +709,63 @@ async def test_pg04c_voluntary_overpayment_rejection(
     await service.create_purchase(fixture.user_id, card.id, purchase, command_id=cmd_p)
     await session.commit()
 
+    card_id = card.id
+    account_id = fixture.account.id
+    user_id = fixture.user_id
+
     # Attempt to pay 150,000 COP against 100,000 COP debt
     cmd_overpay = uuid.uuid4()
     pmt = CreditCardPaymentCreate(
-        account_id=fixture.account.id,
+        account_id=account_id,
         amount=Decimal("150000.00"),
     )
-    with pytest.raises((InvalidPaymentAmountError, CreditDomainError, Exception)):
-        await service.create_payment(fixture.user_id, card.id, pmt, command_id=cmd_overpay)
+    with pytest.raises(InvalidPaymentAmountError):
+        await service.create_payment(user_id, card_id, pmt, command_id=cmd_overpay)
 
     await session.rollback()
-    acc = await session.get(Account, fixture.account.id)
+    acc = await session.get(Account, account_id)
+    assert acc is not None
     assert acc.balance == Decimal("2000000.00")
 
+    # Verify zero CreditCardPayment rows for this command or card
+    payments = (
+        (
+            await session.execute(
+                select(CreditCardPayment).where(
+                    (CreditCardPayment.credit_card_id == card_id)
+                    | (
+                        CreditCardPayment.event_id.in_(
+                            select(FinancialEvent.id).where(
+                                FinancialEvent.command_id == cmd_overpay
+                            )
+                        )
+                    )
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(payments) == 0
+
+    payment_transactions = (
+        await session.execute(
+            select(CreditCardTransaction).where(
+                CreditCardTransaction.credit_card_id == card_id,
+                CreditCardTransaction.type == "payment",
+            )
+        )
+    ).scalars().all()
+    assert len(payment_transactions) == 0
+
+    allocations = (
+        await session.execute(
+            select(CreditCardPaymentAllocation).where(
+                CreditCardPaymentAllocation.credit_card_id == card_id
+            )
+        )
+    ).scalars().all()
+    assert len(allocations) == 0
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_pg04d_payment_reversal_full_amount_conservation(
@@ -842,31 +889,68 @@ async def test_pg05_f13_goal_reservation_enforced_under_lock_zero_mutation(
     await service.create_purchase(fixture.user_id, card.id, purchase, command_id=cmd_p)
     await session.commit()
 
+    card_id = card.id
+    account_id = fixture.account.id
+    user_id = fixture.user_id
+
     # Attempt to pay 500 USD (gross balance 1000 >= 500, but spendable 300 < 500)
     cmd_pmt = uuid.uuid4()
     pmt = CreditCardPaymentCreate(
-        account_id=fixture.account.id,
+        account_id=account_id,
         amount=Decimal("500.00"),
     )
     with pytest.raises(CreditGoalReservationBreachError):
-        await service.create_payment(fixture.user_id, card.id, pmt, command_id=cmd_pmt)
+        await service.create_payment(user_id, card_id, pmt, command_id=cmd_pmt)
 
     await session.rollback()
 
     # Assert zero mutation in database
-    acc = await session.get(Account, fixture.account.id)
+    acc = await session.get(Account, account_id)
+    assert acc is not None
     assert acc.balance == Decimal("1000.00")
 
     payments = (
         (
             await session.execute(
-                select(CreditCardPayment).where(CreditCardPayment.credit_card_id == card.id)
+                select(CreditCardPayment).where(CreditCardPayment.credit_card_id == card_id)
             )
         )
         .scalars()
         .all()
     )
     assert len(payments) == 0
+
+    payment_transactions = (
+        await session.execute(
+            select(CreditCardTransaction).where(
+                CreditCardTransaction.credit_card_id == card_id,
+                CreditCardTransaction.type == "payment",
+            )
+        )
+    ).scalars().all()
+    assert len(payment_transactions) == 0
+
+    allocations = (
+        await session.execute(
+            select(CreditCardPaymentAllocation).where(
+                CreditCardPaymentAllocation.credit_card_id == card_id
+            )
+        )
+    ).scalars().all()
+    assert len(allocations) == 0
+
+    allocations = (
+        (
+            await session.execute(
+                select(CreditCardPaymentAllocation).where(
+                    CreditCardPaymentAllocation.credit_card_id == card_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(allocations) == 0
 
 
 # ==============================================================================
@@ -917,10 +1001,21 @@ async def test_pg06_cross_currency_purchase_and_payment_equality(
     assert acc.balance == Decimal("450.00")
 
     event = await session.get(FinancialEvent, pmt_res.event_id)
+    payment = await session.scalar(
+        select(CreditCardPayment).where(CreditCardPayment.event_id == pmt_res.event_id)
+    )
     assert event.amount == Decimal("50.00")
     assert event.currency == "USD"
-    assert event.source_amount == Decimal("50.00")
-    assert event.source_currency == "USD"
+    assert payment is not None
+    assert payment.source_amount == event.amount == Decimal("50.00")
+    assert payment.source_currency == event.currency == "USD"
+    assert payment.booked_amount == Decimal("200000.00")
+    assert payment.booked_currency == "COP"
+    assert payment.fx_rate == Decimal("4000.00000000")
+    assert payment.fx_rate_snapshot_id is not None
+    payment_tx = await session.get(CreditCardTransaction, payment.payment_transaction_id)
+    assert payment_tx is not None
+    assert payment_tx.fx_rate_snapshot_id == payment.fx_rate_snapshot_id
 
 
 # ==============================================================================
@@ -986,7 +1081,12 @@ async def test_pg08a_duplicate_concurrent_statement_workers_serialization(
     engine: AsyncEngine, fixture: GateFixture
 ):
     """Duplicate concurrent cycle closure workers safely serialize: exactly 1 statement created."""
-    card = await fixture.add_credit_card(currency="COP", cutoff_day=15, due_day=5)
+    card = await fixture.add_credit_card(
+        currency="COP",
+        cutoff_day=15,
+        due_day=5,
+        canonical_activated_at=datetime(2026, 9, 1, 5, 0, tzinfo=UTC),
+    )
     now_utc = datetime.now(UTC)
 
     cycle = CreditCardBillingCycle(
@@ -1039,6 +1139,9 @@ async def test_pg08b_concurrent_purchases_near_limit_serialized(
 ):
     """Concurrent purchases near limit are safely serialized under row lock: one succeeds, one rejected."""
     card = await fixture.add_credit_card(currency="COP", credit_limit=Decimal("1000000.00"))
+    card_id = card.id
+    user_id = fixture.user_id
+    await fixture.session.commit()
 
     # Two concurrent purchases of 600,000 COP (total 1,200,000 > 1,000,000)
     p1 = CreditCardPurchaseCreate(amount=Decimal("600000.00"), description="Tx 1")
@@ -1050,7 +1153,7 @@ async def test_pg08b_concurrent_purchases_near_limit_serialized(
             svc = CreditCardService(sess, fx_provider=static_fx)
             try:
                 cmd_id = uuid.uuid4()
-                await svc.create_purchase(fixture.user_id, card.id, payload, command_id=cmd_id)
+                await svc.create_purchase(user_id, card_id, payload, command_id=cmd_id)
                 await sess.commit()
                 return True
             except CreditLimitExceededError:
@@ -1254,7 +1357,7 @@ async def test_pg08f_deterministic_waterfall_physical_allocation_order(
         credit_card_id=card.id,
         billing_period="2026-09",
         statement_balance=Decimal("10000.00"),
-        status="open",
+        status="closed",
         debt_partition="canonical",
         provenance="nexum_modeled",
         created_at=now_utc,
@@ -1348,9 +1451,10 @@ async def test_pg08f_deterministic_waterfall_physical_allocation_order(
     session.add_all([inst_past, inst_curr, inst_fut])
     await session.commit()
 
-    # Apply payment of 150,000 COP:
-    # 10,000 to charge (order 1)
-    # 100,000 to past-due inst (order 2)
+    # Approved manual-card waterfall: overdue principal, then closed statement charge,
+    # then current principal.
+    # 100,000 to past-due inst (order 1)
+    # 10,000 to charge (order 2)
     # 40,000 to current inst (order 3)
     service = CreditCardService(session, fx_provider=static_fx)
     cmd_waterfall = uuid.uuid4()
@@ -1375,14 +1479,22 @@ async def test_pg08f_deterministic_waterfall_physical_allocation_order(
     )
 
     assert len(allocs) == 3
-    # First allocation went to charge
-    assert allocs[0].target_charge_id == charge.id
-    assert allocs[0].allocated_amount == Decimal("10000.00")
+    payment = await session.scalar(
+        select(CreditCardPayment).where(CreditCardPayment.credit_card_id == card.id)
+    )
+    assert payment is not None
+    assert payment.principal_applied == sum(
+        allocation.allocated_principal for allocation in allocs
+    )
+    assert payment.booked_amount == sum(allocation.allocated_amount for allocation in allocs)
+    # First allocation went to overdue installment
+    assert allocs[0].target_installment_id == inst_past.id
+    assert allocs[0].allocated_amount == Decimal("100000.00")
     assert allocs[0].allocation_order == 1
 
-    # Second allocation went to past-due installment
-    assert allocs[1].target_installment_id == inst_past.id
-    assert allocs[1].allocated_amount == Decimal("100000.00")
+    # Second allocation went to the closed statement charge
+    assert allocs[1].target_charge_id == charge.id
+    assert allocs[1].allocated_amount == Decimal("10000.00")
     assert allocs[1].allocation_order == 2
 
     # Third allocation went to current installment
@@ -1424,30 +1536,54 @@ async def test_pg09a_atomic_rollback_on_ledger_failure(
 
     service.ledger_service.record_event = failing_record_event
 
+    card_id = card.id
+    account_id = fixture.account.id
+    user_id = fixture.user_id
+
     cmd_pmt = uuid.uuid4()
     pmt = CreditCardPaymentCreate(
-        account_id=fixture.account.id,
+        account_id=account_id,
         amount=Decimal("100000.00"),
     )
     with pytest.raises(SimulatedLedgerError):
-        await service.create_payment(fixture.user_id, card.id, pmt, command_id=cmd_pmt)
+        await service.create_payment(user_id, card_id, pmt, command_id=cmd_pmt)
 
     await session.rollback()
 
     # Verify complete atomic rollback
-    acc = await session.get(Account, fixture.account.id)
+    acc = await session.get(Account, account_id)
+    assert acc is not None
     assert acc.balance == Decimal("1000000.00")
 
     payments = (
         (
             await session.execute(
-                select(CreditCardPayment).where(CreditCardPayment.credit_card_id == card.id)
+                select(CreditCardPayment).where(CreditCardPayment.credit_card_id == card_id)
             )
         )
         .scalars()
         .all()
     )
     assert len(payments) == 0
+
+    payment_transactions = (
+        await session.execute(
+            select(CreditCardTransaction).where(
+                CreditCardTransaction.credit_card_id == card_id,
+                CreditCardTransaction.type == "payment",
+            )
+        )
+    ).scalars().all()
+    assert len(payment_transactions) == 0
+
+    allocations = (
+        await session.execute(
+            select(CreditCardPaymentAllocation).where(
+                CreditCardPaymentAllocation.credit_card_id == card_id
+            )
+        )
+    ).scalars().all()
+    assert len(allocations) == 0
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -1478,24 +1614,29 @@ async def test_pg09b_atomic_rollback_on_allocation_failure(
 
     service.repo.add_payment_allocations = failing_add_allocations
 
+    card_id = card.id
+    account_id = fixture.account.id
+    user_id = fixture.user_id
+
     cmd_pmt = uuid.uuid4()
     pmt = CreditCardPaymentCreate(
-        account_id=fixture.account.id,
+        account_id=account_id,
         amount=Decimal("100000.00"),
     )
     with pytest.raises(SimulatedAllocationError):
-        await service.create_payment(fixture.user_id, card.id, pmt, command_id=cmd_pmt)
+        await service.create_payment(user_id, card_id, pmt, command_id=cmd_pmt)
 
     await session.rollback()
 
     # Verify atomic rollback
-    acc = await session.get(Account, fixture.account.id)
+    acc = await session.get(Account, account_id)
+    assert acc is not None
     assert acc.balance == Decimal("1000000.00")
 
     payments = (
         (
             await session.execute(
-                select(CreditCardPayment).where(CreditCardPayment.credit_card_id == card.id)
+                select(CreditCardPayment).where(CreditCardPayment.credit_card_id == card_id)
             )
         )
         .scalars()
@@ -1507,7 +1648,7 @@ async def test_pg09b_atomic_rollback_on_allocation_failure(
         (
             await session.execute(
                 select(CreditCardPaymentAllocation).where(
-                    CreditCardPaymentAllocation.credit_card_id == card.id
+                    CreditCardPaymentAllocation.credit_card_id == card_id
                 )
             )
         )
@@ -1515,6 +1656,23 @@ async def test_pg09b_atomic_rollback_on_allocation_failure(
         .all()
     )
     assert len(allocs) == 0
+
+    payment_transactions = (
+        await session.execute(
+            select(CreditCardTransaction).where(
+                CreditCardTransaction.credit_card_id == card_id,
+                CreditCardTransaction.type == "payment",
+            )
+        )
+    ).scalars().all()
+    assert len(payment_transactions) == 0
+
+    ledger_events = (
+        await session.execute(
+            select(FinancialEvent).where(FinancialEvent.command_id == cmd_pmt)
+        )
+    ).scalars().all()
+    assert len(ledger_events) == 0
 
 
 # ==============================================================================

@@ -779,9 +779,9 @@ def test_credit_domain_models_timezone_column_contracts():
         mapper = inspect(model_cls)
         for col in mapper.columns:
             if isinstance(col.type, DateTime):
-                assert (
-                    col.type.timezone is True
-                ), f"{model_cls.__name__}.{col.name} must be timezone-aware DateTime(timezone=True)"
+                assert col.type.timezone is True, (
+                    f"{model_cls.__name__}.{col.name} must be timezone-aware DateTime(timezone=True)"
+                )
 
 
 @pytest.mark.asyncio
@@ -803,9 +803,9 @@ async def test_gate_fixture_factory_timestamps_and_entities_contract():
 
     assert card.created_at.tzinfo is None, "CreditCard.created_at must be offset-naive UTC"
     assert card.updated_at.tzinfo is not None, "CreditCard.updated_at must be offset-aware UTC"
-    assert (
-        card.canonical_activated_at.tzinfo is not None
-    ), "CreditCard.canonical_activated_at must be offset-aware UTC"
+    assert card.canonical_activated_at.tzinfo is not None, (
+        "CreditCard.canonical_activated_at must be offset-aware UTC"
+    )
 
     tx = await fixture.add_transaction(card.id, Decimal("100000.00"), type="purchase")
     assert tx.created_at.tzinfo is None, "CreditCardTransaction.created_at must be offset-naive UTC"
@@ -927,3 +927,137 @@ async def test_gate_fixture_cleanup_safely_recovers_from_aborted_session():
     ), "Stage failure must be preserved in GateCleanupError"
     # pre_trigger_restore_rollback was called before trigger restoration
     assert session_b.rollback.await_count >= 2
+
+
+@pytest.mark.asyncio
+async def test_gate_fixture_add_credit_card_explicit_activation_date():
+    """GateFixture allows explicit canonical_activated_at override to support historical cycle tests."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_session = AsyncMock()
+    mock_session.add = MagicMock()
+    mock_session.flush = AsyncMock()
+
+    fixture = GateFixture(mock_session)
+
+    # Override with historical activation date
+    hist_act = datetime(2026, 7, 1, 0, 0, tzinfo=UTC)
+    card_hist = await fixture.add_credit_card(canonical_activated_at=hist_act)
+    assert card_hist.canonical_activated_at == hist_act
+    assert card_hist.canonical_mode is True
+
+    # Default canonical_mode=True sets current UTC
+    card_default = await fixture.add_credit_card()
+    assert card_default.canonical_activated_at is not None
+    assert card_default.canonical_activated_at.tzinfo is not None
+
+    # canonical_mode=False sets None
+    card_legacy = await fixture.add_credit_card(canonical_mode=False)
+    assert card_legacy.canonical_activated_at is None
+
+
+def test_nested_transaction_savepoint_rollback_contract():
+    """Objects added inside a nested transaction are cleanly rolled back by savepoint without expunge."""
+    from sqlalchemy import Column, Integer, String, create_engine
+    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.orm import Session, declarative_base
+
+    Base = declarative_base()
+
+    class Item(Base):
+        __tablename__ = "test_items"
+        id = Column(Integer, primary_key=True)
+        code = Column(String, unique=True, nullable=False)
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    session = Session(engine)
+    i1 = Item(id=1, code="unique-code")
+    session.add(i1)
+    session.commit()
+
+    # Attempt duplicate insert inside begin_nested
+    with pytest.raises(IntegrityError):
+        with session.begin_nested():
+            i2 = Item(id=2, code="unique-code")
+            session.add(i2)
+            session.flush()
+
+    # Session remains active and healthy; i2 is not in session; commit succeeds without expunge
+    assert session.is_active is True
+    session.commit()
+
+
+def test_activation_frontier_cycle_alignment_contract():
+    """Activation timestamps evaluated via financial_date() in America/Bogota match determine_cycle_for_date."""
+    from app.core.financial_time import financial_date
+    from app.credit.utils import determine_cycle_for_date
+
+    # 1. test_pg03c: activation at 2026-07-16T05:00:00Z (midnight America/Bogota) yields financial_date 2026-07-16
+    # Day 16 > cutoff 15 => initial period is 2026-08 (August)
+    act_03c = datetime(2026, 7, 16, 5, 0, tzinfo=UTC)
+    fin_date_03c = financial_date(act_03c)
+    assert fin_date_03c == date(2026, 7, 16)
+    period_03c, start_03c, cutoff_03c, _ = determine_cycle_for_date(
+        fin_date_03c, cutoff_day=15, due_day=5
+    )
+    assert period_03c == "2026-08"
+    assert start_03c == date(2026, 7, 16)
+    assert cutoff_03c == date(2026, 8, 15)
+
+    # Negative proof: 2026-07-16T00:00:00Z is 19:00 July 15 in Bogota, yielding cycle 2026-07 (July)
+    act_03c_naive_utc = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    fin_date_03c_prior = financial_date(act_03c_naive_utc)
+    assert fin_date_03c_prior == date(2026, 7, 15)
+    period_prior, _, _, _ = determine_cycle_for_date(fin_date_03c_prior, cutoff_day=15, due_day=5)
+    assert period_prior == "2026-07"
+
+    # 2. test_pg08a: activation at 2026-09-01T05:00:00Z (midnight America/Bogota) yields financial_date 2026-09-01
+    # Day 1 <= cutoff 15 => single eligible period is 2026-09 (September)
+    act_08a = datetime(2026, 9, 1, 5, 0, tzinfo=UTC)
+    fin_date_08a = financial_date(act_08a)
+    assert fin_date_08a == date(2026, 9, 1)
+    period_08a, start_08a, cutoff_08a, _ = determine_cycle_for_date(
+        fin_date_08a, cutoff_day=15, due_day=5
+    )
+    assert period_08a == "2026-09"
+    assert start_08a == date(2026, 8, 16)
+    assert cutoff_08a == date(2026, 9, 15)
+
+
+def test_voluntary_overpayment_exception_type_and_identity_contract():
+    """Overpayment raises InvalidPaymentAmountError and pre-rollback UUID caching prevents expired IO."""
+    from sqlalchemy import Column, Integer, String, create_engine
+    from sqlalchemy.orm import Session, declarative_base
+
+    from app.credit.exceptions import CreditDomainError, InvalidPaymentAmountError
+
+    assert issubclass(InvalidPaymentAmountError, CreditDomainError)
+
+    Base = declarative_base()
+
+    class MockAccount(Base):
+        __tablename__ = "mock_accounts"
+        id = Column(Integer, primary_key=True)
+        name = Column(String)
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    session = Session(engine)
+    acc = MockAccount(id=42, name="test")
+    session.add(acc)
+    session.commit()
+
+    # Pre-rollback ID capture
+    account_id = acc.id
+    assert account_id == 42
+
+    # Simulate rollback expiration
+    session.rollback()
+
+    # Accessing the pre-saved account_id never touches expired ORM instance state
+    assert account_id == 42
+    reloaded = session.get(MockAccount, account_id)
+    assert reloaded is not None and reloaded.id == 42

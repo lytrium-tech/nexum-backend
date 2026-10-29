@@ -78,30 +78,31 @@ def get_script_directory() -> ScriptDirectory:
 
 
 def test_alembic_linear_head():
-    """Verify Alembic lineage forms a single linear DAG ending at credit_v2_canonical_closure."""
+    """Verify Alembic lineage forms a single linear DAG ending at credit_v2_refund_type."""
     script_dir = get_script_directory()
     heads = script_dir.get_heads()
     assert len(heads) == 1
-    assert heads[0] == "credit_v2_canonical_closure"
+    assert heads[0] == "credit_v2_refund_type"
 
 
 def test_alembic_upgrade_path_from_empty_database():
     """Verify that a fresh database (current_rev=None) resolves the complete chain
 
-    starting with v1_5_baseline and ending with credit_v2_canonical_closure.
+    starting with v1_5_baseline and ending with credit_v2_refund_type.
     """
     script_dir = get_script_directory()
     steps = script_dir._upgrade_revs(destination="head", current_rev=None)
     all_revisions = [step.revision.revision for step in steps]
 
     assert all_revisions[0] == "v1_5_baseline"
-    assert all_revisions[-3] == "credit_v2_canonical_schema"
-    assert all_revisions[-2] == "credit_v2_canonical_check"
-    assert all_revisions[-1] == "credit_v2_canonical_closure"
+    assert all_revisions[-4] == "credit_v2_canonical_schema"
+    assert all_revisions[-3] == "credit_v2_canonical_check"
+    assert all_revisions[-2] == "credit_v2_canonical_closure"
+    assert all_revisions[-1] == "credit_v2_refund_type"
     assert "obligations_v1_7_auto_payments" in all_revisions
 
-    # Exactly 13 revisions in linear chain
-    assert len(all_revisions) == 13
+    # Exactly 14 revisions in linear chain
+    assert len(all_revisions) == 14
 
 
 def test_alembic_upgrade_path_from_prior_head():
@@ -119,6 +120,7 @@ def test_alembic_upgrade_path_from_prior_head():
         "credit_v2_canonical_schema",
         "credit_v2_canonical_check",
         "credit_v2_canonical_closure",
+        "credit_v2_refund_type",
     ]
 
 
@@ -127,6 +129,7 @@ def test_alembic_revision_identifier_lengths():
     assert len("credit_v2_canonical_schema") <= 32
     assert len("credit_v2_canonical_check") <= 32
     assert len("credit_v2_canonical_closure") <= 32
+    assert len("credit_v2_refund_type") <= 32
 
 
 # ── 2. Additive Migration Contract & Execution via Recorder ──────────────────
@@ -298,6 +301,20 @@ def test_credit_v2_canonical_closure_forward_migration(monkeypatch):
     assert "uq_cc_statements_canonical_cycle_id" in recorder.dropped_indexes
     # Safe downgrade guard: minimum_payment is NOT forced NOT NULL on downgrade
     assert ("credit_card_statements", "minimum_payment") not in recorder.dropped_columns
+
+
+def test_credit_v2_refund_type_adds_supported_transaction_type(monkeypatch):
+    mod = _load_migration("credit_v2_refund_type", "credit_v2_refund_type.py")
+    recorder = MigrationRecorder()
+    monkeypatch.setattr(mod, "op", recorder)
+
+    mod.upgrade()
+
+    assert recorder.dropped_constraints == ["credit_card_transactions_type_check"]
+    assert recorder.created_checks == ["credit_card_transactions_type_check"]
+    assert "'purchase'::text" in mod._LEGACY_TYPES
+    assert "'payment'::text" in mod._LEGACY_TYPES
+    assert "'refund'::text" not in mod._LEGACY_TYPES
 
 
 # ── 3. Legacy Semantics & Ambiguous Legacy Rows Preservation ─────────────────

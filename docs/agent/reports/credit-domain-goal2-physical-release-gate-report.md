@@ -1,141 +1,110 @@
-# Nexum Credit Domain Goal 2 — Physical PostgreSQL 17 Release Gate Certification Report
+# Credit Goal 2 — Final Backend Evidence and Release Gate Report
 
-## 1. Executive Summary & Disposition
-- **Target Subsystem:** Credit Domain V2 (`app/credit`)
-- **Execution Target:** CT101 / VMID 101 (`lab`, 192.168.0.245) via Proxmox VE (`vulcano`)
-- **Database Engine:** PostgreSQL 17.11 (strictly non-superuser role `nexum_release_gate_test`)
-- **Execution Mode:** Isolated loopback SSH tunnel (`127.0.0.1:5433` -> `127.0.0.1:5432`)
-- **Zero-Tolerance Policy:** Zero skips, zero xfails, zero xpasses, zero unhandled errors
-- **Disposition:** `[PENDING PHYSICAL CT101 EXECUTION BY CODEX]`
+**Report date:** 2026-10-29
+**Recovery checkpoint:** `67f0e1d`
+**Branch:** `feature/credit-canonical-closure`
+**Final Alembic head:** `credit_v2_refund_type`
+**Decision:** Implementation and evidence generation complete; awaiting Founder review and explicit GO/NO-GO for Frontend Sync + QA. Codex does not certify readiness for frontend on the Founder's behalf.
 
----
+## 1. Gate summary
 
-## 2. Disposable Environment Attestation
+| Gate | Result | Evidence |
+|---|---|---|
+| Canonical model, financial invariants, legacy boundary | **PASS** | Forward migrations and service contracts; representative legacy PostgreSQL dataset in scenario C |
+| Alembic empty/prior-head/legacy migrations | **PASS** | Physical runner scenarios A/B/C, exit 0 |
+| Goal reservations (F-13) | **PASS** | `test_pg05_f13_goal_reservation_enforced_under_lock_zero_mutation` |
+| Deadlock regression (F-14) | **PASS** | `test_pg08d_f14_standard_vs_early_payment_deadlock_elimination`; no SQLSTATE 40P01 |
+| Installment constraint (F-15) | **PASS** | `test_pg02_f15_installment_check_constraint_physical`; assessed-interest settlement accepted, over-ceiling rejected |
+| Material idempotency replay (F-16) | **PASS** | `test_pg07_f16_exact_idempotent_retry_and_conflicting_replay` |
+| Statement/payable set (F-19) | **PASS** | `test_pg10_f19_payable_set_consistency_mirrored_charge_no_double_count` |
+| No synthetic legacy history / no double count | **PASS** | `test_pg11_canonical_and_legacy_debt_partitioning_no_double_count`; scenario C |
+| Payment persistence order and allocation FK | **PASS** | Parent is assigned UUID and flushed before FK-dependent allocations; PG04b, PG08f, and PG09b passed after correction |
+| Account/Ledger/Credit atomic rollback | **PASS** | PG09a Ledger failure and PG09b allocation failure assert no Account debit, Payment, Payment transaction, or allocations |
+| Cross-currency purchase/payment evidence | **PASS** | PG06; source Account debit equals Ledger source amount; booked card amount uses injected canonical FX snapshot |
+| Full Credit PostgreSQL suite | **PASS, 29/29** | Final post-correction run on CT101 PostgreSQL 17.11, no failed/rejected tests |
+| OpenAPI artifact/runtime parity | **PASS** | Canonical exporter SHA-256 `988bc0b7ddfc9796de6f925db46e84fcb9d4e86ebab266fdbc239efc50ea08c1`; strict parity test 1/1 with locked FastAPI/Pydantic |
+| Lint | **PASS** | Ruff on all changed Python implementation, migration, helper and test files |
+| Working tree and branch safety | **PASS** | Branch is isolated from main; changed paths are Credit backend/tests/migrations/docs only; no frontend files changed |
+| Cleanup / CT stopped | **PASS** | Final release_gate reset confirmed public schema empty; status readback: `LXC Status: stopped`, destructive opt-in `DISABLED (0)` |
+| Optional Obligations regression | **FAIL (out of scope)** | Separate attempt: 49 passed, 45 errors, 1 failed due unrelated Obligations cases; no Obligations changes |
+| Windows Python 3.14 async test execution | **BLOCKED (environment)** | Proactor startup hangs before test body in socketpair / pytest-asyncio runner setup; Linux PostgreSQL gate is authoritative |
 
-| Check | Expected Invariant | Physical Value (CT101) | Status |
-|---|---|---|---|
-| **Guest VMID** | Strictly 101 (CT101) | `101` | `[PENDING]` |
-| **Guest Hostname** | `lab` | `lab` | `[PENDING]` |
-| **Guest IP** | `192.168.0.245` | `192.168.0.245` | `[PENDING]` |
-| **PostgreSQL Version** | `17.x` (strictly PostgreSQL 17) | `[Output: SELECT version()]` | `[PENDING]` |
-| **Database Name** | `nexum_release_gate_test` | `nexum_release_gate_test` | `[PENDING]` |
-| **Database User** | `nexum_release_gate_test` | `nexum_release_gate_test` | `[PENDING]` |
-| **Superuser Privilege** | `rolsuper = False` | `[Output: rolsuper]` | `[PENDING]` |
-| **CreateDB Privilege** | `rolcreatedb = False` | `[Output: rolcreatedb]` | `[PENDING]` |
-| **CreateRole Privilege**| `rolcreaterole = False` | `[Output: rolcreaterole]` | `[PENDING]` |
-| **Production Patterns** | Zero Supabase / VPS identifiers | `VERIFIED ABSENT` | `[PENDING]` |
+## 2. Physical environment and scope
 
----
+CT101 is the authorized isolated disposable Vulcano guest (VMID 101, node `vulcano`, host `lab`, 192.168.0.245). Tests used the dedicated loopback SSH tunnel on port 5433 and the disposable database/user `nexum_release_gate_test`; no production database, Supabase, credential, service, or cron was used. Database engine observed in the prior physical run: PostgreSQL 17.11. The runner enforces the test database/user/loopback identity and stops CT101 in its finally path.
 
-## 3. Schema Reset & Migration Lineage Evidence
+No frontend code, production resources, or main branch were modified. No merge, deployment, production migration, scheduler activation, or Founder QA occurred.
 
-### Canonical Reset Command:
-```bash
-python scripts/dev/release_gate.py reset --confirm
-```
+## 3. Migration evidence
 
-### Physical Migration Scenarios Runner:
-```bash
-python scripts/dev/release_gate.py run --destructive-opt-in -- python scripts/dev/run_alembic_physical_scenarios.py
-```
-
-### Physical Migration Lineage Verification:
-- **Base Revision:** `v1_5_baseline`
-- **Prior Production Head:** `obligations_v1_7_auto_payments`
-- **Final Linear Head:** `credit_v2_canonical_closure`
-- **Linear Step Chain:**
-  1. `obligations_v1_7_auto_payments` -> `credit_v2_canonical_schema`
-  2. `credit_v2_canonical_schema` -> `credit_v2_canonical_check`
-  3. `credit_v2_canonical_check` -> `credit_v2_canonical_closure`
-
-### Executed Migration Scenarios:
-- **Scenario A:** Empty database -> linear HEAD (`credit_v2_canonical_closure`).
-- **Scenario B:** Empty database -> prior head (`obligations_v1_7_auto_payments`) -> linear HEAD.
-- **Scenario C:** Empty database -> prior head -> seed representative legacy dataset (using only baseline columns) -> forward upgrade to linear HEAD -> assert column defaults, nullable preservation, zero synthetic backfill, F-15 constraint check, and partitioned debt query (`canonical_debt=0`, `legacy_debt=120000.00` including 15k legacy statement fee, `total_debt=120000.00`).
-- **Trigger State Validation Normalization:** `pg_trigger.tgenabled` returns `b'O'` (bytes) in certain PostgreSQL async driver configurations. Normalized safely via `normalize_trigger_status()` accepting `'O'` / `b'O'` while strictly rejecting disabled (`D`, `b'D'`), replica (`R`), or unknown states fail-closed.
-- **Statement Charge Debt Partitioning:** Statement charges inherit joined statement `debt_partition`. Only canonical statement charges (`s.debt_partition = 'canonical'`) join into `canonical_debt` and `list_unpaid_statement_charges_for_update`. Legacy statement charges remain in `legacy_debt`, preserving exact financial conservation and no double count.
+The final linear chain is:
 
 ```text
-[INSERT SANITIZED ALEMBIC UPGRADE LOG HERE]
+v1_5_baseline
+  -> obligations_v1_7_auto_payments
+  -> credit_v2_canonical_schema
+  -> credit_v2_canonical_check
+  -> credit_v2_canonical_closure
+  -> credit_v2_refund_type
 ```
 
----
+- **A — empty:** Alembic from empty database to `credit_v2_refund_type`: **PASS**.
+- **B — prior head:** empty -> `obligations_v1_7_auto_payments` -> final head: **PASS**.
+- **C — representative legacy:** prior head -> deterministic synthetic legacy data -> forward to final head: **PASS**.
+- Refund migration is additive and forward-only. Downgrade refuses before mutation when refund transaction facts exist.
+- F-15 is an additive corrected check, not a historical migration edit.
 
-## 4. Physical Acceptance Criteria Certification Register
+Scenario C preserved legacy records as `legacy_unknown` / `legacy`; retained NULL historical cycle, original amount/currency, booked amount/currency, FX and assessed interest where unknown; created no synthetic historical cycles/statements and assigned no legacy purchase to an invented statement. Debt conservation readback: canonical = 0.00, legacy compatibility = 120,000.00 (105,000.00 installment + 15,000.00 statement charge), total = 120,000.00. Thus canonical + legacy compatibility debt does not double count.
 
-| Criterion | Scenario / Test Name | Expected Physical PostgreSQL Invariant | Physical Result |
-|---|---|---|---|
-| **AC 1** | `test_pg01_alembic_linear_head_graph` | Linear head `credit_v2_canonical_closure` (13 revisions from base). ScriptDirectory matches linear graph. | `[PENDING]` |
-| **AC 2** | `test_pg02_f15_installment_check_constraint_physical` | `credit_card_installments_paid_check_v2` physically accepts `paid_amount = total_amount` (with assessed interest); rejects `paid_amount > total_amount` with SQLSTATE `23514`. | `[PENDING]` |
-| **AC 3a** | `test_pg03a_cycle_assignment_and_bogota_cutoff_boundary` | Purchases on or before cutoff belong to current cycle; purchases after cutoff belong to next cycle using Bogota financial date boundaries (`occurred_at` Oct 15 vs Oct 16). | `[PENDING]` |
-| **AC 3b** | `test_pg03b_statement_exactly_once_partial_unique_index` | Partial unique index `uq_cc_statements_canonical_cycle_id` physically prevents duplicate statements for the same canonical cycle with SQLSTATE `23505`. | `[PENDING]` |
-| **AC 3c** | `test_pg03c_bounded_catchup_repeated_progression` | CreditCycleClosureService advances catch-up deterministically across repeated bounded invocations until `has_remaining=False`. | `[PENDING]` |
-| **AC 3d** | `test_pg03d_immutable_statements_and_components_at_postgres_trigger_level` | Raw PostgreSQL triggers `trg_cc_statements_immutable` and `trg_cc_stmt_comp_immutable` block UPDATE or DELETE on closed/settled statements and components with SQLSTATE `20000`. | `[PENDING]` |
-| **AC 4a** | `test_pg04a_standard_partial_and_generic_prepayment_conservation` | Standard payment, partial payment, and generic future prepayment conserve debt balance and account balance at each step. | `[PENDING]` |
-| **AC 4b** | `test_pg04b_targeted_early_payment_records_prepayment_transaction` | Targeted early payment records `credit_card_early_payments` row AND `credit_card_transactions` row (`type='payment'`) closing F-08. | `[PENDING]` |
-| **AC 4c** | `test_pg04c_voluntary_overpayment_rejection` | Payment exceeding total payable debt is rejected with zero account mutation. | `[PENDING]` |
-| **AC 4d** | `test_pg04d_payment_reversal_full_amount_conservation` | Full payment reversal restores account balance, installment paid amount, and creates compensating debit adjustment. | `[PENDING]` |
-| **AC 4e** | `test_pg04e_legitimate_already_paid_refund_card_credit` | Refund on already-paid purchase creates legitimate card credit carrying over into statement snapshot (`prior_credit`). | `[PENDING]` |
-| **AC 5** | `test_pg05_f13_goal_reservation_enforced_under_lock_zero_mutation` | Payment exceeding available balance minus Goal reservations raises `CreditGoalReservationBreachError` under lock with verified zero physical mutation. | `[PENDING]` |
-| **AC 6** | `test_pg06_cross_currency_purchase_and_payment_equality` | USD purchase on COP card stores multi-currency facts. Payment debits Account in USD strictly equal to Ledger source amount in USD in atomic transaction. | `[PENDING]` |
-| **AC 7** | `test_pg07_f16_exact_idempotent_retry_and_conflicting_replay` | Identical command returns `idempotent_retry` with 0 double debits. Conflicting payload under same `command_id` raises `CreditIdempotencyConflictError`. | `[PENDING]` |
-| **AC 8a** | `test_pg08a_duplicate_concurrent_statement_workers_serialization` | Duplicate concurrent cycle closure workers safely serialize: exactly 1 statement created under card row lock. | `[PENDING]` |
-| **AC 8b** | `test_pg08b_concurrent_purchases_near_limit_serialized` | Concurrent purchases near limit are safely serialized under row lock: one succeeds, one rejected. | `[PENDING]` |
-| **AC 8c** | `test_pg08c_concurrent_payments_physical_lock_wait` | Concurrent payments against the same funding account physically wait on PostgreSQL row locks observed via `pg_blocking_pids`. | `[PENDING]` |
-| **AC 8d** | `test_pg08d_f14_standard_vs_early_payment_deadlock_elimination` | Standard payment and early prepayment executed simultaneously never trigger PostgreSQL `40P01` deadlock. | `[PENDING]` |
-| **AC 8e** | `test_pg08e_stale_identity_map_refresh_on_payment` | Payment acquires row lock with `populate_existing=True`, refreshing concurrently modified balance and rejecting stale balance payment. | `[PENDING]` |
-| **AC 8f** | `test_pg08f_deterministic_waterfall_physical_allocation_order` | Payment waterfall allocates deterministically: charges -> past-due -> current -> future installments with incrementing `allocation_order`. | `[PENDING]` |
-| **AC 9a** | `test_pg09a_atomic_rollback_on_ledger_failure` | Simulated failure during `record_event` triggers full atomic transaction rollback: 0 account debit, 0 payment row, 0 allocations. | `[PENDING]` |
-| **AC 9b** | `test_pg09b_atomic_rollback_on_allocation_failure` | Simulated failure during `add_payment_allocations` triggers full atomic rollback: 0 account debit, 0 payment row, 0 allocations. | `[PENDING]` |
-| **AC 10** | `test_pg10_f19_payable_set_consistency_mirrored_charge_no_double_count` | Installment 100 + mirrored charge 100 + fee 10 yields total payable debt 110, not 210. Waterfall and guard deduplicate mirrored charge. | `[PENDING]` |
-| **AC 11** | `test_pg11_canonical_and_legacy_debt_partitioning_no_double_count` | Frontier activation keeps legacy debt isolated (canonical 200k + legacy inst 150k + legacy fee 25k = 375k total). `get_card_debt_partitioned` and `list_unpaid_statement_charges_for_update` isolate legacy charges with zero leak or waterfall misallocation. | `[PENDING]` |
-| **AC 12** | `test_pg12_harness_cleanup_and_residue_verification` | Fixture cleanup drops all synthetic test rows and verifies count == 0 across all credit, ledger, goal, account, and user tables with enabled triggers. | `[PENDING]` |
+## 4. Physical Credit suite
 
----
+Final run: `python scripts/dev/run_physical_gate.py --suite credit`, wrapped by `scripts/dev/release_gate.py` with the required destructive test opt-in and disposable DB tunnel. **29 passed, 0 failed, 0 rejected/skipped.** Suite teardown verified zero synthetic residue and enabled statement triggers.
 
-## 5. Physical Concurrency & Lock Contention Evidence
+Covered scenarios include:
 
-### Lock Hierarchy Verification (`Account -> CreditCard -> Installments`):
-- **Finding F-14 Deadlock Elimination:** Standard payment (`POST /payments`) and early prepayment (`POST /pay_early`) executed concurrently on identical card and account.
-  - Inverted lock ordering eliminated.
-  - Zero PostgreSQL `40P01` deadlock events observed.
-- **Physical Contention Observation:**
-  - `wait_for_blocked()` confirmed physical contention via `pg_blocking_pids` during concurrent payments.
+- F-15 constraint accepts legitimate assessed-interest total settlement and rejects paid amount above the payable ceiling (SQLSTATE 23514).
+- Bogota financial-date cycle assignment around the cutoff, short-month boundaries, statement exactly-once uniqueness, bounded catch-up, and raw PostgreSQL statement/component immutability.
+- Standard/partial payment, future principal prepayment, targeted `/pay_early`, voluntary overpayment rejection, full reversal, and refund-created card credit.
+- F-13 Goal reservations: a reserved-cash breach produces no payment/ledger/account/allocation mutation; reservation state is not changed.
+- F-16 identical idempotent retry causes no duplicate debit; materially changed replay conflicts.
+- F-14 payment vs early payment and concurrent payment contention; no deadlock; observed physical blocker via `pg_blocking_pids`.
+- Concurrent purchases near limit, duplicate statement workers, and stale ORM identity-map refresh under row lock.
+- PG08f checks persisted allocation order: overdue principal (100,000), closed statement fee (10,000), current principal (40,000), with orders 1/2/3.
+- PG09a/09b rollback after Ledger or allocation failure: Account balance unchanged and no Payment, payment transaction, Ledger residue, or allocation survives.
+- F-19 payment guard, waterfall, allocations, and resulting debt use a unified set with mirrored installment charges excluded.
+- Canonical + legacy debt partition and complete cleanup.
+
+### Cross-currency evidence
+
+PG06 records a USD 50 purchase on a COP card at injected test FX 4,000, booked COP 200,000, then a USD 50 payment. Account debit and Ledger `FinancialEvent` both equal USD 50; Credit payment source fields are USD 50, booked fields COP 200,000, FX rate 4,000 and persisted FX snapshot ID are present on Payment and transaction. All mutations are in one transaction.
+
+## 5. Corrections and regression verification
+
+1. Physical harness failures were traced and corrected: Bogota activation timestamps, PostgreSQL naive/aware timestamp fixture values, savepoint behavior, rollback-expired ORM IDs, exact stable overpayment exception, committed-card setup for concurrent workers, and waterfall expectation aligned to the approved Nexum policy.
+2. A real multicurrency defect was found: Credit payments and preview bypassed the canonical injected `FXService` provider, and payment FX was not persisted as reproducible evidence. Credit now obtains its rate/snapshot from the existing FX infrastructure before acquiring write locks, applies the same provider in preview, and stores FX snapshot/rate on Payment and transaction. Physical PG06 confirms source/booked reconciliation.
+3. Refund creation was rejected by a legacy transaction-type check. New migration `credit_v2_refund_type` adds refund support without rewriting the historical migration and protects downgrade when refund facts exist. Physical PG04e passes.
+4. Physical review found generic payment allocations were being flushed before the parent Payment row while PostgreSQL enforces the FK. After reordering, PostgreSQL then exposed a NULL Payment UUID in targeted early-payment allocations; assigning the canonical UUID before allocations fixed the root cause. The final physical run passed PG04b, PG08f (persisted order and aggregate conservation), and PG09b (atomic allocation failure) as part of 29/29.
+5. OpenAPI parity initially failed only in CT's reused Python 3.13 environment (FastAPI 0.162.0 / Pydantic 2.14.2) which is newer than repository lock (FastAPI 0.136.3 / Pydantic 2.13.4). No artifact was rewritten from that environment. Under locked versions, canonical export retains SHA-256 above and parity is 1/1.
+
+## 6. Compatibility and API contract
+
+- Existing route family remains `/api/v1/credit`.
+- Legacy `amount` retains historical card-base/booked currency semantics; it is never silently redefined as foreign original amount. New cross-currency clients use `original_amount` / `original_currency`; responses expose `booked_amount` / `booked_currency` plus FX snapshot provenance.
+- Manual-card waterfall is explicitly Nexum-modeled simulation policy, not a universal issuer rule. Future issuer-authoritative allocation facts can coexist with historical modeled allocation records.
+- Unknown minimum payment remains nullable; no universal percentage/floor or rate-triggered assessed interest is invented.
+- Legacy debt remains visibly partitioned and included once; ambiguous history is not retroactively synthesized.
+- API contract and frontend consumer details are in `docs/handoff/backend/credit-canonical-v2-frontend-handoff.md`.
+
+## 7. Final cleanup readback
 
 ```text
-[INSERT CONCURRENCY EXECUTION LOG & PID EVIDENCE HERE]
+NEXUM_ALLOW_DESTRUCTIVE_TEST_DB=1 python scripts/dev/release_gate.py reset --confirm
+python scripts/dev/release_gate.py status
+Observed: `[PASS] Schema reset complete ... (empty, synthetic state)`; `LXC Status: stopped`; `Destructive Opt: DISABLED (0)`.
 ```
 
----
+The final cleanup removed all synthetic rows/schema objects. The optional cross-domain Obligations attempt also invoked the same lifecycle reset and stopped CT101. Exact local transfer archive and helper artifacts are removed before commit.
 
-## 6. Raw Trigger & Check Constraint Physical Evidence
+## 8. Founder decision
 
-### F-15 Constraint Readback (`credit_card_installments_paid_check_v2`):
-```sql
-SELECT conname, pg_get_constraintdef(oid)
-FROM pg_constraint
-WHERE conname = 'credit_card_installments_paid_check_v2';
-```
-- **Definition:** `CHECK (paid_amount <= total_amount)`
-- **Physical Result:** `[INSERT QUERY RESULT]`
-
-### Immutability Triggers Readback:
-```sql
-SELECT tgname, tgenabled, relname
-FROM pg_trigger t
-JOIN pg_class c ON t.tgrelid = c.oid
-WHERE tgname IN ('trg_cc_statements_immutable', 'trg_cc_stmt_comp_immutable');
-```
-- **Physical Result:** `[INSERT QUERY RESULT]`
-
----
-
-## 7. Residual Verification
-```sql
-SELECT
-    (SELECT count(*) FROM users WHERE email LIKE 'gate-test-%') as test_users,
-    (SELECT count(*) FROM credit_cards WHERE name LIKE 'Gate%') as test_cards,
-    (SELECT count(*) FROM exchange_rates WHERE provider = 'gate_test') as test_rates;
-```
-- **Expected:** `0, 0, 0`
-- **Physical Result:** `[INSERT CLEANUP QUERY RESULT]`
+This report supplies backend implementation and gate evidence. **GO/NO-GO for Frontend Sync + QA is reserved to the Founder.** Until that decision is recorded, do not modify frontend, begin frontend QA, merge, deploy, activate scheduling, or graduate Credit.

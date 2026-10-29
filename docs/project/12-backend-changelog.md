@@ -49,7 +49,9 @@ Este changelog captura hitos arquitectónicos y funcionales clave (omitir parche
   - **Ajustes y Reversos (F-09):** Soporte integral de reembolsos (`refund`), disputas (`chargeback`), créditos de extracto y reversos completos de pagos (`reversal`).
   - **Idempotencia Profunda (F-16):** Verificación multidimensional de `command_id` contra usuario, operación, entidad, cuenta y montos.
   - **Consumidores Canónicos:** Sincronización de Intelligence y Conversaciones para consumir hechos canónicos reales (`get_credit_summary`), desacoplándose de vistas obsoletas y columnas muertas.
+  - **Certificación física:** Alembic A/B/C verificado desde vacío, head previo y dataset legacy representativo; CT101 PostgreSQL 17 ejecutó 29/29 casos Credit. F-13, F-14, F-15, F-16 y F-19 cerrados físicamente. La migración forward final `credit_v2_refund_type` habilita refund con downgrade fail-closed si existen hechos refund.
+  - **Límite del handoff:** La certificación entrega evidencia para revisión Founder. No constituye autorización automática de Frontend Sync/QA ni cambia frontend o producción.
 
 ---
-*Last verified against Credit V2 Canonical Closure (`feature/credit-canonical-closure`)*
+*Last verified against Credit Goal 2 final implementation (`feature/credit-canonical-closure`)*
 - Integrado con [Wallets V1](./13-accounts-wallets.md) y [Credit V2 Handoff](../handoff/backend/credit-canonical-v2-frontend-handoff.md).

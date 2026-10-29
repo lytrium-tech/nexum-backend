@@ -7,7 +7,7 @@ Guarantees:
    - Target database, user, or host does not strictly match CT101 loopback tunnel.
    - NEXUM_ALLOW_DESTRUCTIVE_TEST_DB=1 opt-in is absent.
 3. Certifies all 3 physical Alembic migration scenarios:
-   - Scenario A: Empty database -> linear HEAD (credit_v2_canonical_closure).
+   - Scenario A: Empty database -> linear HEAD (credit_v2_refund_type).
    - Scenario B: Empty database -> prior head (obligations_v1_7_auto_payments) -> linear HEAD.
    - Scenario C: Empty database -> prior head -> representative legacy dataset seeded BEFORE
                  forward migrations -> forward migrations to linear HEAD -> assert column defaults,
@@ -42,7 +42,7 @@ from scripts.dev.run_physical_gate import (  # noqa: E402
     validate_gate_guards,
 )
 
-FINAL_LINEAR_HEAD = "credit_v2_canonical_closure"
+FINAL_LINEAR_HEAD = "credit_v2_refund_type"
 PRIOR_PRODUCTION_HEAD = "obligations_v1_7_auto_payments"
 
 # Representative Legacy Dataset IDs
@@ -462,7 +462,7 @@ async def verify_legacy_dataset_post_migration(db_url: str) -> None:
 
 
 def run_scenario_a(db_url: str, cfg: Config) -> None:
-    """Scenario A: Empty database -> linear HEAD (credit_v2_canonical_closure)."""
+    """Scenario A: Empty database -> linear HEAD (credit_v2_refund_type)."""
     print("[Scenario A] Starting: Empty database -> linear HEAD...")
     asyncio.run(reset_public_schema(db_url))
     rev_initial = asyncio.run(get_current_alembic_revision(db_url))

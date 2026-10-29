@@ -264,9 +264,17 @@ class GateFixture:
         name: str = "Gate Card",
         canonical_mode: bool = True,
         provenance: str = "nexum_modeled",
+        canonical_activated_at: datetime | None = None,
     ) -> CreditCard:
         resolved_due_day = due_day if payment_due_day is None else payment_due_day
         now_utc, now_naive = get_fixture_timestamps()
+        if canonical_activated_at is not None:
+            resolved_act_at = canonical_activated_at
+        elif canonical_mode:
+            resolved_act_at = now_utc
+        else:
+            resolved_act_at = None
+
         card = CreditCard(
             id=uuid.uuid4(),
             user_id=self.user.id,
@@ -279,7 +287,7 @@ class GateFixture:
             due_day=resolved_due_day,
             is_active=is_active,
             canonical_mode=canonical_mode,
-            canonical_activated_at=now_utc if canonical_mode else None,
+            canonical_activated_at=resolved_act_at,
             provenance=provenance,
             lifecycle_status="active",
             created_at=now_naive,
@@ -330,8 +338,6 @@ class GateFixture:
         from_currency="USD",
         to_currency="EUR",
     ):
-        from datetime import UTC, datetime, timedelta
-
         quote = FXQuote(
             id=uuid.uuid4(),
             user_id=self.user.id,
@@ -352,8 +358,6 @@ class GateFixture:
     async def add_exchange_rate(
         self, base_currency="USD", quote_currency="EUR", rate=Decimal("1.0"), provider="gate_test"
     ):
-        from datetime import UTC, datetime, timedelta
-
         er = ExchangeRate(
             id=uuid.uuid4(),
             base_currency=base_currency,
@@ -378,8 +382,6 @@ class GateFixture:
         enabled: bool = True,
         next_evaluation_at=None,
     ) -> ObligationAutoPaymentConfig:
-        from datetime import UTC, datetime
-
         now_utc = datetime.now(UTC)
         self.has_auto_payment = True
         cfg = ObligationAutoPaymentConfig(
@@ -539,7 +541,10 @@ class GateFixture:
                         ),
                     ),
                     ("obligations", delete(Obligation).where(Obligation.user_id == uid)),
-                    ("financial_events", delete(FinancialEvent).where(FinancialEvent.user_id == uid)),
+                    (
+                        "financial_events",
+                        delete(FinancialEvent).where(FinancialEvent.user_id == uid),
+                    ),
                     ("goals", delete(Goal).where(Goal.user_id == uid)),
                     ("accounts", delete(Account).where(Account.user_id == uid)),
                     ("fx_quotes", delete(FXQuote).where(FXQuote.user_id == uid)),
