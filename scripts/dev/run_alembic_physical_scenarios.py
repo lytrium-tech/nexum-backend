@@ -121,6 +121,45 @@ async def get_current_alembic_revision(db_url: str) -> str | None:
     return rev
 
 
+def normalize_trigger_status(status: str | bytes | None) -> str:
+    """Normalize PostgreSQL pg_trigger.tgenabled status value to string.
+
+    PostgreSQL catalog column "char" can be returned as str or bytes depending
+    on driver/protocol configuration (e.g., 'O' vs b'O').
+    Enabled status is 'O' (origin/enabled).
+    Disabled status is 'D' (disabled), 'R' (replica), or 'A' (always).
+    """
+    if status is None:
+        return ""
+    if isinstance(status, bytes):
+        return status.decode("ascii", errors="replace").strip()
+    if isinstance(status, str):
+        return status.strip()
+    return str(status).strip()
+
+
+def validate_trigger_status_map(triggers: dict) -> None:
+    """Validate that required immutability triggers exist and are enabled ('O').
+
+    Accepts both str and bytes for trigger names and tgenabled statuses.
+    Raises RuntimeError fail-closed if any expected trigger is missing or disabled.
+    """
+    expected = {"trg_cc_statements_immutable", "trg_cc_stmt_comp_immutable"}
+    norm_triggers = {
+        (k.decode("ascii", errors="replace").strip() if isinstance(k, bytes) else str(k).strip()): v
+        for k, v in triggers.items()
+    }
+    if set(norm_triggers.keys()) != expected:
+        missing = expected - set(norm_triggers.keys())
+        raise RuntimeError(f"Missing expected immutability triggers: {missing}")
+    for name, raw_status in norm_triggers.items():
+        norm_status = normalize_trigger_status(raw_status)
+        if norm_status != "O":
+            raise RuntimeError(
+                f"Trigger {name} is in status {raw_status!r} (normalized: {norm_status!r}), expected 'O' (enabled)"
+            )
+
+
 async def verify_triggers_and_table_state(db_url: str) -> None:
     """Verify that immutable statement triggers are present and enabled ('O')."""
     engine = create_async_engine(to_async_url(db_url))
@@ -134,15 +173,7 @@ async def verify_triggers_and_table_state(db_url: str) -> None:
         )
         res = await conn.execute(stmt)
         triggers = dict(res.all())
-        expected = {"trg_cc_statements_immutable", "trg_cc_stmt_comp_immutable"}
-        if set(triggers.keys()) != expected:
-            missing = expected - set(triggers.keys())
-            raise RuntimeError(f"Missing expected immutability triggers: {missing}")
-        for name, status in triggers.items():
-            if status != "O":
-                raise RuntimeError(
-                    f"Trigger {name} is in status {status!r}, expected 'O' (enabled)"
-                )
+        validate_trigger_status_map(triggers)
     await engine.dispose()
 
 

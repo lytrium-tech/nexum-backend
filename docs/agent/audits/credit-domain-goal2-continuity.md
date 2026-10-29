@@ -64,10 +64,11 @@
      - **Scenario B:** Empty DB -> prior head (`obligations_v1_7_auto_payments`) -> final linear head.
      - **Scenario C:** Empty DB -> prior head -> seed representative legacy dataset using ONLY columns available at prior head -> forward migration to final head -> assert column defaults, nullable preservation, zero synthetic backfill, F-15 constraint check, and partitioned debt query.
      - Final cleanup restores clean schema at final head.
-   - Non-DB local contract test suite: `tests/unit/test_credit_fixture_contracts.py` (13/13 passing) validating mapped attribute instantiations, command_id requirement on all mutating service calls, and repository boundaries.
+     - **Driver Trigger Status Normalization:** Fixed CT101 PostgreSQL driver manifestation where `pg_trigger.tgenabled` ("char" type) returns `b'O'` instead of `'O'`. Added `normalize_trigger_status()` and `validate_trigger_status_map()` to safely decode bytes and strip strings while strictly enforcing fail-closed rejection of disabled (`D`, `b'D'`), replica (`R`), or unknown states.
+   - Non-DB local contract test suite: `tests/unit/test_credit_fixture_contracts.py` (16/16 passing) validating mapped attribute instantiations, command_id requirement on all mutating service calls, repository boundaries, and fail-closed trigger status normalization across str and bytes.
    - Enhanced `tests/unit/postgres_helpers.py` with fail-closed trigger enable/disable, `verify_statement_triggers_enabled`, mapped attribute queries, and complete residue checks across 25 tables.
    - Updated `scripts/dev/run_physical_gate.py` with `--scenarios` / `--with-scenarios` and deterministic suite selection (`--suite credit|obligations|all`, `--credit`).
-   - Passed all 168 canonical credit unit tests, 25 runner unit tests, 4 alembic lineage unit tests, and 13 contract unit tests locally.
+   - Passed all 168 canonical credit unit tests, 25 runner unit tests, 4 alembic lineage unit tests, and 16 contract unit tests locally.
 
 ---
 

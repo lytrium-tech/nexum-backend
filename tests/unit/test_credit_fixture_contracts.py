@@ -431,3 +431,118 @@ def test_repository_has_get_card_debt_partitioned():
     assert hasattr(CreditCardRepository, "get_card_debt_partitioned")
     # CreditCardService does NOT define get_card_debt_partitioned directly; callers must use service.repo
     assert not hasattr(CreditCardService, "get_card_debt_partitioned")
+
+
+def test_normalize_trigger_status_accepts_str_and_bytes_enabled():
+    """Trigger status normalizer recognizes both str 'O' and bytes b'O' as enabled 'O'."""
+    from scripts.dev.run_alembic_physical_scenarios import normalize_trigger_status
+
+    # Enabled variants returned across different driver/protocol invocations (CT101 fix)
+    assert normalize_trigger_status("O") == "O"
+    assert normalize_trigger_status(b"O") == "O"
+    assert normalize_trigger_status("O ") == "O"
+    assert normalize_trigger_status(b"O ") == "O"
+    assert normalize_trigger_status(" o ") == "o"
+    assert normalize_trigger_status(b" o ") == "o"
+
+
+def test_normalize_trigger_status_preserves_disabled_and_unknown_values():
+    """Trigger status normalizer preserves disabled, replica, always, and unknown values without false enabled mapping."""
+    from scripts.dev.run_alembic_physical_scenarios import normalize_trigger_status
+
+    assert normalize_trigger_status("D") == "D"
+    assert normalize_trigger_status(b"D") == "D"
+    assert normalize_trigger_status("R") == "R"
+    assert normalize_trigger_status(b"R") == "R"
+    assert normalize_trigger_status("A") == "A"
+    assert normalize_trigger_status(b"A") == "A"
+    assert normalize_trigger_status(None) == ""
+    assert normalize_trigger_status("") == ""
+    assert normalize_trigger_status(b"") == ""
+    assert normalize_trigger_status("X") == "X"
+    assert normalize_trigger_status(b"X") == "X"
+
+
+def test_validate_trigger_status_map_accepts_str_and_bytes_enabled_and_rejects_disabled_fail_closed():
+    """Migration runner trigger validation accepts 'O' / b'O' but fails closed on missing or disabled triggers."""
+    from scripts.dev.run_alembic_physical_scenarios import validate_trigger_status_map
+
+    # 1. Standard string 'O' passes
+    validate_trigger_status_map(
+        {
+            "trg_cc_statements_immutable": "O",
+            "trg_cc_stmt_comp_immutable": "O",
+        }
+    )
+
+    # 2. CT101 exact driver manifestation: bytes b'O' passes
+    validate_trigger_status_map(
+        {
+            "trg_cc_statements_immutable": b"O",
+            "trg_cc_stmt_comp_immutable": b"O",
+        }
+    )
+
+    # 3. Mixed str and bytes passes
+    validate_trigger_status_map(
+        {
+            "trg_cc_statements_immutable": "O",
+            "trg_cc_stmt_comp_immutable": b"O",
+        }
+    )
+
+    # 4. Bytes trigger names also normalize and pass
+    validate_trigger_status_map(
+        {
+            b"trg_cc_statements_immutable": b"O",
+            b"trg_cc_stmt_comp_immutable": b"O",
+        }
+    )
+
+    # 5. Disabled trigger b'D' fails closed
+    with pytest.raises(RuntimeError) as exc_info:
+        validate_trigger_status_map(
+            {
+                "trg_cc_statements_immutable": b"D",
+                "trg_cc_stmt_comp_immutable": b"O",
+            }
+        )
+    assert "trg_cc_statements_immutable" in str(exc_info.value)
+    assert "expected 'O' (enabled)" in str(exc_info.value)
+
+    # 6. Replica trigger 'R' fails closed
+    with pytest.raises(RuntimeError) as exc_info:
+        validate_trigger_status_map(
+            {
+                "trg_cc_statements_immutable": "O",
+                "trg_cc_stmt_comp_immutable": "R",
+            }
+        )
+    assert "trg_cc_stmt_comp_immutable" in str(exc_info.value)
+    assert "expected 'O' (enabled)" in str(exc_info.value)
+
+    # 7. Missing trigger fails closed
+    with pytest.raises(RuntimeError) as exc_info:
+        validate_trigger_status_map(
+            {
+                "trg_cc_statements_immutable": b"O",
+            }
+        )
+    assert "Missing expected immutability triggers" in str(exc_info.value)
+    assert "trg_cc_stmt_comp_immutable" in str(exc_info.value)
+
+    # 8. Empty triggers map fails closed
+    with pytest.raises(RuntimeError) as exc_info:
+        validate_trigger_status_map({})
+    assert "Missing expected immutability triggers" in str(exc_info.value)
+
+    # 9. None / unknown status fails closed
+    with pytest.raises(RuntimeError) as exc_info:
+        validate_trigger_status_map(
+            {
+                "trg_cc_statements_immutable": b"O",
+                "trg_cc_stmt_comp_immutable": None,
+            }
+        )
+    assert "trg_cc_stmt_comp_immutable" in str(exc_info.value)
+    assert "expected 'O' (enabled)" in str(exc_info.value)

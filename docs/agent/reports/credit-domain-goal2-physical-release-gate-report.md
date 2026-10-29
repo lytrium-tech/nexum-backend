@@ -52,6 +52,7 @@ python scripts/dev/release_gate.py run --destructive-opt-in -- python scripts/de
 - **Scenario A:** Empty database -> linear HEAD (`credit_v2_canonical_closure`).
 - **Scenario B:** Empty database -> prior head (`obligations_v1_7_auto_payments`) -> linear HEAD.
 - **Scenario C:** Empty database -> prior head -> seed representative legacy dataset (using only baseline columns) -> forward upgrade to linear HEAD -> assert column defaults, nullable preservation, zero synthetic backfill, F-15 constraint check, and partitioned debt query.
+- **Trigger State Validation Normalization:** `pg_trigger.tgenabled` returns `b'O'` (bytes) in certain PostgreSQL async driver configurations. Normalized safely via `normalize_trigger_status()` accepting `'O'` / `b'O'` while strictly rejecting disabled (`D`, `b'D'`), replica (`R`), or unknown states fail-closed.
 
 ```text
 [INSERT SANITIZED ALEMBIC UPGRADE LOG HERE]
