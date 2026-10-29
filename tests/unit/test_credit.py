@@ -9,7 +9,7 @@ from app.credit.exceptions import (
     CreditLimitExceededError,
     InvalidPaymentAmountError,
 )
-from app.credit.models import CreditCard
+from app.credit.models import CreditCard, CreditCardInstallment
 from app.credit.schemas import (
     CreditCardCreate,
     CreditCardPaymentCreate,
@@ -30,6 +30,7 @@ def mock_credit_repo():
     }
     repo.get_next_payment_estimate.return_value = Decimal("0.00")
     repo.list_pending_installments_for_update.return_value = []
+    repo.list_credit_adjustment_allocations_for_installment.return_value = []
     repo.get_card_debt_partitioned.return_value = {
         "canonical_debt": Decimal("0.00"),
         "legacy_debt": Decimal("0.00"),
@@ -40,7 +41,10 @@ def mock_credit_repo():
 
 @pytest.fixture
 def mock_ledger_service():
-    return AsyncMock()
+    service = AsyncMock()
+    service.repository = AsyncMock()
+    service.repository.get_by_command_id.return_value = None
+    return service
 
 
 @pytest.fixture
@@ -49,11 +53,19 @@ def mock_account_repo():
 
 
 @pytest.fixture
-def credit_service(mock_credit_repo, mock_ledger_service, mock_account_repo):
+def mock_goal_repo():
+    repo = AsyncMock()
+    repo.calculate_reserved_by_account.return_value = Decimal("0.00")
+    return repo
+
+
+@pytest.fixture
+def credit_service(mock_credit_repo, mock_ledger_service, mock_account_repo, mock_goal_repo):
     service = CreditCardService(AsyncMock())
     service.repo = mock_credit_repo
     service.ledger_service = mock_ledger_service
     service.account_repo = mock_account_repo
+    service.goal_repo = mock_goal_repo
     return service
 
 
@@ -91,7 +103,13 @@ async def test_create_purchase_success(credit_service, mock_credit_repo, mock_le
     payload = CreditCardPurchaseCreate(amount=Decimal("1000"))
 
     mock_card = CreditCard(
-        id=card_id, user_id=user_id, credit_limit=Decimal("5000"), is_active=True, currency="COP", cutoff_day=15, due_day=30
+        id=card_id,
+        user_id=user_id,
+        credit_limit=Decimal("5000"),
+        is_active=True,
+        currency="COP",
+        cutoff_day=15,
+        due_day=30,
     )
     mock_credit_repo.get_by_id.return_value = mock_card
     mock_credit_repo.get_by_id.return_value = mock_card
@@ -162,23 +180,39 @@ async def test_create_payment_success(
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
     mock_card = CreditCard(
-        id=card_id, user_id=user_id, credit_limit=Decimal("5000"), is_active=True, currency="COP", cutoff_day=15, due_day=30
+        id=card_id,
+        user_id=user_id,
+        credit_limit=Decimal("5000"),
+        is_active=True,
+        currency="COP",
+        cutoff_day=15,
+        due_day=30,
     )
     mock_credit_repo.get_by_id_for_update.return_value = mock_card
     # Debt is 500
     mock_credit_repo.get_card_debt.return_value = (500.0, 100.0)
+    mock_credit_repo.get_card_debt_partitioned.return_value = {
+        "canonical_debt": Decimal("500.00"),
+        "legacy_debt": Decimal("0.00"),
+        "total_debt": Decimal("500.00"),
+    }
 
-    mock_inst = AsyncMock()
-    mock_inst.scheduled_period = "2026-06"
-    mock_inst.principal_amount = Decimal("500")
-    mock_inst.interest_amount = Decimal("0")
-    mock_inst.total_amount = Decimal("500")
-    mock_inst.paid_amount = Decimal("0")
-    mock_inst.installments_total = 1
+    mock_inst = CreditCardInstallment(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        credit_card_id=card_id,
+        purchase_transaction_id=uuid.uuid4(),
+        installment_number=1,
+        installments_total=1,
+        principal_amount=Decimal("500.00"),
+        interest_amount=Decimal("0.00"),
+        total_amount=Decimal("500.00"),
+        paid_amount=Decimal("0.00"),
+        scheduled_period="2026-06",
+        status="pending",
+    )
     mock_credit_repo.list_pending_installments_for_update.return_value = [mock_inst]
-    
-    mock_fee = AsyncMock(amount=Decimal("0"), paid_amount=Decimal("0"))
-    mock_credit_repo.list_unpaid_statement_charges_for_update.return_value = [mock_fee]
+    mock_credit_repo.list_unpaid_statement_charges_for_update.return_value = []
 
     mock_event = AsyncMock()
     mock_event.id = uuid.uuid4()
@@ -212,23 +246,39 @@ async def test_create_payment_overpayment(credit_service, mock_credit_repo, mock
     mock_account_repo.get_by_id_for_update.return_value = mock_account
 
     mock_card = CreditCard(
-        id=card_id, user_id=user_id, credit_limit=Decimal("5000"), is_active=True, currency="COP", cutoff_day=15, due_day=30
+        id=card_id,
+        user_id=user_id,
+        credit_limit=Decimal("5000"),
+        is_active=True,
+        currency="COP",
+        cutoff_day=15,
+        due_day=30,
     )
     mock_credit_repo.get_by_id_for_update.return_value = mock_card
     # Debt is 500, trying to pay 600
     mock_credit_repo.get_card_debt.return_value = (500.0, 100.0)
+    mock_credit_repo.get_card_debt_partitioned.return_value = {
+        "canonical_debt": Decimal("500.00"),
+        "legacy_debt": Decimal("0.00"),
+        "total_debt": Decimal("500.00"),
+    }
 
-    mock_inst = AsyncMock()
-    mock_inst.scheduled_period = "2026-06"
-    mock_inst.principal_amount = Decimal("500")
-    mock_inst.interest_amount = Decimal("0")
-    mock_inst.total_amount = Decimal("500")
-    mock_inst.paid_amount = Decimal("0")
-    mock_inst.installments_total = 1
+    mock_inst = CreditCardInstallment(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        credit_card_id=card_id,
+        purchase_transaction_id=uuid.uuid4(),
+        installment_number=1,
+        installments_total=1,
+        principal_amount=Decimal("500.00"),
+        interest_amount=Decimal("0.00"),
+        total_amount=Decimal("500.00"),
+        paid_amount=Decimal("0.00"),
+        scheduled_period="2026-06",
+        status="pending",
+    )
     mock_credit_repo.list_pending_installments_for_update.return_value = [mock_inst]
-    
-    mock_fee = AsyncMock(amount=Decimal("0"), paid_amount=Decimal("0"))
-    mock_credit_repo.list_unpaid_statement_charges_for_update.return_value = [mock_fee]
+    mock_credit_repo.list_unpaid_statement_charges_for_update.return_value = []
 
     with pytest.raises(InvalidPaymentAmountError):
         await credit_service.create_payment(user_id, card_id, payload, uuid.uuid4())

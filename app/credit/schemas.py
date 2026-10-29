@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
@@ -467,3 +467,77 @@ class CreditCardAdjustmentAllocationRead(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+AdjustmentType = Literal[
+    "refund",
+    "reversal",
+    "chargeback",
+    "statement_credit",
+    "manual_adjustment",
+]
+AdjustmentDirection = Literal["credit", "debit"]
+AdjustmentProvenance = Literal[
+    "manual",
+    "issuer_authoritative",
+    "nexum_modeled",
+    "legacy_unknown",
+]
+AdjustmentAllocationSource = Literal[
+    "nexum_modeled",
+    "issuer_authoritative",
+    "user_directed",
+]
+
+
+class CreditCardAdjustmentCreate(BaseModel):
+    original_transaction_id: uuid.UUID
+    amount: Decimal = Field(..., gt=0)
+    adjustment_type: AdjustmentType = "refund"
+    direction: AdjustmentDirection = "credit"
+    provenance: AdjustmentProvenance = "manual"
+    allocation_source: AdjustmentAllocationSource = "nexum_modeled"
+    reason: str | None = None
+    original_currency: str | None = None
+    original_amount: Decimal | None = None
+    source_message_id: uuid.UUID | None = None
+    raw_message: str | None = None
+
+    @model_validator(mode="after")
+    def validate_type_and_direction(self) -> "CreditCardAdjustmentCreate":
+        # Purchase refunds, chargebacks, and statement credits are strictly credits
+        if (
+            self.adjustment_type in ("refund", "chargeback", "statement_credit")
+            and self.direction != "credit"
+        ):
+            raise ValueError(
+                f"Adjustment type '{self.adjustment_type}' must have direction 'credit', got '{self.direction}'"
+            )
+        # Payment reversal is debit-to-card only
+        if self.adjustment_type == "reversal" and self.direction not in ("credit", "debit"):
+            raise ValueError(
+                "Reversal must have direction 'credit' (for purchase) or 'debit' (for payment)"
+            )
+        # Reject spoofed issuer_authoritative provenance or allocation_source on manual endpoint
+        if self.provenance == "issuer_authoritative":
+            raise ValueError(
+                "Cannot claim 'issuer_authoritative' provenance on manual adjustment endpoint"
+            )
+        if self.allocation_source == "issuer_authoritative":
+            raise ValueError(
+                "Cannot claim 'issuer_authoritative' allocation_source on manual adjustment endpoint"
+            )
+        return self
+
+
+class CreditCardAdjustmentResult(BaseModel):
+    status: str
+    adjustment_id: uuid.UUID
+    event_id: uuid.UUID | None = None
+    amount: Decimal
+    current_debt: Decimal
+    available_credit: Decimal
+    adjustment_type: str
+    direction: str
+    provenance: str = "manual"
+    allocation_source: str = "nexum_modeled"

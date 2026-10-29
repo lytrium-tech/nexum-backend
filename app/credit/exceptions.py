@@ -48,9 +48,7 @@ class CreditLimitExceededError(CreditDomainError):
     error_code = "credit_limit_exceeded"
     message = "Límite de crédito excedido."
 
-    def __init__(
-        self, message: str = "Credit limit exceeded", detail: dict | None = None
-    ) -> None:
+    def __init__(self, message: str = "Credit limit exceeded", detail: dict | None = None) -> None:
         super().__init__(message=message, detail=detail)
 
 

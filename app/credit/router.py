@@ -10,11 +10,14 @@ from app.credit.exceptions import (
     CreditCardInactiveError,
     CreditCardNotFoundError,
     CreditDomainError,
+    CreditGoalReservationBreachError,
     CreditIdempotencyConflictError,
     CreditLimitExceededError,
     InvalidPaymentAmountError,
 )
 from app.credit.schemas import (
+    CreditCardAdjustmentCreate,
+    CreditCardAdjustmentResult,
     CreditCardCreate,
     CreditCardEarlyPaymentCreate,
     CreditCardEarlyPaymentPreviewCreate,
@@ -166,17 +169,28 @@ async def create_payment(
             raise HTTPException(status_code=404, detail="Credit card not found")
         except CreditCardInactiveError:
             raise HTTPException(status_code=400, detail="Credit card is inactive")
+        except CreditGoalReservationBreachError as e:
+            raise HTTPException(status_code=409, detail=e.message)
+        except CreditIdempotencyConflictError as e:
+            raise HTTPException(status_code=409, detail=e.message)
         except ValueError as e:
             if str(e) == "Account not found or inactive":
                 raise HTTPException(status_code=404, detail=str(e))
             if str(e) == "Insufficient balance":
                 raise HTTPException(status_code=400, detail=str(e))
             raise HTTPException(status_code=400, detail=str(e))
-        except InvalidPaymentAmountError:
-            raise HTTPException(status_code=409, detail="Payment amount exceeds current debt")
+        except InvalidPaymentAmountError as e:
+            raise HTTPException(
+                status_code=409, detail=e.message or "Payment amount exceeds current debt"
+            )
+        except CreditDomainError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
-@router.post("/cards/{card_id}/purchases/{purchase_id}/pay_early", response_model=CreditCardEarlyPaymentResult)
+@router.post(
+    "/cards/{card_id}/purchases/{purchase_id}/pay_early",
+    response_model=CreditCardEarlyPaymentResult,
+)
 async def create_early_payment(
     card_id: uuid.UUID,
     purchase_id: uuid.UUID,
@@ -195,11 +209,17 @@ async def create_early_payment(
         user_id = current_profile.id
         service = get_credit_service(session)
         try:
-            return await service.create_early_payment(user_id, card_id, purchase_id, payload, command_id)
+            return await service.create_early_payment(
+                user_id, card_id, purchase_id, payload, command_id
+            )
         except CreditCardNotFoundError:
             raise HTTPException(status_code=404, detail="Credit card not found")
         except CreditCardInactiveError:
             raise HTTPException(status_code=400, detail="Credit card is inactive")
+        except CreditGoalReservationBreachError as e:
+            raise HTTPException(status_code=409, detail=e.message)
+        except CreditIdempotencyConflictError as e:
+            raise HTTPException(status_code=409, detail=e.message)
         except ValueError as e:
             if str(e) == "Account not found or inactive":
                 raise HTTPException(status_code=404, detail=str(e))
@@ -210,13 +230,18 @@ async def create_early_payment(
             raise HTTPException(status_code=409, detail=str(e))
         except Exception as e:
             from app.credit.exceptions import CreditDomainError
+
             if isinstance(e, CreditDomainError) and "Purchase not found" in str(e):
                 raise HTTPException(status_code=404, detail=str(e))
             if isinstance(e, CreditDomainError):
-                raise HTTPException(status_code=400, detail=str(e))
+                raise HTTPException(status_code=e.status_code, detail=e.message)
             raise
 
-@router.post("/cards/{card_id}/purchases/{purchase_id}/pay_early/preview", response_model=PaymentPreviewResult)
+
+@router.post(
+    "/cards/{card_id}/purchases/{purchase_id}/pay_early/preview",
+    response_model=PaymentPreviewResult,
+)
 async def preview_early_payment(
     card_id: uuid.UUID,
     purchase_id: uuid.UUID,
@@ -224,25 +249,58 @@ async def preview_early_payment(
     current_profile: CurrentUserProfile,
     session: AsyncSession = Depends(get_db_session),
 ):
+    # Strictly read-only: no uow.transaction(), no row locks (F-17)
+    user_id = current_profile.id
+    service = get_credit_service(session)
+    try:
+        return await service.preview_early_payment(user_id, card_id, purchase_id, payload)
+    except CreditCardNotFoundError:
+        raise HTTPException(status_code=404, detail="Credit card not found")
+    except ValueError as e:
+        if str(e) == "Account not found or inactive":
+            raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        from app.credit.exceptions import CreditDomainError
+
+        if isinstance(e, CreditDomainError) and "Purchase not found" in str(e):
+            raise HTTPException(status_code=404, detail=str(e))
+        if isinstance(e, CreditDomainError):
+            raise HTTPException(status_code=e.status_code, detail=e.message)
+        raise
+
+
+@router.post("/cards/{card_id}/adjustments", response_model=CreditCardAdjustmentResult)
+async def create_adjustment(
+    card_id: uuid.UUID,
+    payload: CreditCardAdjustmentCreate,
+    current_profile: CurrentUserProfile,
+    idempotency_key: str = Header(..., alias="Idempotency-Key"),
+    session: AsyncSession = Depends(get_db_session),
+):
+    try:
+        command_id = uuid.UUID(idempotency_key)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid Idempotency-Key format")
+
     uow = UnitOfWork(session)
     async with uow.transaction():
         user_id = current_profile.id
         service = get_credit_service(session)
         try:
-            return await service.preview_early_payment(user_id, card_id, purchase_id, payload)
+            return await service.create_adjustment(user_id, card_id, payload, command_id)
         except CreditCardNotFoundError:
             raise HTTPException(status_code=404, detail="Credit card not found")
-        except ValueError as e:
-            if str(e) == "Account not found or inactive":
-                raise HTTPException(status_code=404, detail=str(e))
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            from app.credit.exceptions import CreditDomainError
-            if isinstance(e, CreditDomainError) and "Purchase not found" in str(e):
-                raise HTTPException(status_code=404, detail=str(e))
-            if isinstance(e, CreditDomainError):
-                raise HTTPException(status_code=400, detail=str(e))
-            raise
+        except CreditCardInactiveError:
+            raise HTTPException(status_code=400, detail="Credit card is inactive")
+        except CreditIdempotencyConflictError as e:
+            raise HTTPException(status_code=409, detail=e.message)
+        except InvalidPaymentAmountError as e:
+            raise HTTPException(status_code=409, detail=e.message)
+        except CreditDomainError as e:
+            if "not found" in e.message.lower():
+                raise HTTPException(status_code=404, detail=e.message)
+            raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.get("/summary", response_model=CreditSummaryRead)

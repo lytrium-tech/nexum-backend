@@ -55,25 +55,58 @@ class CreditCardRepository:
 
         Guarantees:
         total_debt = canonical_debt + legacy_debt (zero double-counting).
+        Includes unpaid statement charges within canonical debt, excluding charges that mirror installments.
+        monthly_cc_payment reflects remaining canonical monthly obligations (net of credit adjustment
+        allocations) plus isolated legacy monthly compatibility obligations.
         """
         query = text("""
-            SELECT 
-                COALESCE(SUM(CASE WHEN debt_partition = 'canonical' THEN principal_amount + COALESCE(assessed_interest_amount, interest_amount) - paid_amount ELSE 0 END), 0) as canonical_debt,
-                COALESCE(SUM(CASE WHEN debt_partition != 'canonical' OR debt_partition IS NULL THEN principal_amount + interest_amount - paid_amount ELSE 0 END), 0) as legacy_debt,
-                COALESCE(SUM(CASE WHEN scheduled_period = to_char((now() AT TIME ZONE 'America/Bogota'), 'YYYY-MM') THEN principal_amount + COALESCE(assessed_interest_amount, interest_amount) - paid_amount ELSE 0 END), 0) as monthly_cc_payment
-            FROM credit_card_installments 
-            WHERE credit_card_id = :card_id AND status != 'paid'
+            WITH inst AS (
+                SELECT
+                    COALESCE(SUM(CASE WHEN debt_partition = 'canonical' THEN principal_amount + COALESCE(assessed_interest_amount, interest_amount) - paid_amount ELSE 0 END), 0) as canonical_inst_debt,
+                    COALESCE(SUM(CASE WHEN debt_partition != 'canonical' OR debt_partition IS NULL THEN principal_amount + interest_amount - paid_amount ELSE 0 END), 0) as legacy_debt,
+                    COALESCE(SUM(CASE WHEN debt_partition = 'canonical' AND scheduled_period = to_char((now() AT TIME ZONE 'America/Bogota'), 'YYYY-MM') THEN principal_amount + COALESCE(assessed_interest_amount, interest_amount) - paid_amount ELSE 0 END), 0) as canonical_monthly,
+                    COALESCE(SUM(CASE WHEN (debt_partition != 'canonical' OR debt_partition IS NULL) AND scheduled_period = to_char((now() AT TIME ZONE 'America/Bogota'), 'YYYY-MM') THEN principal_amount + interest_amount - paid_amount ELSE 0 END), 0) as legacy_monthly
+                FROM credit_card_installments
+                WHERE credit_card_id = :card_id AND status != 'paid'
+            ),
+            chg AS (
+                SELECT
+                    COALESCE(SUM(sc.amount - sc.paid_amount), 0) as charges_debt
+                FROM credit_card_statement_charges sc
+                JOIN credit_card_statements s ON sc.statement_id = s.id
+                WHERE s.credit_card_id = :card_id
+                  AND sc.status != 'paid'
+                  AND (sc.reference_id IS NULL OR sc.reference_id NOT IN (
+                      SELECT id FROM credit_card_installments WHERE credit_card_id = :card_id
+                  ))
+            ),
+            adj AS (
+                SELECT
+                    COALESCE(SUM(CASE WHEN a.direction = 'credit' THEN aa.allocated_amount ELSE -aa.allocated_amount END), 0) as net_adj_credit,
+                    COALESCE(SUM(CASE WHEN a.direction = 'credit' AND i.scheduled_period = to_char((now() AT TIME ZONE 'America/Bogota'), 'YYYY-MM') THEN aa.allocated_amount ELSE 0 END), 0) as monthly_adj_credit
+                FROM credit_card_adjustment_allocations aa
+                JOIN credit_card_adjustments a ON aa.adjustment_id = a.id
+                LEFT JOIN credit_card_installments i ON aa.target_installment_id = i.id
+                WHERE aa.credit_card_id = :card_id AND a.status = 'posted'
+            )
+            SELECT
+                inst.canonical_inst_debt + chg.charges_debt - adj.net_adj_credit as canonical_debt,
+                inst.legacy_debt as legacy_debt,
+                inst.canonical_inst_debt + chg.charges_debt - adj.net_adj_credit + inst.legacy_debt as total_debt,
+                inst.canonical_monthly - adj.monthly_adj_credit + inst.legacy_monthly as monthly_cc_payment
+            FROM inst, chg, adj
         """)
         result = await self.session.execute(query, {"card_id": card_id})
         row = result.fetchone()
         if row:
             c_debt = Decimal(str(row[0]))
             l_debt = Decimal(str(row[1]))
-            monthly = Decimal(str(row[2]))
+            tot_debt = Decimal(str(row[2]))
+            monthly = Decimal(str(row[3]))
             return {
                 "canonical_debt": c_debt,
                 "legacy_debt": l_debt,
-                "total_debt": c_debt + l_debt,
+                "total_debt": tot_debt,
                 "monthly_cc_payment": monthly,
             }
         return {
@@ -128,11 +161,120 @@ class CreditCardRepository:
             .order_by(
                 CreditCardInstallment.scheduled_period.asc(),
                 CreditCardInstallment.installment_number.asc(),
+                CreditCardInstallment.created_at.asc(),
+                CreditCardInstallment.id.asc(),
             )
             .with_for_update()
             .execution_options(populate_existing=True)
         )
         return list(result.scalars().all())
+
+    async def list_installments_for_transaction(
+        self, transaction_id: uuid.UUID
+    ) -> list[CreditCardInstallment]:
+        result = await self.session.execute(
+            select(CreditCardInstallment)
+            .where(CreditCardInstallment.purchase_transaction_id == transaction_id)
+            .order_by(
+                CreditCardInstallment.installment_number.asc(),
+                CreditCardInstallment.created_at.asc(),
+                CreditCardInstallment.id.asc(),
+            )
+        )
+        return list(result.scalars().all())
+
+    async def get_transaction_by_id_for_update(
+        self, transaction_id: uuid.UUID
+    ) -> CreditCardTransaction | None:
+        result = await self.session.execute(
+            select(CreditCardTransaction)
+            .where(CreditCardTransaction.id == transaction_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_payment_by_transaction_id(
+        self, transaction_id: uuid.UUID
+    ) -> CreditCardPayment | None:
+        result = await self.session.execute(
+            select(CreditCardPayment).where(
+                CreditCardPayment.payment_transaction_id == transaction_id
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def list_adjustments_for_transaction(
+        self, transaction_id: uuid.UUID
+    ) -> list[CreditCardAdjustment]:
+        result = await self.session.execute(
+            select(CreditCardAdjustment)
+            .where(CreditCardAdjustment.original_transaction_id == transaction_id)
+            .order_by(CreditCardAdjustment.occurred_at.asc(), CreditCardAdjustment.id.asc())
+        )
+        return list(result.scalars().all())
+
+    async def get_adjustment_by_event(self, event_id: uuid.UUID) -> CreditCardAdjustment | None:
+        result = await self.session.execute(
+            select(CreditCardAdjustment).where(CreditCardAdjustment.event_id == event_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_credit_adjustment_allocations_for_installment(
+        self, installment_id: uuid.UUID
+    ) -> list[CreditCardAdjustmentAllocation]:
+        result = await self.session.execute(
+            select(CreditCardAdjustmentAllocation)
+            .join(
+                CreditCardAdjustment,
+                CreditCardAdjustmentAllocation.adjustment_id == CreditCardAdjustment.id,
+            )
+            .where(
+                CreditCardAdjustmentAllocation.target_installment_id == installment_id,
+                CreditCardAdjustment.status == "posted",
+                CreditCardAdjustment.direction == "credit",
+            )
+        )
+        return list(result.scalars().all())
+
+    async def list_credit_adjustment_allocations_for_charge(
+        self, charge_id: uuid.UUID
+    ) -> list[CreditCardAdjustmentAllocation]:
+        result = await self.session.execute(
+            select(CreditCardAdjustmentAllocation)
+            .join(
+                CreditCardAdjustment,
+                CreditCardAdjustmentAllocation.adjustment_id == CreditCardAdjustment.id,
+            )
+            .where(
+                CreditCardAdjustmentAllocation.target_charge_id == charge_id,
+                CreditCardAdjustment.status == "posted",
+                CreditCardAdjustment.direction == "credit",
+            )
+        )
+        return list(result.scalars().all())
+
+    async def get_charge_by_id_for_update(
+        self, charge_id: uuid.UUID
+    ) -> CreditCardStatementCharge | None:
+        result = await self.session.execute(
+            select(CreditCardStatementCharge)
+            .where(CreditCardStatementCharge.id == charge_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_installment_by_id_for_update(
+        self, installment_id: uuid.UUID
+    ) -> CreditCardInstallment | None:
+        result = await self.session.execute(
+            select(CreditCardInstallment)
+            .where(CreditCardInstallment.id == installment_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one_or_none()
 
     async def get_transaction_by_event(self, event_id: uuid.UUID) -> CreditCardTransaction | None:
         result = await self.session.execute(
@@ -279,15 +421,26 @@ class CreditCardRepository:
         )
         return result.scalar_one_or_none()
 
-    async def list_unpaid_statement_charges_for_update(self, card_id: uuid.UUID) -> list:
+    async def list_unpaid_statement_charges_for_update(
+        self, card_id: uuid.UUID
+    ) -> list[CreditCardStatementCharge]:
+        subq_inst_ids = (
+            select(CreditCardInstallment.id)
+            .where(CreditCardInstallment.credit_card_id == card_id)
+            .scalar_subquery()
+        )
         result = await self.session.execute(
             select(CreditCardStatementCharge)
             .join(CreditCardStatement)
             .where(
                 CreditCardStatement.credit_card_id == card_id,
                 CreditCardStatementCharge.status != "paid",
+                (CreditCardStatementCharge.reference_id.is_(None))
+                | (CreditCardStatementCharge.reference_id.notin_(subq_inst_ids)),
             )
-            .order_by(CreditCardStatementCharge.created_at.asc())
+            .order_by(
+                CreditCardStatementCharge.created_at.asc(), CreditCardStatementCharge.id.asc()
+            )
             .with_for_update()
             .execution_options(populate_existing=True)
         )
@@ -651,7 +804,9 @@ class CreditCardRepository:
         result = await self.session.execute(
             select(CreditCardStatementCharge)
             .where(CreditCardStatementCharge.statement_id == statement_id)
-            .order_by(CreditCardStatementCharge.created_at.asc())
+            .order_by(
+                CreditCardStatementCharge.created_at.asc(), CreditCardStatementCharge.id.asc()
+            )
         )
         return list(result.scalars().all())
 
