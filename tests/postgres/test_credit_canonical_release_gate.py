@@ -1609,6 +1609,8 @@ async def test_pg10_f19_payable_set_consistency_mirrored_charge_no_double_count(
 
     # Total payable debt MUST be 110,000 COP (100,000 installment + 10,000 fee), NOT 210,000 COP
     assert debt_info["canonical_debt"] == Decimal("110000.00")
+    assert debt_info["legacy_debt"] == Decimal("0.00")
+    assert debt_info["total_debt"] == Decimal("110000.00")
 
 
 # ==============================================================================
@@ -1663,7 +1665,33 @@ async def test_pg11_canonical_and_legacy_debt_partitioning_no_double_count(
         created_at=now_utc,
         updated_at=now_utc,
     )
-    session.add(legacy_inst)
+    # Add legacy statement and legacy fee charge (25,000 COP)
+    legacy_stmt = CreditCardStatement(
+        id=uuid.uuid4(),
+        user_id=fixture.user_id,
+        credit_card_id=card.id,
+        billing_period="2026-09",
+        statement_balance=Decimal("25000.00"),
+        status="open",
+        debt_partition="legacy",
+        provenance="legacy_unknown",
+        created_at=now_utc,
+        updated_at=now_utc,
+    )
+    session.add(legacy_stmt)
+    await session.flush()
+
+    legacy_charge = CreditCardStatementCharge(
+        id=uuid.uuid4(),
+        statement_id=legacy_stmt.id,
+        charge_type="fee",
+        amount=Decimal("25000.00"),
+        paid_amount=Decimal("0.00"),
+        status="pending",
+        reference_id=None,
+        created_at=now_utc,
+    )
+    session.add_all([legacy_inst, legacy_charge])
     await session.commit()
 
     service = CreditCardService(session, fx_provider=static_fx)
@@ -1679,9 +1707,16 @@ async def test_pg11_canonical_and_legacy_debt_partitioning_no_double_count(
     await session.commit()
 
     debt_info = await service.repo.get_card_debt_partitioned(card.id)
+    # Canonical debt strictly reflects 200,000 COP purchase; legacy charge does not leak
     assert debt_info["canonical_debt"] == Decimal("200000.00")
-    assert debt_info["legacy_debt"] == Decimal("150000.00")
-    assert debt_info["total_debt"] == Decimal("350000.00")
+    # Legacy debt strictly contains legacy installment (150k) + legacy statement charge (25k) = 175,000 COP
+    assert debt_info["legacy_debt"] == Decimal("175000.00")
+    assert debt_info["total_debt"] == Decimal("375000.00")
+    assert debt_info["total_debt"] == debt_info["canonical_debt"] + debt_info["legacy_debt"]
+
+    # Canonical payment waterfall list cannot return legacy statement charge
+    unpaid_canonical_charges = await service.repo.list_unpaid_statement_charges_for_update(card.id)
+    assert len(unpaid_canonical_charges) == 0
 
 
 # ==============================================================================

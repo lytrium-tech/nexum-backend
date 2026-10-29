@@ -51,8 +51,9 @@ python scripts/dev/release_gate.py run --destructive-opt-in -- python scripts/de
 ### Executed Migration Scenarios:
 - **Scenario A:** Empty database -> linear HEAD (`credit_v2_canonical_closure`).
 - **Scenario B:** Empty database -> prior head (`obligations_v1_7_auto_payments`) -> linear HEAD.
-- **Scenario C:** Empty database -> prior head -> seed representative legacy dataset (using only baseline columns) -> forward upgrade to linear HEAD -> assert column defaults, nullable preservation, zero synthetic backfill, F-15 constraint check, and partitioned debt query.
+- **Scenario C:** Empty database -> prior head -> seed representative legacy dataset (using only baseline columns) -> forward upgrade to linear HEAD -> assert column defaults, nullable preservation, zero synthetic backfill, F-15 constraint check, and partitioned debt query (`canonical_debt=0`, `legacy_debt=120000.00` including 15k legacy statement fee, `total_debt=120000.00`).
 - **Trigger State Validation Normalization:** `pg_trigger.tgenabled` returns `b'O'` (bytes) in certain PostgreSQL async driver configurations. Normalized safely via `normalize_trigger_status()` accepting `'O'` / `b'O'` while strictly rejecting disabled (`D`, `b'D'`), replica (`R`), or unknown states fail-closed.
+- **Statement Charge Debt Partitioning:** Statement charges inherit joined statement `debt_partition`. Only canonical statement charges (`s.debt_partition = 'canonical'`) join into `canonical_debt` and `list_unpaid_statement_charges_for_update`. Legacy statement charges remain in `legacy_debt`, preserving exact financial conservation and no double count.
 
 ```text
 [INSERT SANITIZED ALEMBIC UPGRADE LOG HERE]
@@ -87,7 +88,7 @@ python scripts/dev/release_gate.py run --destructive-opt-in -- python scripts/de
 | **AC 9a** | `test_pg09a_atomic_rollback_on_ledger_failure` | Simulated failure during `record_event` triggers full atomic transaction rollback: 0 account debit, 0 payment row, 0 allocations. | `[PENDING]` |
 | **AC 9b** | `test_pg09b_atomic_rollback_on_allocation_failure` | Simulated failure during `add_payment_allocations` triggers full atomic rollback: 0 account debit, 0 payment row, 0 allocations. | `[PENDING]` |
 | **AC 10** | `test_pg10_f19_payable_set_consistency_mirrored_charge_no_double_count` | Installment 100 + mirrored charge 100 + fee 10 yields total payable debt 110, not 210. Waterfall and guard deduplicate mirrored charge. | `[PENDING]` |
-| **AC 11** | `test_pg11_canonical_and_legacy_debt_partitioning_no_double_count` | Frontier activation keeps legacy debt isolated. `get_card_debt_partitioned` returns accurate canonical + legacy sum with zero double count. | `[PENDING]` |
+| **AC 11** | `test_pg11_canonical_and_legacy_debt_partitioning_no_double_count` | Frontier activation keeps legacy debt isolated (canonical 200k + legacy inst 150k + legacy fee 25k = 375k total). `get_card_debt_partitioned` and `list_unpaid_statement_charges_for_update` isolate legacy charges with zero leak or waterfall misallocation. | `[PENDING]` |
 | **AC 12** | `test_pg12_harness_cleanup_and_residue_verification` | Fixture cleanup drops all synthetic test rows and verifies count == 0 across all credit, ledger, goal, account, and user tables with enabled triggers. | `[PENDING]` |
 
 ---

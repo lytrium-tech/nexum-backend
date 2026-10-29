@@ -447,10 +447,14 @@ async def verify_legacy_dataset_post_migration(db_url: str) -> None:
         assert debt_data["canonical_debt"] == Decimal("0.00"), (
             f"Expected canonical_debt=0, got {debt_data['canonical_debt']}"
         )
-        assert debt_data["legacy_debt"] > Decimal("0.00"), (
-            f"Expected legacy_debt > 0, got {debt_data['legacy_debt']}"
+        # Legacy debt strictly includes legacy installment (105k) + legacy statement charge (15k) = 120k
+        assert debt_data["legacy_debt"] == Decimal("120000.00"), (
+            f"Expected legacy_debt=120000.00 (105k inst + 15k fee), got {debt_data['legacy_debt']}"
         )
-        assert debt_data["total_debt"] == debt_data["legacy_debt"], (
+        assert debt_data["total_debt"] == Decimal("120000.00"), (
+            f"Expected total_debt=120000.00, got {debt_data['total_debt']}"
+        )
+        assert debt_data["total_debt"] == debt_data["canonical_debt"] + debt_data["legacy_debt"], (
             "Debt partition conservation violated"
         )
 

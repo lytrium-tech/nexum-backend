@@ -546,3 +546,195 @@ def test_validate_trigger_status_map_accepts_str_and_bytes_enabled_and_rejects_d
         )
     assert "trg_cc_stmt_comp_immutable" in str(exc_info.value)
     assert "expected 'O' (enabled)" in str(exc_info.value)
+
+
+def test_get_card_debt_partitioned_sql_splits_charges_by_statement_partition():
+    """get_card_debt_partitioned query inherits statement partition for charges with no double-counting."""
+    src = inspect.getsource(CreditCardRepository.get_card_debt_partitioned)
+
+    # 1. Joins statements to inspect s.debt_partition
+    assert "JOIN credit_card_statements s ON sc.statement_id = s.id" in src
+
+    # 2. Partitions charges into canonical vs legacy based on joined statement partition
+    assert "s.debt_partition = 'canonical'" in src
+    assert "canonical_charges_debt" in src
+    assert "s.debt_partition != 'canonical' OR s.debt_partition IS NULL" in src
+    assert "legacy_charges_debt" in src
+
+    # 3. Excludes installment-mirroring charges
+    assert "sc.reference_id IS NULL OR sc.reference_id NOT IN" in src
+
+    # 4. Total debt is strict arithmetic sum of canonical and legacy partitions
+    assert (
+        "inst.canonical_inst_debt + chg.canonical_charges_debt - adj.net_adj_credit as canonical_debt"
+        in src
+    )
+    assert "inst.legacy_debt + chg.legacy_charges_debt as legacy_debt" in src
+    assert (
+        "inst.canonical_inst_debt + chg.canonical_charges_debt - adj.net_adj_credit + inst.legacy_debt + chg.legacy_charges_debt as total_debt"
+        in src
+    )
+
+
+def test_list_unpaid_statement_charges_for_update_requires_canonical_partition():
+    """Payment allocation query strictly filters statement charges to canonical partition."""
+    src = inspect.getsource(CreditCardRepository.list_unpaid_statement_charges_for_update)
+
+    # Joins statement and asserts canonical debt partition
+    assert ".join(CreditCardStatement)" in src
+    assert 'CreditCardStatement.debt_partition == "canonical"' in src
+    assert 'CreditCardStatementCharge.status != "paid"' in src
+    assert "CreditCardStatementCharge.reference_id.notin_(subq_inst_ids)" in src
+
+
+def test_debt_partitioning_financial_conservation_pure_logic():
+    """Verify debt partitioning arithmetic preserves no double-count across pure legacy and mixed cards."""
+
+    def partition_debt(
+        installments: list[dict], charges: list[dict], adjustments: list[dict]
+    ) -> dict[str, Decimal]:
+        inst_ids = {i["id"] for i in installments}
+
+        canonical_inst = sum(
+            (
+                i["principal_amount"]
+                + i.get("assessed_interest_amount", i.get("interest_amount", Decimal("0.00")))
+                - i["paid_amount"]
+            )
+            for i in installments
+            if i.get("debt_partition") == "canonical" and i.get("status") != "paid"
+        )
+        legacy_inst = sum(
+            (i["principal_amount"] + i["interest_amount"] - i["paid_amount"])
+            for i in installments
+            if i.get("debt_partition") != "canonical" and i.get("status") != "paid"
+        )
+
+        canonical_chg = sum(
+            (c["amount"] - c["paid_amount"])
+            for c in charges
+            if c.get("status") != "paid"
+            and c.get("statement_partition") == "canonical"
+            and (c.get("reference_id") is None or c.get("reference_id") not in inst_ids)
+        )
+        legacy_chg = sum(
+            (c["amount"] - c["paid_amount"])
+            for c in charges
+            if c.get("status") != "paid"
+            and c.get("statement_partition") != "canonical"
+            and (c.get("reference_id") is None or c.get("reference_id") not in inst_ids)
+        )
+
+        net_adj = sum(
+            (a["amount"] if a.get("direction") == "credit" else -a["amount"]) for a in adjustments
+        )
+
+        canonical_debt = Decimal(str(canonical_inst + canonical_chg - net_adj))
+        legacy_debt = Decimal(str(legacy_inst + legacy_chg))
+        total_debt = canonical_debt + legacy_debt
+        return {
+            "canonical_debt": canonical_debt,
+            "legacy_debt": legacy_debt,
+            "total_debt": total_debt,
+        }
+
+    # Case A: Pure legacy card with legacy installment (105k) + legacy statement fee (15k) [CT101 Scenario C]
+    res_a = partition_debt(
+        installments=[
+            {
+                "id": uuid.uuid4(),
+                "principal_amount": Decimal("100000.00"),
+                "interest_amount": Decimal("5000.00"),
+                "paid_amount": Decimal("0.00"),
+                "debt_partition": "legacy",
+                "status": "pending",
+            }
+        ],
+        charges=[
+            {
+                "id": uuid.uuid4(),
+                "amount": Decimal("15000.00"),
+                "paid_amount": Decimal("0.00"),
+                "statement_partition": "legacy",
+                "reference_id": None,
+                "status": "pending",
+            }
+        ],
+        adjustments=[],
+    )
+    assert res_a["canonical_debt"] == Decimal("0.00")
+    assert res_a["legacy_debt"] == Decimal("120000.00")
+    assert res_a["total_debt"] == Decimal("120000.00")
+
+    # Case B: Mixed card with legacy installment (150k), legacy fee (25k), canonical installment (200k)
+    res_b = partition_debt(
+        installments=[
+            {
+                "id": uuid.uuid4(),
+                "principal_amount": Decimal("150000.00"),
+                "interest_amount": Decimal("0.00"),
+                "paid_amount": Decimal("0.00"),
+                "debt_partition": "legacy",
+                "status": "pending",
+            },
+            {
+                "id": uuid.uuid4(),
+                "principal_amount": Decimal("200000.00"),
+                "interest_amount": Decimal("0.00"),
+                "paid_amount": Decimal("0.00"),
+                "debt_partition": "canonical",
+                "status": "pending",
+            },
+        ],
+        charges=[
+            {
+                "id": uuid.uuid4(),
+                "amount": Decimal("25000.00"),
+                "paid_amount": Decimal("0.00"),
+                "statement_partition": "legacy",
+                "reference_id": None,
+                "status": "pending",
+            }
+        ],
+        adjustments=[],
+    )
+    assert res_b["canonical_debt"] == Decimal("200000.00")
+    assert res_b["legacy_debt"] == Decimal("175000.00")
+    assert res_b["total_debt"] == Decimal("375000.00")
+
+    # Case C: Mirrored installment charge is NOT double counted
+    inst_c_id = uuid.uuid4()
+    res_c = partition_debt(
+        installments=[
+            {
+                "id": inst_c_id,
+                "principal_amount": Decimal("100000.00"),
+                "interest_amount": Decimal("0.00"),
+                "paid_amount": Decimal("0.00"),
+                "debt_partition": "canonical",
+                "status": "pending",
+            }
+        ],
+        charges=[
+            {
+                "id": uuid.uuid4(),
+                "amount": Decimal("100000.00"),
+                "paid_amount": Decimal("0.00"),
+                "statement_partition": "canonical",
+                "reference_id": inst_c_id,  # Mirroring charge!
+                "status": "pending",
+            },
+            {
+                "id": uuid.uuid4(),
+                "amount": Decimal("10000.00"),
+                "paid_amount": Decimal("0.00"),
+                "statement_partition": "canonical",
+                "reference_id": None,
+                "status": "pending",
+            },
+        ],
+        adjustments=[],
+    )
+    assert res_c["canonical_debt"] == Decimal("110000.00")
+    assert res_c["legacy_debt"] == Decimal("0.00")
+    assert res_c["total_debt"] == Decimal("110000.00")

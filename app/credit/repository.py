@@ -55,7 +55,10 @@ class CreditCardRepository:
 
         Guarantees:
         total_debt = canonical_debt + legacy_debt (zero double-counting).
-        Includes unpaid statement charges within canonical debt, excluding charges that mirror installments.
+        Unpaid statement charges inherit parent statement debt_partition:
+        - Canonical statement charges (s.debt_partition = 'canonical') belong to canonical_debt.
+        - Legacy/unknown statement charges (s.debt_partition != 'canonical' or NULL) belong to legacy_debt.
+        Charges mirroring installments (sc.reference_id matching an installment) are excluded from both partitions.
         monthly_cc_payment reflects remaining canonical monthly obligations (net of credit adjustment
         allocations) plus isolated legacy monthly compatibility obligations.
         """
@@ -71,7 +74,8 @@ class CreditCardRepository:
             ),
             chg AS (
                 SELECT
-                    COALESCE(SUM(sc.amount - sc.paid_amount), 0) as charges_debt
+                    COALESCE(SUM(CASE WHEN s.debt_partition = 'canonical' THEN sc.amount - sc.paid_amount ELSE 0 END), 0) as canonical_charges_debt,
+                    COALESCE(SUM(CASE WHEN s.debt_partition != 'canonical' OR s.debt_partition IS NULL THEN sc.amount - sc.paid_amount ELSE 0 END), 0) as legacy_charges_debt
                 FROM credit_card_statement_charges sc
                 JOIN credit_card_statements s ON sc.statement_id = s.id
                 WHERE s.credit_card_id = :card_id
@@ -90,9 +94,9 @@ class CreditCardRepository:
                 WHERE aa.credit_card_id = :card_id AND a.status = 'posted'
             )
             SELECT
-                inst.canonical_inst_debt + chg.charges_debt - adj.net_adj_credit as canonical_debt,
-                inst.legacy_debt as legacy_debt,
-                inst.canonical_inst_debt + chg.charges_debt - adj.net_adj_credit + inst.legacy_debt as total_debt,
+                inst.canonical_inst_debt + chg.canonical_charges_debt - adj.net_adj_credit as canonical_debt,
+                inst.legacy_debt + chg.legacy_charges_debt as legacy_debt,
+                inst.canonical_inst_debt + chg.canonical_charges_debt - adj.net_adj_credit + inst.legacy_debt + chg.legacy_charges_debt as total_debt,
                 inst.canonical_monthly - adj.monthly_adj_credit + inst.legacy_monthly as monthly_cc_payment
             FROM inst, chg, adj
         """)
@@ -434,6 +438,7 @@ class CreditCardRepository:
             .join(CreditCardStatement)
             .where(
                 CreditCardStatement.credit_card_id == card_id,
+                CreditCardStatement.debt_partition == "canonical",
                 CreditCardStatementCharge.status != "paid",
                 (CreditCardStatementCharge.reference_id.is_(None))
                 | (CreditCardStatementCharge.reference_id.notin_(subq_inst_ids)),

@@ -65,10 +65,11 @@
      - **Scenario C:** Empty DB -> prior head -> seed representative legacy dataset using ONLY columns available at prior head -> forward migration to final head -> assert column defaults, nullable preservation, zero synthetic backfill, F-15 constraint check, and partitioned debt query.
      - Final cleanup restores clean schema at final head.
      - **Driver Trigger Status Normalization:** Fixed CT101 PostgreSQL driver manifestation where `pg_trigger.tgenabled` ("char" type) returns `b'O'` instead of `'O'`. Added `normalize_trigger_status()` and `validate_trigger_status_map()` to safely decode bytes and strip strings while strictly enforcing fail-closed rejection of disabled (`D`, `b'D'`), replica (`R`), or unknown states.
-   - Non-DB local contract test suite: `tests/unit/test_credit_fixture_contracts.py` (16/16 passing) validating mapped attribute instantiations, command_id requirement on all mutating service calls, repository boundaries, and fail-closed trigger status normalization across str and bytes.
+     - **Statement Charge Debt-Partition Alignment:** Repaired `CreditCardRepository.get_card_debt_partitioned` so statement charges inherit the joined parent statement `debt_partition` (`canonical` vs `legacy`/unknown), preventing legacy charges (15,000 COP) from leaking into canonical debt. Aligned `list_unpaid_statement_charges_for_update` to strictly lock canonical charges for payment waterfall. Scenario C asserts `canonical_debt=0`, `legacy_debt=120000.00` (105k inst + 15k fee), and `total_debt=120000.00` with exact partition conservation.
+   - Non-DB local contract test suite: `tests/unit/test_credit_fixture_contracts.py` (19/19 passing) validating mapped attribute instantiations, command_id requirement on all mutating service calls, repository boundaries, fail-closed trigger status normalization across str and bytes, statement charge partition splitting SQL, and pure partition conservation arithmetic.
    - Enhanced `tests/unit/postgres_helpers.py` with fail-closed trigger enable/disable, `verify_statement_triggers_enabled`, mapped attribute queries, and complete residue checks across 25 tables.
    - Updated `scripts/dev/run_physical_gate.py` with `--scenarios` / `--with-scenarios` and deterministic suite selection (`--suite credit|obligations|all`, `--credit`).
-   - Passed all 168 canonical credit unit tests, 25 runner unit tests, 4 alembic lineage unit tests, and 16 contract unit tests locally.
+   - Passed all 168 canonical credit unit tests, 25 runner unit tests, 4 alembic lineage unit tests, and 19 contract unit tests locally.
 
 ---
 
