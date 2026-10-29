@@ -7,6 +7,8 @@ Validates that:
    that strictly excludes 'v1_5_baseline' (no retrospective execution).
 4. A fresh empty database (current_rev=None) resolves an upgrade path to HEAD starting
    with 'v1_5_baseline'.
+5. Upgrading from prior production-compatible head ('obligations_v1_7_auto_payments') to HEAD
+   ('credit_v2_canonical_closure') executes Credit V2 migrations linearly, and downgrading resolves back.
 """
 
 from alembic.config import Config
@@ -22,10 +24,10 @@ def test_alembic_lineage_tree_root_and_head():
     """Verify that Alembic lineage forms a single linear DAG with v1_5_baseline as base."""
     script_dir = get_script_directory()
 
-    # Head must be obligations_v1_7_auto_payments
+    # Head must be credit_v2_canonical_closure
     heads = script_dir.get_heads()
     assert len(heads) == 1
-    assert heads[0] == "obligations_v1_7_auto_payments"
+    assert heads[0] == "credit_v2_canonical_closure"
 
     # Bases must be exactly v1_5_baseline
     bases = script_dir.get_bases()
@@ -65,6 +67,9 @@ def test_historical_revision_upgrades_to_head_without_executing_baseline():
         "goals_v1_ph2_releases",
         "goals_v1_9_auto_contributions",
         "obligations_v1_7_auto_payments",
+        "credit_v2_canonical_schema",
+        "credit_v2_canonical_check",
+        "credit_v2_canonical_closure",
     ]
     assert upgrade_revisions == expected_sequence
 
@@ -82,29 +87,35 @@ def test_fresh_empty_database_includes_v1_5_baseline_in_upgrade_path():
     # Full chain starting from v1_5_baseline up to head
     assert all_revisions[0] == "v1_5_baseline"
     assert all_revisions[1] == "v1_7_phase2_1"
-    assert all_revisions[-1] == "obligations_v1_7_auto_payments"
-    assert len(all_revisions) == 10
+    assert all_revisions[-1] == "credit_v2_canonical_closure"
+    assert len(all_revisions) == 13
 
 
 def test_prior_head_to_new_head_upgrade_and_downgrade_resolution():
-    """Verify that upgrading from prior head (goals_v1_9_auto_contributions) to HEAD
+    """Verify that upgrading from prior head (obligations_v1_7_auto_payments) to HEAD
 
-    resolves strictly to obligations_v1_7_auto_payments, and downgrading resolves back.
+    resolves strictly to Credit V2 migrations, and downgrading resolves back.
     """
     script_dir = get_script_directory()
 
-    # Upgrade step resolution
+    # Upgrade step resolution from prior head
     steps = script_dir._upgrade_revs(
-        destination="head", current_rev="goals_v1_9_auto_contributions"
+        destination="head", current_rev="obligations_v1_7_auto_payments"
     )
     upgrade_revisions = [step.revision.revision for step in steps]
-    assert len(upgrade_revisions) == 1
-    assert upgrade_revisions[0] == "obligations_v1_7_auto_payments"
+    assert upgrade_revisions == [
+        "credit_v2_canonical_schema",
+        "credit_v2_canonical_check",
+        "credit_v2_canonical_closure",
+    ]
 
-    # Downgrade step resolution
+    # Downgrade step resolution back to prior head
     down_steps = script_dir._downgrade_revs(
-        destination="goals_v1_9_auto_contributions", current_rev="obligations_v1_7_auto_payments"
+        destination="obligations_v1_7_auto_payments", current_rev="credit_v2_canonical_closure"
     )
     downgrade_revisions = [step.revision.revision for step in down_steps]
-    assert len(downgrade_revisions) == 1
-    assert downgrade_revisions[0] == "obligations_v1_7_auto_payments"
+    assert downgrade_revisions == [
+        "credit_v2_canonical_closure",
+        "credit_v2_canonical_check",
+        "credit_v2_canonical_schema",
+    ]

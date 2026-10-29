@@ -179,3 +179,93 @@ def test_main_exits_nonzero_when_skips_detected():
                 mock_pytest_main.side_effect = fake_pytest_main
                 exit_code = main(["tests/unit/test_foo.py"])
                 assert exit_code == 1
+
+
+def test_resolve_suite_args_credit_suite():
+    from scripts.dev.run_physical_gate import CREDIT_CANONICAL_SUITES, resolve_suite_args
+
+    args = resolve_suite_args(["--suite", "credit", "-v"])
+    assert "-v" in args
+    for suite in CREDIT_CANONICAL_SUITES:
+        assert suite in args
+
+
+def test_resolve_suite_args_obligations_suite():
+    from scripts.dev.run_physical_gate import OBLIGATIONS_CANONICAL_SUITES, resolve_suite_args
+
+    args = resolve_suite_args(["--suite", "obligations"])
+    assert args == OBLIGATIONS_CANONICAL_SUITES
+
+
+def test_resolve_suite_args_all_suite():
+    from scripts.dev.run_physical_gate import DEFAULT_CANONICAL_SUITES, resolve_suite_args
+
+    args = resolve_suite_args(["--suite", "all"])
+    assert args == DEFAULT_CANONICAL_SUITES
+
+
+def test_resolve_suite_args_credit_flag():
+    from scripts.dev.run_physical_gate import CREDIT_CANONICAL_SUITES, resolve_suite_args
+
+    args = resolve_suite_args(["--credit"])
+    assert args == CREDIT_CANONICAL_SUITES
+
+
+def test_resolve_suite_args_defaults_when_empty():
+    from scripts.dev.run_physical_gate import DEFAULT_CANONICAL_SUITES, resolve_suite_args
+
+    args = resolve_suite_args([])
+    assert args == DEFAULT_CANONICAL_SUITES
+
+
+def test_resolve_suite_args_preserves_custom_targets():
+    from scripts.dev.run_physical_gate import resolve_suite_args
+
+    custom = ["tests/postgres/test_credit_canonical_release_gate.py"]
+    args = resolve_suite_args(custom)
+    assert args == custom
+
+
+def test_resolve_suite_args_rejects_unknown_suite():
+    from scripts.dev.run_physical_gate import resolve_suite_args
+
+    with pytest.raises(SystemExit) as exc:
+        resolve_suite_args(["--suite", "unknown_suite"])
+    assert exc.value.code == 1
+
+
+def test_resolve_suite_args_rejects_missing_suite_argument():
+    from scripts.dev.run_physical_gate import resolve_suite_args
+
+    with pytest.raises(SystemExit) as exc:
+        resolve_suite_args(["--suite"])
+    assert exc.value.code == 1
+
+
+def test_resolve_suite_args_with_scenarios_flag():
+    from scripts.dev.run_physical_gate import CREDIT_CANONICAL_SUITES, resolve_suite_args
+
+    args = resolve_suite_args(["--with-scenarios", "--credit"])
+    assert args == CREDIT_CANONICAL_SUITES
+
+
+def test_main_runs_scenarios_and_fails_if_scenarios_fail():
+    with patch("scripts.dev.run_physical_gate.validate_gate_guards"):
+        with patch("scripts.dev.run_physical_gate.setup_isolated_test_environment"):
+            with patch(
+                "scripts.dev.run_alembic_physical_scenarios.main", return_value=1
+            ) as mock_scenarios:
+                exit_code = main(["--scenarios"])
+                assert exit_code == 1
+                mock_scenarios.assert_called_once()
+
+
+def test_main_runs_scenarios_only_and_exits_zero_on_success():
+    with patch("scripts.dev.run_physical_gate.validate_gate_guards"):
+        with patch("scripts.dev.run_physical_gate.setup_isolated_test_environment"):
+            with patch(
+                "scripts.dev.run_alembic_physical_scenarios.main", return_value=0
+            ) as mock_scenarios:
+                exit_code = main(["--scenarios"])
+                assert exit_code == 0
+                mock_scenarios.assert_called_once()

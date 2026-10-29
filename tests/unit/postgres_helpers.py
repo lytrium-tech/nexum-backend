@@ -6,6 +6,21 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.models import Account
+from app.credit.models import (
+    CreditCard,
+    CreditCardAdjustment,
+    CreditCardAdjustmentAllocation,
+    CreditCardBillingCycle,
+    CreditCardEarlyPayment,
+    CreditCardInstallment,
+    CreditCardPayment,
+    CreditCardPaymentAllocation,
+    CreditCardStatement,
+    CreditCardStatementCharge,
+    CreditCardStatementComponent,
+    CreditCardStatementFact,
+    CreditCardTransaction,
+)
 from app.goals.enums import GoalTransactionType
 from app.goals.models import Goal, GoalTransaction
 from app.ledger.models import FinancialEvent
@@ -66,6 +81,45 @@ async def wait_for_blocked(
             return True
         await asyncio.sleep(interval)
     raise TimeoutError(f"PID {blocked_pid} was not observed blocked on lock within {timeout}s")
+
+
+async def _set_statement_triggers_enabled(session: AsyncSession, enabled: bool) -> None:
+    """Enable or disable immutable statement triggers for synthetic cleanup safely.
+
+    Fails closed immediately on any error; never swallows trigger modification failures.
+    """
+    action = "ENABLE" if enabled else "DISABLE"
+    for tbl, trg in [
+        ("credit_card_statement_components", "trg_cc_stmt_comp_immutable"),
+        ("credit_card_statements", "trg_cc_statements_immutable"),
+    ]:
+        await session.execute(text(f"ALTER TABLE {tbl} {action} TRIGGER {trg};"))
+
+
+async def verify_statement_triggers_enabled(session: AsyncSession) -> bool:
+    """Verify that immutable statement triggers are present and enabled ('O') in PostgreSQL.
+
+    Raises RuntimeError fail-closed if any trigger is absent or not in status 'O' (enabled).
+    """
+    stmt = text(
+        """
+        SELECT tgname, tgenabled
+        FROM pg_trigger
+        WHERE tgname IN ('trg_cc_statements_immutable', 'trg_cc_stmt_comp_immutable');
+        """
+    )
+    res = await session.execute(stmt)
+    rows = dict(res.all())
+    expected = {"trg_cc_statements_immutable", "trg_cc_stmt_comp_immutable"}
+    if set(rows.keys()) != expected:
+        missing = expected - set(rows.keys())
+        raise RuntimeError(f"Missing expected immutability triggers: {missing}")
+    for name, status in rows.items():
+        if status != "O":
+            raise RuntimeError(
+                f"Immutability trigger '{name}' is not in enabled state 'O' (found: {status!r})"
+            )
+    return True
 
 
 class GateFixture:
@@ -181,6 +235,44 @@ class GateFixture:
         await self.session.flush()
         return obl, created_periods
 
+    async def add_credit_card(
+        self,
+        currency: str = "COP",
+        credit_limit: Decimal = Decimal("5000000.00"),
+        cutoff_day: int = 15,
+        due_day: int = 5,
+        payment_due_day: int | None = None,
+        is_active: bool = True,
+        name: str = "Gate Card",
+        canonical_mode: bool = True,
+        provenance: str = "nexum_modeled",
+    ) -> CreditCard:
+        from datetime import UTC, datetime
+
+        resolved_due_day = due_day if payment_due_day is None else payment_due_day
+        now_utc = datetime.now(UTC)
+        card = CreditCard(
+            id=uuid.uuid4(),
+            user_id=self.user.id,
+            name=name,
+            bank="Gate Bank",
+            currency=currency,
+            credit_limit=credit_limit,
+            current_debt=Decimal("0.00"),
+            cutoff_day=cutoff_day,
+            due_day=resolved_due_day,
+            is_active=is_active,
+            canonical_mode=canonical_mode,
+            canonical_activated_at=now_utc if canonical_mode else None,
+            provenance=provenance,
+            lifecycle_status="active",
+            created_at=now_utc,
+            updated_at=now_utc,
+        )
+        self.session.add(card)
+        await self.session.flush()
+        return card
+
     async def add_fx_quote(
         self,
         target_amount: Decimal,
@@ -265,7 +357,91 @@ class GateFixture:
             errors.append(("initial_rollback", exc))
 
         uid = self.user_id
+
+        # Temporarily disable immutability triggers for synthetic test row cleanup
+        await _set_statement_triggers_enabled(self.session, False)
+
         stages = [
+            (
+                "credit_card_adjustment_allocations",
+                delete(CreditCardAdjustmentAllocation).where(
+                    CreditCardAdjustmentAllocation.adjustment_id.in_(
+                        select(CreditCardAdjustment.id).where(CreditCardAdjustment.user_id == uid)
+                    )
+                ),
+            ),
+            (
+                "credit_card_payment_allocations",
+                delete(CreditCardPaymentAllocation).where(
+                    CreditCardPaymentAllocation.payment_id.in_(
+                        select(CreditCardPayment.id).where(CreditCardPayment.user_id == uid)
+                    )
+                ),
+            ),
+            (
+                "credit_card_statement_components",
+                delete(CreditCardStatementComponent).where(
+                    CreditCardStatementComponent.statement_id.in_(
+                        select(CreditCardStatement.id).where(CreditCardStatement.user_id == uid)
+                    )
+                ),
+            ),
+            (
+                "credit_card_statement_facts",
+                delete(CreditCardStatementFact).where(
+                    CreditCardStatementFact.statement_id.in_(
+                        select(CreditCardStatement.id).where(CreditCardStatement.user_id == uid)
+                    )
+                ),
+            ),
+            (
+                "credit_card_statement_charges",
+                delete(CreditCardStatementCharge).where(
+                    CreditCardStatementCharge.statement_id.in_(
+                        select(CreditCardStatement.id).where(CreditCardStatement.user_id == uid)
+                    )
+                ),
+            ),
+            (
+                "credit_card_adjustments",
+                delete(CreditCardAdjustment).where(CreditCardAdjustment.user_id == uid),
+            ),
+            (
+                "credit_card_payments",
+                delete(CreditCardPayment).where(CreditCardPayment.user_id == uid),
+            ),
+            (
+                "credit_card_early_payments",
+                delete(CreditCardEarlyPayment).where(CreditCardEarlyPayment.user_id == uid),
+            ),
+            (
+                "credit_card_installments",
+                delete(CreditCardInstallment).where(
+                    CreditCardInstallment.credit_card_id.in_(
+                        select(CreditCard.id).where(CreditCard.user_id == uid)
+                    )
+                ),
+            ),
+            (
+                "credit_card_transactions",
+                delete(CreditCardTransaction).where(CreditCardTransaction.user_id == uid),
+            ),
+            (
+                "credit_card_statements",
+                delete(CreditCardStatement).where(CreditCardStatement.user_id == uid),
+            ),
+            (
+                "credit_card_billing_cycles",
+                delete(CreditCardBillingCycle).where(
+                    CreditCardBillingCycle.credit_card_id.in_(
+                        select(CreditCard.id).where(CreditCard.user_id == uid)
+                    )
+                ),
+            ),
+            (
+                "credit_cards",
+                delete(CreditCard).where(CreditCard.user_id == uid),
+            ),
             (
                 "obligation_auto_payment_runs",
                 delete(ObligationAutoPaymentRun).where(
@@ -314,12 +490,20 @@ class GateFixture:
         stages.append(("users", delete(User).where(User.id == uid)))
 
         has_delete_error = False
-        for stage_name, stmt in stages:
+        try:
+            for stage_name, stmt in stages:
+                try:
+                    await self.session.execute(stmt)
+                except Exception as exc:
+                    has_delete_error = True
+                    errors.append((stage_name, exc))
+        finally:
             try:
-                await self.session.execute(stmt)
-            except Exception as exc:
+                await _set_statement_triggers_enabled(self.session, True)
+                await verify_statement_triggers_enabled(self.session)
+            except Exception as trg_exc:
                 has_delete_error = True
-                errors.append((stage_name, exc))
+                errors.append(("verify_statement_triggers_enabled", trg_exc))
 
         if not has_delete_error and not errors:
             try:
@@ -334,6 +518,120 @@ class GateFixture:
             if not errors:
                 # Residue verification: confirm zero synthetic records remain for this fixture
                 residue_checks = [
+                    (
+                        "credit_card_adjustment_allocations",
+                        select(func.count())
+                        .select_from(CreditCardAdjustmentAllocation)
+                        .where(
+                            CreditCardAdjustmentAllocation.adjustment_id.in_(
+                                select(CreditCardAdjustment.id).where(
+                                    CreditCardAdjustment.user_id == uid
+                                )
+                            )
+                        ),
+                    ),
+                    (
+                        "credit_card_payment_allocations",
+                        select(func.count())
+                        .select_from(CreditCardPaymentAllocation)
+                        .where(
+                            CreditCardPaymentAllocation.payment_id.in_(
+                                select(CreditCardPayment.id).where(CreditCardPayment.user_id == uid)
+                            )
+                        ),
+                    ),
+                    (
+                        "credit_card_statement_components",
+                        select(func.count())
+                        .select_from(CreditCardStatementComponent)
+                        .where(
+                            CreditCardStatementComponent.statement_id.in_(
+                                select(CreditCardStatement.id).where(
+                                    CreditCardStatement.user_id == uid
+                                )
+                            )
+                        ),
+                    ),
+                    (
+                        "credit_card_statement_facts",
+                        select(func.count())
+                        .select_from(CreditCardStatementFact)
+                        .where(
+                            CreditCardStatementFact.statement_id.in_(
+                                select(CreditCardStatement.id).where(
+                                    CreditCardStatement.user_id == uid
+                                )
+                            )
+                        ),
+                    ),
+                    (
+                        "credit_card_statement_charges",
+                        select(func.count())
+                        .select_from(CreditCardStatementCharge)
+                        .where(
+                            CreditCardStatementCharge.statement_id.in_(
+                                select(CreditCardStatement.id).where(
+                                    CreditCardStatement.user_id == uid
+                                )
+                            )
+                        ),
+                    ),
+                    (
+                        "credit_card_adjustments",
+                        select(func.count())
+                        .select_from(CreditCardAdjustment)
+                        .where(CreditCardAdjustment.user_id == uid),
+                    ),
+                    (
+                        "credit_card_payments",
+                        select(func.count())
+                        .select_from(CreditCardPayment)
+                        .where(CreditCardPayment.user_id == uid),
+                    ),
+                    (
+                        "credit_card_early_payments",
+                        select(func.count())
+                        .select_from(CreditCardEarlyPayment)
+                        .where(CreditCardEarlyPayment.user_id == uid),
+                    ),
+                    (
+                        "credit_card_installments",
+                        select(func.count())
+                        .select_from(CreditCardInstallment)
+                        .where(
+                            CreditCardInstallment.credit_card_id.in_(
+                                select(CreditCard.id).where(CreditCard.user_id == uid)
+                            )
+                        ),
+                    ),
+                    (
+                        "credit_card_transactions",
+                        select(func.count())
+                        .select_from(CreditCardTransaction)
+                        .where(CreditCardTransaction.user_id == uid),
+                    ),
+                    (
+                        "credit_card_statements",
+                        select(func.count())
+                        .select_from(CreditCardStatement)
+                        .where(CreditCardStatement.user_id == uid),
+                    ),
+                    (
+                        "credit_card_billing_cycles",
+                        select(func.count())
+                        .select_from(CreditCardBillingCycle)
+                        .where(
+                            CreditCardBillingCycle.credit_card_id.in_(
+                                select(CreditCard.id).where(CreditCard.user_id == uid)
+                            )
+                        ),
+                    ),
+                    (
+                        "credit_cards",
+                        select(func.count())
+                        .select_from(CreditCard)
+                        .where(CreditCard.user_id == uid),
+                    ),
                     ("users", select(func.count()).select_from(User).where(User.id == uid)),
                     (
                         "accounts",
@@ -445,7 +743,90 @@ async def cleanup_all_gate_users(session: AsyncSession):
         uids = []
 
     if uids:
+        await _set_statement_triggers_enabled(session, False)
         stages = [
+            (
+                "credit_card_adjustment_allocations",
+                delete(CreditCardAdjustmentAllocation).where(
+                    CreditCardAdjustmentAllocation.adjustment_id.in_(
+                        select(CreditCardAdjustment.id).where(
+                            CreditCardAdjustment.user_id.in_(uids)
+                        )
+                    )
+                ),
+            ),
+            (
+                "credit_card_payment_allocations",
+                delete(CreditCardPaymentAllocation).where(
+                    CreditCardPaymentAllocation.payment_id.in_(
+                        select(CreditCardPayment.id).where(CreditCardPayment.user_id.in_(uids))
+                    )
+                ),
+            ),
+            (
+                "credit_card_statement_components",
+                delete(CreditCardStatementComponent).where(
+                    CreditCardStatementComponent.statement_id.in_(
+                        select(CreditCardStatement.id).where(CreditCardStatement.user_id.in_(uids))
+                    )
+                ),
+            ),
+            (
+                "credit_card_statement_facts",
+                delete(CreditCardStatementFact).where(
+                    CreditCardStatementFact.statement_id.in_(
+                        select(CreditCardStatement.id).where(CreditCardStatement.user_id.in_(uids))
+                    )
+                ),
+            ),
+            (
+                "credit_card_statement_charges",
+                delete(CreditCardStatementCharge).where(
+                    CreditCardStatementCharge.statement_id.in_(
+                        select(CreditCardStatement.id).where(CreditCardStatement.user_id.in_(uids))
+                    )
+                ),
+            ),
+            (
+                "credit_card_adjustments",
+                delete(CreditCardAdjustment).where(CreditCardAdjustment.user_id.in_(uids)),
+            ),
+            (
+                "credit_card_payments",
+                delete(CreditCardPayment).where(CreditCardPayment.user_id.in_(uids)),
+            ),
+            (
+                "credit_card_early_payments",
+                delete(CreditCardEarlyPayment).where(CreditCardEarlyPayment.user_id.in_(uids)),
+            ),
+            (
+                "credit_card_installments",
+                delete(CreditCardInstallment).where(
+                    CreditCardInstallment.credit_card_id.in_(
+                        select(CreditCard.id).where(CreditCard.user_id.in_(uids))
+                    )
+                ),
+            ),
+            (
+                "credit_card_transactions",
+                delete(CreditCardTransaction).where(CreditCardTransaction.user_id.in_(uids)),
+            ),
+            (
+                "credit_card_statements",
+                delete(CreditCardStatement).where(CreditCardStatement.user_id.in_(uids)),
+            ),
+            (
+                "credit_card_billing_cycles",
+                delete(CreditCardBillingCycle).where(
+                    CreditCardBillingCycle.credit_card_id.in_(
+                        select(CreditCard.id).where(CreditCard.user_id.in_(uids))
+                    )
+                ),
+            ),
+            (
+                "credit_cards",
+                delete(CreditCard).where(CreditCard.user_id.in_(uids)),
+            ),
             (
                 "obligation_auto_payment_runs",
                 delete(ObligationAutoPaymentRun).where(
@@ -460,7 +841,10 @@ async def cleanup_all_gate_users(session: AsyncSession):
                     ObligationAutoPaymentConfig.user_id.in_(uids)
                 ),
             ),
-            ("goal_transactions", delete(GoalTransaction).where(GoalTransaction.user_id.in_(uids))),
+            (
+                "goal_transactions",
+                delete(GoalTransaction).where(GoalTransaction.user_id.in_(uids)),
+            ),
             (
                 "obligation_payments",
                 delete(ObligationPayment).where(ObligationPayment.user_id.in_(uids)),
@@ -489,12 +873,20 @@ async def cleanup_all_gate_users(session: AsyncSession):
         ]
 
         has_delete_error = False
-        for stage_name, delete_stmt in stages:
+        try:
+            for stage_name, delete_stmt in stages:
+                try:
+                    await session.execute(delete_stmt)
+                except Exception as exc:
+                    has_delete_error = True
+                    errors.append((stage_name, exc))
+        finally:
             try:
-                await session.execute(delete_stmt)
-            except Exception as exc:
+                await _set_statement_triggers_enabled(session, True)
+                await verify_statement_triggers_enabled(session)
+            except Exception as trg_exc:
                 has_delete_error = True
-                errors.append((stage_name, exc))
+                errors.append(("verify_statement_triggers_enabled", trg_exc))
 
         if not has_delete_error and not errors:
             try:
@@ -514,6 +906,16 @@ async def cleanup_all_gate_users(session: AsyncSession):
                         select(func.count())
                         .select_from(User)
                         .where(User.email.like("gate-test-%")),
+                    ),
+                    (
+                        "gate_test_credit_cards",
+                        select(func.count())
+                        .select_from(CreditCard)
+                        .where(
+                            CreditCard.user_id.in_(
+                                select(User.id).where(User.email.like("gate-test-%"))
+                            )
+                        ),
                     ),
                     (
                         "gate_test_exchange_rates",
