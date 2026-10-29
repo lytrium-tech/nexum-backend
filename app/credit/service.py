@@ -1550,6 +1550,7 @@ class CreditCardService:
         fp_hash = hash_credit_fingerprint(fp)
 
         payment = CreditCardPayment(
+            id=uuid.uuid4(),
             user_id=user_id,
             credit_card_id=card.id,
             account_id=payload.account_id,
@@ -1571,9 +1572,8 @@ class CreditCardService:
             command_id=cmd_uuid,
             command_fingerprint=fp_hash,
         )
-        await self.repo.add_payment(payment)
-
-        # 10. Apply Waterfall and Create Allocations
+        # 10. Apply Waterfall and derive the immutable allocation totals before
+        # persisting the payment: PostgreSQL enforces payment conservation.
         allocations = await self._apply_payment_to_waterfall(
             user_id=user_id,
             card=card,
@@ -1593,6 +1593,7 @@ class CreditCardService:
             payment.principal_applied + payment.interest_applied + payment.fee_applied
         )
 
+        await self.repo.add_payment(payment)
         await self.repo.add_payment_allocations(allocations)
         await self.session.flush()
 
