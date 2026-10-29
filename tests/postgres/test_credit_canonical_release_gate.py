@@ -152,14 +152,14 @@ async def engine(db_url: str) -> AsyncGenerator[AsyncEngine]:
         await engine.dispose()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(loop_scope="session")
 async def session(engine: AsyncEngine) -> AsyncGenerator[AsyncSession]:
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with async_session() as sess:
         yield sess
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(loop_scope="session")
 async def fixture(session: AsyncSession) -> AsyncGenerator[GateFixture]:
     f = GateFixture(session)
     await f.commit()
