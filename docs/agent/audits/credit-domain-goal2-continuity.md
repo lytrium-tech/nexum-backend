@@ -3,6 +3,7 @@
 Updated: 2026-10-29
 Branch: `feature/credit-canonical-closure`
 Recovery base: `67f0e1d`
+Implementation checkpoint: `93ddf19`
 Current migration head: `credit_v2_refund_type`
 
 ## Status

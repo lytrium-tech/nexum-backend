@@ -3,6 +3,7 @@
 **Report date:** 2026-10-29
 **Recovery checkpoint:** `67f0e1d`
 **Branch:** `feature/credit-canonical-closure`
+**Implementation checkpoint SHA:** `93ddf19`
 **Final Alembic head:** `credit_v2_refund_type`
 **Decision:** Implementation and evidence generation complete; awaiting Founder review and explicit GO/NO-GO for Frontend Sync + QA. Codex does not certify readiness for frontend on the Founder's behalf.
 
