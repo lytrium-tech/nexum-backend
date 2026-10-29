@@ -992,10 +992,9 @@ class CreditCardService:
                 )
             except (ValidationError, httpx.HTTPError, ValueError, InvalidOperation) as e:
                 logger.warning(f"Error fetching FX rate snapshot for purchase: {e}")
-                raise CreditDomainError(
-                    message="FX rate unavailable for currency conversion",
-                    error_code="fx_rate_unavailable",
-                )
+                from app.credit.exceptions import CreditFXRateUnavailableError
+
+                raise CreditFXRateUnavailableError()
 
             fx_rate = snapshot.rate
             fx_rate_snapshot_id = (
@@ -1334,16 +1333,19 @@ class CreditCardService:
         card_curr = getattr(temp_card, "currency", None)
         if isinstance(acc_curr, str) and isinstance(card_curr, str) and acc_curr != card_curr:
             from app.core.currency import FXProviderError, UnsupportedCurrencyError, get_fx_rate
-            from app.core.errors import ForbiddenError, FXProviderUnavailableError
 
             try:
                 pre_fx_info = await get_fx_rate(acc_curr, card_curr)
                 pre_fx_info["from_currency"] = acc_curr
                 pre_fx_info["to_currency"] = card_curr
             except UnsupportedCurrencyError as e:
-                raise ForbiddenError(message=str(e))
+                from app.credit.exceptions import CreditUnsupportedCurrencyError
+
+                raise CreditUnsupportedCurrencyError(message=str(e))
             except FXProviderError:
-                raise FXProviderUnavailableError()
+                from app.credit.exceptions import CreditFXRateUnavailableError
+
+                raise CreditFXRateUnavailableError(message="FX provider error")
 
         # 3. GLOBAL LOCK ORDER: Account -> CreditCard -> Debt components (F-14)
         account = await self.account_repo.get_by_id_for_update(payload.account_id)
@@ -1352,10 +1354,15 @@ class CreditCardService:
 
             raise NotFoundError(message="Cuenta no encontrada.")
 
-        if account.user_id != user_id or not account.is_active:
+        if account.user_id != user_id:
             from app.accounts.exceptions import AccountForbiddenError
 
             raise AccountForbiddenError()
+
+        if not account.is_active:
+            from app.credit.exceptions import CreditAccountInactiveError
+
+            raise CreditAccountInactiveError()
 
         card = await self.repo.get_by_id_for_update(card_id)
         if not card or card.user_id != user_id:
@@ -1663,16 +1670,19 @@ class CreditCardService:
         card_curr = getattr(temp_card, "currency", None)
         if isinstance(acc_curr, str) and isinstance(card_curr, str) and acc_curr != card_curr:
             from app.core.currency import FXProviderError, UnsupportedCurrencyError, get_fx_rate
-            from app.core.errors import ForbiddenError, FXProviderUnavailableError
 
             try:
                 pre_fx_info = await get_fx_rate(acc_curr, card_curr)
                 pre_fx_info["from_currency"] = acc_curr
                 pre_fx_info["to_currency"] = card_curr
             except UnsupportedCurrencyError as e:
-                raise ForbiddenError(message=str(e))
+                from app.credit.exceptions import CreditUnsupportedCurrencyError
+
+                raise CreditUnsupportedCurrencyError(message=str(e))
             except FXProviderError:
-                raise FXProviderUnavailableError()
+                from app.credit.exceptions import CreditFXRateUnavailableError
+
+                raise CreditFXRateUnavailableError(message="FX provider error")
 
         # 3. GLOBAL LOCK ORDER: Account -> CreditCard -> Target installments (F-14)
         account = await self.account_repo.get_by_id_for_update(payload.account_id)
@@ -1681,10 +1691,15 @@ class CreditCardService:
 
             raise NotFoundError(message="Cuenta no encontrada.")
 
-        if account.user_id != user_id or not account.is_active:
+        if account.user_id != user_id:
             from app.accounts.exceptions import AccountForbiddenError
 
             raise AccountForbiddenError()
+
+        if not account.is_active:
+            from app.credit.exceptions import CreditAccountInactiveError
+
+            raise CreditAccountInactiveError()
 
         card = await self.repo.get_by_id_for_update(card_id)
         if not card or card.user_id != user_id:
@@ -2031,10 +2046,15 @@ class CreditCardService:
 
             raise NotFoundError(message="Cuenta no encontrada.")
 
-        if account.user_id != user_id or not account.is_active:
+        if account.user_id != user_id:
             from app.accounts.exceptions import AccountForbiddenError
 
             raise AccountForbiddenError()
+
+        if not account.is_active:
+            from app.credit.exceptions import CreditAccountInactiveError
+
+            raise CreditAccountInactiveError()
 
         source_currency = account.currency
         target_currency = card.currency
@@ -2232,6 +2252,11 @@ class CreditCardService:
                 from app.accounts.exceptions import AccountForbiddenError
 
                 raise AccountForbiddenError()
+
+            if not account.is_active:
+                from app.credit.exceptions import CreditAccountInactiveError
+
+                raise CreditAccountInactiveError()
         else:
             account = None
 

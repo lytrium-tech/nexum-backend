@@ -156,23 +156,60 @@ class IntelligenceCashflowRead(IntelligenceBase):
 
 
 class IntelligenceCreditCardRead(IntelligenceBase):
-    credit_card_id: uuid.UUID
-    credit_card_name: str
-    credit_limit: Decimal | None
-    estimated_current_debt: Decimal
-    current_debt: Decimal | None = None
-    billed_debt: Decimal | None = None
-    unbilled_debt: Decimal | None = None
-    estimated_available_credit: Decimal | None
-    available_credit: Decimal | None = None
-    payment_required: Decimal | None = None
-    next_payment_estimate: Decimal | None = None
-    statement_balance: Decimal | None = None
-    monthly_cc_payment: Decimal
-    cutoff_day: int | None
-    due_day: int | None
-    next_payment_due_date: str | None = None
-    data_quality: dict[str, str] = Field(default_factory=dict)
+    credit_card_id: uuid.UUID = Field(description="Credit card unique identifier.")
+    credit_card_name: str = Field(description="Credit card label / display name.")
+    credit_limit: Decimal | None = Field(
+        default=None, description="Approved credit line in card currency."
+    )
+    total_debt: Decimal | None = Field(
+        default=None,
+        description="Total posted debt across canonical and legacy partitions in card currency.",
+    )
+    estimated_current_debt: Decimal = Field(
+        description="Deprecated compatibility alias for total debt.",
+        json_schema_extra={"deprecated": True},
+    )
+    current_debt: Decimal | None = Field(
+        default=None,
+        description="Deprecated compatibility alias for total debt.",
+        json_schema_extra={"deprecated": True},
+    )
+    billed_debt: Decimal | None = Field(
+        default=None, description="Current amount due from closed statements."
+    )
+    unbilled_debt: Decimal | None = Field(
+        default=None, description="Unbilled debt for subsequent cycles."
+    )
+    estimated_available_credit: Decimal | None = Field(
+        default=None,
+        description="Deprecated compatibility alias for available credit.",
+        json_schema_extra={"deprecated": True},
+    )
+    available_credit: Decimal | None = Field(
+        default=None,
+        description="Estimated available credit line (limit - total_debt; Nexum-modeled estimate).",
+    )
+    payment_required: Decimal | None = Field(
+        default=None, description="Required payment for current cycle (billed_debt)."
+    )
+    next_payment_estimate: Decimal | None = Field(
+        default=None, description="Nexum-modeled estimate of upcoming payment."
+    )
+    statement_balance: Decimal | None = Field(
+        default=None, description="Last closed statement balance snapshot."
+    )
+    monthly_cc_payment: Decimal = Field(
+        description="Deprecated compatibility alias for next_payment_estimate.",
+        json_schema_extra={"deprecated": True},
+    )
+    cutoff_day: int | None = Field(default=None, description="Cutoff day of the month.")
+    due_day: int | None = Field(default=None, description="Payment due day of the month.")
+    next_payment_due_date: str | None = Field(
+        default=None, description="Computed due date in ISO format."
+    )
+    data_quality: dict[str, str] = Field(
+        default_factory=dict, description="Fact provenance metadata dictionary."
+    )
 
 
 class IntelligenceDebtRead(IntelligenceBase):

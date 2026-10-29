@@ -471,6 +471,7 @@ class IntelligenceService:
                     credit_card_id=cc.card_id,
                     credit_card_name=cc.name,
                     credit_limit=cc.credit_limit,
+                    total_debt=cc.total_debt,
                     estimated_current_debt=cc.total_debt,
                     current_debt=cc.current_debt,
                     billed_debt=cc.billed_debt,

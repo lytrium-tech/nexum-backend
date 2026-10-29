@@ -3024,6 +3024,73 @@
         }
       }
     },
+    "/api/v1/credit/cards/{card_id}/adjustments": {
+      "post": {
+        "tags": [
+          "Credit"
+        ],
+        "summary": "Create Adjustment",
+        "operationId": "create_adjustment_api_v1_credit_cards__card_id__adjustments_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Card Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreditCardAdjustmentCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditCardAdjustmentResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/credit/summary": {
       "get": {
         "tags": [
@@ -6760,6 +6827,205 @@
         "title": "ConversationalResponse",
         "description": "Payload de salida del endpoint POST /api/v1/conversations/message"
       },
+      "CreditCardAdjustmentCreate": {
+        "properties": {
+          "original_transaction_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Original Transaction Id"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              }
+            ],
+            "title": "Amount"
+          },
+          "adjustment_type": {
+            "type": "string",
+            "enum": [
+              "refund",
+              "reversal",
+              "chargeback",
+              "statement_credit",
+              "manual_adjustment"
+            ],
+            "title": "Adjustment Type",
+            "default": "refund"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "credit",
+              "debit"
+            ],
+            "title": "Direction",
+            "default": "credit"
+          },
+          "provenance": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "issuer_authoritative",
+              "nexum_modeled",
+              "legacy_unknown"
+            ],
+            "title": "Provenance",
+            "default": "manual"
+          },
+          "allocation_source": {
+            "type": "string",
+            "enum": [
+              "nexum_modeled",
+              "issuer_authoritative",
+              "user_directed"
+            ],
+            "title": "Allocation Source",
+            "default": "nexum_modeled"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "original_currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Currency"
+          },
+          "original_amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Amount"
+          },
+          "source_message_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Message Id"
+          },
+          "raw_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "original_transaction_id",
+          "amount"
+        ],
+        "title": "CreditCardAdjustmentCreate"
+      },
+      "CreditCardAdjustmentResult": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "adjustment_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Adjustment Id"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Amount"
+          },
+          "current_debt": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Current Debt"
+          },
+          "available_credit": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Available Credit"
+          },
+          "adjustment_type": {
+            "type": "string",
+            "title": "Adjustment Type"
+          },
+          "direction": {
+            "type": "string",
+            "title": "Direction"
+          },
+          "provenance": {
+            "type": "string",
+            "title": "Provenance",
+            "default": "manual"
+          },
+          "allocation_source": {
+            "type": "string",
+            "title": "Allocation Source",
+            "default": "nexum_modeled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "adjustment_id",
+          "amount",
+          "current_debt",
+          "available_credit",
+          "adjustment_type",
+          "direction"
+        ],
+        "title": "CreditCardAdjustmentResult"
+      },
       "CreditCardCreate": {
         "properties": {
           "name": {
@@ -6868,6 +7134,7 @@
             "title": "Currency"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "name",
@@ -6884,7 +7151,8 @@
           "account_id": {
             "type": "string",
             "format": "uuid",
-            "title": "Account Id"
+            "title": "Account Id",
+            "description": "Funding account identifier."
           },
           "amount": {
             "anyOf": [
@@ -6900,11 +7168,13 @@
                 "type": "null"
               }
             ],
-            "title": "Amount"
+            "title": "Amount",
+            "description": "Prepayment amount in funding account currency."
           },
           "allocation_mode": {
             "type": "string",
             "title": "Allocation Mode",
+            "description": "Allocation strategy for prepayment ('reduce_installment_amount').",
             "default": "reduce_installment_amount"
           },
           "source_message_id": {
@@ -6917,7 +7187,8 @@
                 "type": "null"
               }
             ],
-            "title": "Source Message Id"
+            "title": "Source Message Id",
+            "description": "Source message ID for traceability."
           },
           "raw_message": {
             "anyOf": [
@@ -6928,7 +7199,8 @@
                 "type": "null"
               }
             ],
-            "title": "Raw Message"
+            "title": "Raw Message",
+            "description": "Original unparsed message text."
           }
         },
         "type": "object",
@@ -6942,7 +7214,8 @@
           "account_id": {
             "type": "string",
             "format": "uuid",
-            "title": "Account Id"
+            "title": "Account Id",
+            "description": "Funding account identifier."
           },
           "amount": {
             "anyOf": [
@@ -6958,7 +7231,8 @@
                 "type": "null"
               }
             ],
-            "title": "Amount"
+            "title": "Amount",
+            "description": "Preview prepayment amount."
           }
         },
         "type": "object",
@@ -6971,7 +7245,8 @@
         "properties": {
           "status": {
             "type": "string",
-            "title": "Status"
+            "title": "Status",
+            "description": "Execution result: 'success' or 'idempotent_retry'."
           },
           "event_id": {
             "anyOf": [
@@ -6983,7 +7258,8 @@
                 "type": "null"
               }
             ],
-            "title": "Event Id"
+            "title": "Event Id",
+            "description": "Linked Ledger event identifier."
           },
           "early_payment_id": {
             "anyOf": [
@@ -6995,27 +7271,32 @@
                 "type": "null"
               }
             ],
-            "title": "Early Payment Id"
+            "title": "Early Payment Id",
+            "description": "Early payment record identifier."
           },
           "amount": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Amount"
+            "title": "Amount",
+            "description": "Prepayment amount applied."
           },
           "current_debt": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Current Debt"
+            "title": "Current Debt",
+            "description": "Remaining total debt."
           },
           "available_credit": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Available Credit"
+            "title": "Available Credit",
+            "description": "Remaining available credit."
           },
           "account_balance": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Account Balance"
+            "title": "Account Balance",
+            "description": "Remaining funding account balance."
           }
         },
         "type": "object",
@@ -7100,6 +7381,121 @@
             "title": "Revision Id",
             "default": 1
           },
+          "original_amount": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Amount"
+          },
+          "original_currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Currency"
+          },
+          "booked_amount": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Booked Amount"
+          },
+          "booked_currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Booked Currency"
+          },
+          "cycle_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cycle Id"
+          },
+          "assessed_interest_amount": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assessed Interest Amount"
+          },
+          "estimated_interest_amount": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Interest Amount"
+          },
+          "lifecycle_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lifecycle Status"
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provenance"
+          },
+          "debt_partition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt Partition"
+          },
           "remaining_principal": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -7133,7 +7529,8 @@
           "account_id": {
             "type": "string",
             "format": "uuid",
-            "title": "Account Id"
+            "title": "Account Id",
+            "description": "Funding account identifier."
           },
           "amount": {
             "anyOf": [
@@ -7146,7 +7543,8 @@
                 "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
               }
             ],
-            "title": "Amount"
+            "title": "Amount",
+            "description": "Payment amount in funding account currency."
           },
           "source_message_id": {
             "anyOf": [
@@ -7158,7 +7556,8 @@
                 "type": "null"
               }
             ],
-            "title": "Source Message Id"
+            "title": "Source Message Id",
+            "description": "Source message ID for conversational traceability."
           },
           "raw_message": {
             "anyOf": [
@@ -7169,7 +7568,8 @@
                 "type": "null"
               }
             ],
-            "title": "Raw Message"
+            "title": "Raw Message",
+            "description": "Original unparsed conversational message text."
           }
         },
         "type": "object",
@@ -7183,7 +7583,8 @@
         "properties": {
           "status": {
             "type": "string",
-            "title": "Status"
+            "title": "Status",
+            "description": "Execution result: 'success' or 'idempotent_retry'."
           },
           "event_id": {
             "anyOf": [
@@ -7195,7 +7596,8 @@
                 "type": "null"
               }
             ],
-            "title": "Event Id"
+            "title": "Event Id",
+            "description": "Linked Ledger event identifier."
           },
           "transaction_id": {
             "anyOf": [
@@ -7207,32 +7609,39 @@
                 "type": "null"
               }
             ],
-            "title": "Transaction Id"
+            "title": "Transaction Id",
+            "description": "Created payment transaction identifier."
           },
           "amount": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Amount"
+            "title": "Amount",
+            "description": "Payment amount booked to card in card currency."
           },
           "current_debt": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Current Debt"
+            "title": "Current Debt",
+            "description": "Remaining total posted debt after payment in card currency."
           },
           "available_credit": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Available Credit"
+            "title": "Available Credit",
+            "description": "Available credit line after payment."
           },
           "estimated_current_debt": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Estimated Current Debt"
+            "title": "Estimated Current Debt",
+            "description": "Deprecated alias for current_debt.",
+            "deprecated": true
           },
           "account_balance": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Account Balance"
+            "title": "Account Balance",
+            "description": "Remaining funding account balance in account currency."
           }
         },
         "type": "object",
@@ -7257,9 +7666,14 @@
               {
                 "type": "string",
                 "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
               }
             ],
-            "title": "Amount"
+            "title": "Amount",
+            "description": "Booked amount in card currency (legacy compatibility alias). Prefer original_amount/original_currency.",
+            "deprecated": true
           },
           "category_id": {
             "anyOf": [
@@ -7271,7 +7685,8 @@
                 "type": "null"
               }
             ],
-            "title": "Category Id"
+            "title": "Category Id",
+            "description": "Category identifier."
           },
           "description": {
             "anyOf": [
@@ -7282,12 +7697,14 @@
                 "type": "null"
               }
             ],
-            "title": "Description"
+            "title": "Description",
+            "description": "Purchase description or commercial label."
           },
           "installments_total": {
             "type": "integer",
             "minimum": 1.0,
             "title": "Installments Total",
+            "description": "Total number of installments (1 for revolving).",
             "default": 1
           },
           "source_message_id": {
@@ -7300,7 +7717,8 @@
                 "type": "null"
               }
             ],
-            "title": "Source Message Id"
+            "title": "Source Message Id",
+            "description": "Source message ID for conversational traceability."
           },
           "raw_message": {
             "anyOf": [
@@ -7311,20 +7729,104 @@
                 "type": "null"
               }
             ],
-            "title": "Raw Message"
+            "title": "Raw Message",
+            "description": "Original unparsed conversational message text."
+          },
+          "original_amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Amount",
+            "description": "Original purchase amount in transaction currency."
+          },
+          "original_currency": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 3,
+                "minLength": 3
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Currency",
+            "description": "Original currency of the transaction (e.g. USD, EUR)."
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 3,
+                "minLength": 3
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency",
+            "description": "Booked card currency (must match card currency if provided)."
+          },
+          "fx_quote_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fx Quote Id",
+            "description": "FX rate quote identifier."
+          },
+          "lifecycle_status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(pending|posted)$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lifecycle Status",
+            "description": "Lifecycle status: 'posted' (commits debt/installments) or 'pending' (pre-authorization hold).",
+            "default": "posted"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At",
+            "description": "Effective purchase timestamp (defaults to current financial time in Bogota)."
           }
         },
         "type": "object",
-        "required": [
-          "amount"
-        ],
         "title": "CreditCardPurchaseCreate"
       },
       "CreditCardPurchaseResult": {
         "properties": {
           "status": {
             "type": "string",
-            "title": "Status"
+            "title": "Status",
+            "description": "Execution result: 'success' or 'idempotent_retry'."
           },
           "event_id": {
             "anyOf": [
@@ -7336,7 +7838,8 @@
                 "type": "null"
               }
             ],
-            "title": "Event Id"
+            "title": "Event Id",
+            "description": "Linked Ledger event identifier."
           },
           "transaction_id": {
             "anyOf": [
@@ -7348,32 +7851,177 @@
                 "type": "null"
               }
             ],
-            "title": "Transaction Id"
+            "title": "Transaction Id",
+            "description": "Created credit card transaction identifier."
           },
           "amount": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Amount"
+            "title": "Amount",
+            "description": "Booked purchase amount in card currency."
           },
           "current_debt": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Current Debt"
+            "title": "Current Debt",
+            "description": "Total posted debt after purchase in card currency."
           },
           "available_credit": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Available Credit"
+            "title": "Available Credit",
+            "description": "Available credit after purchase in card currency."
           },
           "estimated_current_debt": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Estimated Current Debt"
+            "title": "Estimated Current Debt",
+            "description": "Deprecated alias for current_debt.",
+            "deprecated": true
           },
           "estimated_available_credit": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Estimated Available Credit"
+            "title": "Estimated Available Credit",
+            "description": "Deprecated alias for available_credit.",
+            "deprecated": true
+          },
+          "cycle_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cycle Id",
+            "description": "Assigned canonical billing cycle identifier."
+          },
+          "billing_period": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Billing Period",
+            "description": "Assigned billing cycle period (YYYY-MM)."
+          },
+          "original_amount": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Amount",
+            "description": "Original purchase amount in merchant currency."
+          },
+          "original_currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Currency",
+            "description": "Original purchase currency."
+          },
+          "booked_amount": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Booked Amount",
+            "description": "Booked purchase amount in card currency."
+          },
+          "booked_currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Booked Currency",
+            "description": "Card currency in which purchase is booked."
+          },
+          "fx_rate": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fx Rate",
+            "description": "Exchange rate applied for currency conversion."
+          },
+          "fx_rate_snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fx Rate Snapshot Id",
+            "description": "Immutable FX rate snapshot evidence identifier."
+          },
+          "lifecycle_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lifecycle Status",
+            "description": "Lifecycle status ('pending' or 'posted')."
+          },
+          "debt_partition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt Partition",
+            "description": "Debt partition ('canonical' or 'legacy')."
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provenance",
+            "description": "Fact provenance (e.g. 'nexum_modeled', 'manual_input')."
           }
         },
         "type": "object",
@@ -7475,48 +8123,63 @@
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Current Debt",
-            "default": "0.00"
+            "description": "Legacy compatibility alias for total_debt (booked card currency).",
+            "default": "0.00",
+            "deprecated": true
           },
           "total_debt": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Total Debt",
+            "description": "Total posted debt across canonical and legacy partitions in card currency.",
             "default": "0.00"
           },
           "available_credit": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Available Credit",
+            "description": "Available credit line (limit - total_debt; Nexum-modeled estimate unless issuer fact).",
             "default": "0.00"
           },
           "billed_debt": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Billed Debt",
+            "description": "Current amount due from closed billing statements.",
             "default": "0.00"
           },
           "unbilled_debt": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Unbilled Debt",
+            "description": "Unbilled debt from current open cycle and future installment principal.",
             "default": "0.00"
           },
           "payment_required": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Payment Required",
+            "description": "Total required payment for current cycle (equals billed_debt).",
             "default": "0.00"
           },
           "minimum_payment": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Minimum Payment",
-            "default": "0.00"
+            "description": "Authoritative minimum payment from issuer statement; null/unknown when no issuer fact exists."
           },
           "next_payment_estimate": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Next Payment Estimate",
+            "description": "Nexum-modeled estimated upcoming payment.",
             "default": "0.00"
           },
           "statement_balance": {
@@ -7529,31 +8192,82 @@
                 "type": "null"
               }
             ],
-            "title": "Statement Balance"
+            "title": "Statement Balance",
+            "description": "Immutable snapshot balance of the most recent closed statement; null if no closed statement exists."
           },
           "data_quality": {
             "additionalProperties": {
               "type": "string"
             },
             "type": "object",
-            "title": "Data Quality"
+            "title": "Data Quality",
+            "description": "Metadata dictionary tracking provenance and estimation sources for computed credit fields."
+          },
+          "canonical_mode": {
+            "type": "boolean",
+            "title": "Canonical Mode",
+            "description": "Whether this card operates under canonical closure and immutable statements.",
+            "default": false
+          },
+          "canonical_activated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonical Activated At",
+            "description": "Timestamp when canonical mode was activated for this card."
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provenance",
+            "description": "Source provenance of card facts (e.g. manual_input, issuer_authoritative)."
+          },
+          "lifecycle_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lifecycle Status",
+            "description": "Lifecycle status of the card entity."
           },
           "estimated_current_debt": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Estimated Current Debt",
-            "default": "0.00"
+            "description": "Deprecated compatibility alias for total_debt.",
+            "default": "0.00",
+            "deprecated": true
           },
           "monthly_cc_payment": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Monthly Cc Payment",
-            "default": "0.00"
+            "description": "Deprecated compatibility alias for next_payment_estimate.",
+            "default": "0.00",
+            "deprecated": true
           },
           "estimated_available_credit": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Estimated Available Credit",
+            "description": "Deprecated compatibility alias for available_credit.",
+            "deprecated": true,
             "readOnly": true
           }
         },
@@ -7571,12 +8285,243 @@
         ],
         "title": "CreditCardRead"
       },
+      "CreditCardStatementComponentRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "credit_card_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Credit Card Id"
+          },
+          "statement_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Statement Id"
+          },
+          "component_type": {
+            "type": "string",
+            "title": "Component Type"
+          },
+          "amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Amount"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "principal_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Principal Amount",
+            "default": "0.00"
+          },
+          "interest_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Interest Amount",
+            "default": "0.00"
+          },
+          "fee_amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Fee Amount",
+            "default": "0.00"
+          },
+          "transaction_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transaction Id"
+          },
+          "installment_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Installment Id"
+          },
+          "statement_charge_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Statement Charge Id"
+          },
+          "provenance": {
+            "type": "string",
+            "title": "Provenance"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "credit_card_id",
+          "statement_id",
+          "component_type",
+          "amount",
+          "currency",
+          "provenance",
+          "created_at"
+        ],
+        "title": "CreditCardStatementComponentRead"
+      },
+      "CreditCardStatementFactRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "credit_card_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Credit Card Id"
+          },
+          "statement_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Statement Id"
+          },
+          "fact_type": {
+            "type": "string",
+            "title": "Fact Type"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
+          "provenance": {
+            "type": "string",
+            "title": "Provenance"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Observed At"
+          },
+          "effective_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective At"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "credit_card_id",
+          "statement_id",
+          "fact_type",
+          "provenance",
+          "observed_at"
+        ],
+        "title": "CreditCardStatementFactRead"
+      },
       "CreditCardStatementRead": {
         "properties": {
           "id": {
             "type": "string",
             "format": "uuid",
             "title": "Id"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
           },
           "credit_card_id": {
             "type": "string",
@@ -7586,6 +8531,18 @@
           "billing_period": {
             "type": "string",
             "title": "Billing Period"
+          },
+          "cycle_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cycle Id"
           },
           "billing_period_start": {
             "anyOf": [
@@ -7626,46 +8583,118 @@
           "previous_balance": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Previous Balance"
+            "title": "Previous Balance",
+            "default": "0.00"
           },
           "new_purchases": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "New Purchases"
+            "title": "New Purchases",
+            "default": "0.00"
           },
           "billed_installments": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Billed Installments"
+            "title": "Billed Installments",
+            "default": "0.00"
           },
           "fees_total": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Fees Total"
+            "title": "Fees Total",
+            "default": "0.00"
           },
           "interest_total": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Interest Total"
+            "title": "Interest Total",
+            "default": "0.00"
           },
           "payments_received": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Payments Received"
+            "title": "Payments Received",
+            "default": "0.00"
           },
           "statement_balance": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Statement Balance"
+            "title": "Statement Balance",
+            "default": "0.00"
           },
           "minimum_payment": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Minimum Payment"
           },
           "status": {
             "type": "string",
-            "title": "Status"
+            "title": "Status",
+            "default": "open"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
+          "assessed_interest": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assessed Interest"
+          },
+          "estimated_interest": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Interest"
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provenance"
+          },
+          "debt_partition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt Partition"
           },
           "frozen_at": {
             "anyOf": [
@@ -7678,22 +8707,51 @@
               }
             ],
             "title": "Frozen At"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/CreditCardStatementComponentRead"
+            },
+            "type": "array",
+            "title": "Components"
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/CreditCardStatementFactRead"
+            },
+            "type": "array",
+            "title": "Facts"
           }
         },
         "type": "object",
         "required": [
           "id",
           "credit_card_id",
-          "billing_period",
-          "previous_balance",
-          "new_purchases",
-          "billed_installments",
-          "fees_total",
-          "interest_total",
-          "payments_received",
-          "statement_balance",
-          "minimum_payment",
-          "status"
+          "billing_period"
         ],
         "title": "CreditCardStatementRead"
       },
@@ -7702,33 +8760,39 @@
           "card_id": {
             "type": "string",
             "format": "uuid",
-            "title": "Card Id"
+            "title": "Card Id",
+            "description": "Card identifier."
           },
           "name": {
             "type": "string",
-            "title": "Name"
+            "title": "Name",
+            "description": "Card label/name."
           },
           "credit_limit": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Credit Limit"
+            "title": "Credit Limit",
+            "description": "Card credit limit in card currency."
           },
           "management_fee": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Management Fee",
+            "description": "Monthly management fee.",
             "default": "0.00"
           },
           "monthly_interest_rate": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Monthly Interest Rate",
+            "description": "Monthly interest rate percentage.",
             "default": "0.00"
           },
           "annual_interest_rate": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Annual Interest Rate",
+            "description": "Annual interest rate percentage.",
             "default": "0.00"
           },
           "network": {
@@ -7740,7 +8804,8 @@
                 "type": "null"
               }
             ],
-            "title": "Network"
+            "title": "Network",
+            "description": "Card network."
           },
           "franchise": {
             "anyOf": [
@@ -7751,55 +8816,72 @@
                 "type": "null"
               }
             ],
-            "title": "Franchise"
+            "title": "Franchise",
+            "description": "Card franchise."
           },
           "currency": {
             "type": "string",
             "title": "Currency",
+            "description": "Card currency.",
             "default": "COP"
           },
           "current_debt": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Current Debt",
-            "default": "0.00"
+            "description": "Legacy compatibility alias for total_debt.",
+            "default": "0.00",
+            "deprecated": true
           },
           "total_debt": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Total Debt"
+            "title": "Total Debt",
+            "description": "Total posted debt across canonical and legacy partitions."
           },
           "billed_debt": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Billed Debt"
+            "title": "Billed Debt",
+            "description": "Billed debt due in the current cycle."
           },
           "unbilled_debt": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Unbilled Debt"
+            "title": "Unbilled Debt",
+            "description": "Unbilled debt for future cycles."
           },
           "available_credit": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Available Credit"
+            "title": "Available Credit",
+            "description": "Available credit (credit_limit - total_debt; Nexum-modeled estimate)."
           },
           "payment_required": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Payment Required",
+            "description": "Payment required for current cycle (billed_debt).",
             "default": "0.00"
           },
           "minimum_payment": {
-            "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Minimum Payment",
-            "default": "0.00"
+            "description": "Authoritative minimum payment from issuer (null if unknown)."
           },
           "next_payment_estimate": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Next Payment Estimate",
+            "description": "Nexum-modeled estimate for upcoming payment.",
             "default": "0.00"
           },
           "statement_balance": {
@@ -7812,39 +8894,48 @@
                 "type": "null"
               }
             ],
-            "title": "Statement Balance"
+            "title": "Statement Balance",
+            "description": "Balance of last closed statement snapshot."
           },
           "monthly_cc_payment": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Monthly Cc Payment"
+            "title": "Monthly Cc Payment",
+            "description": "Compatibility alias for next_payment_estimate.",
+            "deprecated": true
           },
           "cutoff_day": {
             "type": "integer",
-            "title": "Cutoff Day"
+            "title": "Cutoff Day",
+            "description": "Cutoff day of month."
           },
           "payment_due_day": {
             "type": "integer",
-            "title": "Payment Due Day"
+            "title": "Payment Due Day",
+            "description": "Payment due day of month."
           },
           "next_payment_due_date": {
             "type": "string",
-            "title": "Next Payment Due Date"
+            "title": "Next Payment Due Date",
+            "description": "Computed due date in ISO format."
           },
           "purchases_count": {
             "type": "integer",
-            "title": "Purchases Count"
+            "title": "Purchases Count",
+            "description": "Count of purchases in current cycle."
           },
           "payments_count": {
             "type": "integer",
-            "title": "Payments Count"
+            "title": "Payments Count",
+            "description": "Count of payments in current cycle."
           },
           "data_quality": {
             "additionalProperties": {
               "type": "string"
             },
             "type": "object",
-            "title": "Data Quality"
+            "title": "Data Quality",
+            "description": "Metadata dictionary tracking data provenance."
           }
         },
         "type": "object",
@@ -8015,6 +9106,7 @@
             "title": "Is Active"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "title": "CreditCardUpdate"
       },
@@ -10029,11 +11121,13 @@
           "credit_card_id": {
             "type": "string",
             "format": "uuid",
-            "title": "Credit Card Id"
+            "title": "Credit Card Id",
+            "description": "Credit card unique identifier."
           },
           "credit_card_name": {
             "type": "string",
-            "title": "Credit Card Name"
+            "title": "Credit Card Name",
+            "description": "Credit card label / display name."
           },
           "credit_limit": {
             "anyOf": [
@@ -10045,12 +11139,28 @@
                 "type": "null"
               }
             ],
-            "title": "Credit Limit"
+            "title": "Credit Limit",
+            "description": "Approved credit line in card currency."
+          },
+          "total_debt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Debt",
+            "description": "Total posted debt across canonical and legacy partitions in card currency."
           },
           "estimated_current_debt": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Estimated Current Debt"
+            "title": "Estimated Current Debt",
+            "description": "Deprecated compatibility alias for total debt.",
+            "deprecated": true
           },
           "current_debt": {
             "anyOf": [
@@ -10062,7 +11172,9 @@
                 "type": "null"
               }
             ],
-            "title": "Current Debt"
+            "title": "Current Debt",
+            "description": "Deprecated compatibility alias for total debt.",
+            "deprecated": true
           },
           "billed_debt": {
             "anyOf": [
@@ -10074,7 +11186,8 @@
                 "type": "null"
               }
             ],
-            "title": "Billed Debt"
+            "title": "Billed Debt",
+            "description": "Current amount due from closed statements."
           },
           "unbilled_debt": {
             "anyOf": [
@@ -10086,7 +11199,8 @@
                 "type": "null"
               }
             ],
-            "title": "Unbilled Debt"
+            "title": "Unbilled Debt",
+            "description": "Unbilled debt for subsequent cycles."
           },
           "estimated_available_credit": {
             "anyOf": [
@@ -10098,7 +11212,9 @@
                 "type": "null"
               }
             ],
-            "title": "Estimated Available Credit"
+            "title": "Estimated Available Credit",
+            "description": "Deprecated compatibility alias for available credit.",
+            "deprecated": true
           },
           "available_credit": {
             "anyOf": [
@@ -10110,7 +11226,8 @@
                 "type": "null"
               }
             ],
-            "title": "Available Credit"
+            "title": "Available Credit",
+            "description": "Estimated available credit line (limit - total_debt; Nexum-modeled estimate)."
           },
           "payment_required": {
             "anyOf": [
@@ -10122,7 +11239,8 @@
                 "type": "null"
               }
             ],
-            "title": "Payment Required"
+            "title": "Payment Required",
+            "description": "Required payment for current cycle (billed_debt)."
           },
           "next_payment_estimate": {
             "anyOf": [
@@ -10134,7 +11252,8 @@
                 "type": "null"
               }
             ],
-            "title": "Next Payment Estimate"
+            "title": "Next Payment Estimate",
+            "description": "Nexum-modeled estimate of upcoming payment."
           },
           "statement_balance": {
             "anyOf": [
@@ -10146,12 +11265,15 @@
                 "type": "null"
               }
             ],
-            "title": "Statement Balance"
+            "title": "Statement Balance",
+            "description": "Last closed statement balance snapshot."
           },
           "monthly_cc_payment": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Monthly Cc Payment"
+            "title": "Monthly Cc Payment",
+            "description": "Deprecated compatibility alias for next_payment_estimate.",
+            "deprecated": true
           },
           "cutoff_day": {
             "anyOf": [
@@ -10162,7 +11284,8 @@
                 "type": "null"
               }
             ],
-            "title": "Cutoff Day"
+            "title": "Cutoff Day",
+            "description": "Cutoff day of the month."
           },
           "due_day": {
             "anyOf": [
@@ -10173,7 +11296,8 @@
                 "type": "null"
               }
             ],
-            "title": "Due Day"
+            "title": "Due Day",
+            "description": "Payment due day of the month."
           },
           "next_payment_due_date": {
             "anyOf": [
@@ -10184,26 +11308,24 @@
                 "type": "null"
               }
             ],
-            "title": "Next Payment Due Date"
+            "title": "Next Payment Due Date",
+            "description": "Computed due date in ISO format."
           },
           "data_quality": {
             "additionalProperties": {
               "type": "string"
             },
             "type": "object",
-            "title": "Data Quality"
+            "title": "Data Quality",
+            "description": "Fact provenance metadata dictionary."
           }
         },
         "type": "object",
         "required": [
           "credit_card_id",
           "credit_card_name",
-          "credit_limit",
           "estimated_current_debt",
-          "estimated_available_credit",
-          "monthly_cc_payment",
-          "cutoff_day",
-          "due_day"
+          "monthly_cc_payment"
         ],
         "title": "IntelligenceCreditCardRead"
       },
@@ -13702,33 +14824,40 @@
           "source_amount": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Source Amount"
+            "title": "Source Amount",
+            "description": "Amount in funding account currency."
           },
           "source_currency": {
             "type": "string",
-            "title": "Source Currency"
+            "title": "Source Currency",
+            "description": "Funding account currency."
           },
           "target_amount": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Target Amount"
+            "title": "Target Amount",
+            "description": "Calculated amount in card currency."
           },
           "target_currency": {
             "type": "string",
-            "title": "Target Currency"
+            "title": "Target Currency",
+            "description": "Card currency."
           },
           "fx_rate": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Fx Rate"
+            "title": "Fx Rate",
+            "description": "Exchange rate applied."
           },
           "rate_source": {
             "type": "string",
-            "title": "Rate Source"
+            "title": "Rate Source",
+            "description": "FX rate source provider."
           },
           "is_estimated": {
             "type": "boolean",
-            "title": "Is Estimated"
+            "title": "Is Estimated",
+            "description": "Whether the exchange rate is an estimate."
           }
         },
         "type": "object",

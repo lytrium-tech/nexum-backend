@@ -317,7 +317,13 @@ class ConversationsService:
         elif intent == "ask_obligations":
             data = await self.intel_service.get_obligations_requirements(user_id)
         elif intent == "ask_financial_snapshot":
-            data = await self.intel_service.get_financial_snapshot(user_id)
+            snap = await self.intel_service.get_snapshot(user_id)
+            data = {
+                "free_money": snap.truth.free_money,
+                "safe_money": snap.truth.safe_money,
+                "total_credit_card_debt": snap.debt.credit_card_total_debt,
+                "pending_obligations_total": snap.obligations.pending_amount,
+            }
         else:
             data = {}
 

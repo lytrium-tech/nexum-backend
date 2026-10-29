@@ -17,6 +17,12 @@
 - GET /api/v1/users/me
 - GET /api/v1/intelligence/snapshot
 - POST /api/v1/conversations/message
+- GET /api/v1/credit/summary (Credit Domain V2)
+
+## Handoffs de Dominio Específicos
+- **Tarjetas de Crédito V2 (Canonical Engine):** [Credit Canonical V2 Frontend Handoff](../handoff/backend/credit-canonical-v2-frontend-handoff.md)
+- **Obligaciones (V1.7):** [10-frontend-handoff-contracts.md](./10-frontend-handoff-contracts.md)
+- **Billeteras / Wallets (V1):** [Wallets V1 Frontend Sync](../handoff/backend/wallets-v1-frontend-sync.md)
 
 ## Errores Comunes
 - 401 Unauthorized: Token faltante, expirado o firma inválida.

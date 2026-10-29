@@ -81,6 +81,11 @@ class IntelligenceRepository:
         return dict(result.mappings().first() or {})
 
     async def get_debt_metrics(self, user_id: uuid.UUID) -> dict[str, Any]:
+        """[DEPRECATED] Historical helper querying unmaintained current_debt column.
+
+        Do NOT consume as authority. Canonical credit debt must be obtained
+        via CreditCardService.get_credit_summary(user_id).
+        """
         query = text(
             "SELECT COALESCE(SUM(current_debt), 0) as credit_card_total_debt "
             "FROM credit_cards WHERE user_id = :user_id AND is_active = true"
@@ -199,6 +204,11 @@ class IntelligenceRepository:
         return [dict(r) for r in result.mappings().all()]
 
     async def get_credit_card_debt(self, user_id: uuid.UUID) -> list[dict[str, Any]]:
+        """[DEPRECATED] Historical view query. Do NOT use as canonical credit truth.
+
+        v_credit_card_debt omits early prepayments, reversals, and debt partitioning.
+        Canonical credit debt must be obtained via CreditCardService.get_credit_summary(user_id).
+        """
         query = text("SELECT * FROM public.v_credit_card_debt WHERE user_id = :user_id")
         result = await self.session.execute(query, {"user_id": user_id})
         return [dict(r) for r in result.mappings().all()]

@@ -1,3 +1,4 @@
+from app.accounts.exceptions import AccountForbiddenError
 from app.core.errors import NexumError
 
 
@@ -39,6 +40,46 @@ class CreditCardInactiveError(CreditDomainError):
 
     def __init__(
         self, message: str = "Credit card is inactive", detail: dict | None = None
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class CreditAccountInactiveError(AccountForbiddenError):
+    status_code = 403
+    error_code = "account_inactive"
+    message = "La cuenta bancaria de origen está inactiva."
+
+    def __init__(
+        self, message: str = "Source account is inactive", detail: dict | None = None
+    ) -> None:
+        super().__init__(message=message)
+        self.detail = detail or {}
+        self.error_code = "account_inactive"
+        self.status_code = 403
+
+
+class CreditUnsupportedCurrencyError(CreditDomainError):
+    status_code = 400
+    error_code = "unsupported_currency"
+    message = "Moneda no soportada para conversión de crédito."
+
+    def __init__(
+        self,
+        message: str = "Unsupported currency for credit conversion",
+        detail: dict | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class CreditFXRateUnavailableError(CreditDomainError):
+    status_code = 503
+    error_code = "fx_rate_unavailable"
+    message = "Tasa de cambio no disponible para conversión de crédito."
+
+    def __init__(
+        self,
+        message: str = "FX rate unavailable for currency conversion",
+        detail: dict | None = None,
     ) -> None:
         super().__init__(message=message, detail=detail)
 

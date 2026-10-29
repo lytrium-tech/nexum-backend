@@ -53,16 +53,31 @@ def render_read_response(intent: str, data: dict) -> str:
     elif intent == "ask_debt":
         cards_info = []
         for cc in data.get("credit_cards", []):
+            debt_val = (
+                cc.get("total_debt")
+                if cc.get("total_debt") is not None
+                else cc.get("current_debt", cc.get("estimated_current_debt", "0.00"))
+            )
+            avail_val = (
+                cc.get("available_credit")
+                if cc.get("available_credit") is not None
+                else cc.get("estimated_available_credit", "0.00")
+            )
             cards_info.append(
-                f"- {cc.get('credit_card_name')}: Deuda actual ${cc.get('current_debt', cc.get('estimated_current_debt', '0.00'))} "
+                f"- {cc.get('credit_card_name')}: Deuda total ${debt_val} "
                 f"(Facturado: ${cc.get('billed_debt', '0.00')}, Sin facturar: ${cc.get('unbilled_debt', '0.00')}). "
                 f"Pago requerido: ${cc.get('payment_required', '0.00')}. "
                 f"Estimado próximo pago: ${cc.get('next_payment_estimate', '0.00')}. "
-                f"Cupo disponible: ${cc.get('available_credit', cc.get('estimated_available_credit', '0.00'))}. "
+                f"Cupo disponible (estimado Nexum): ${avail_val}. "
                 f"Próximo pago: {cc.get('next_payment_due_date', 'N/A')}."
             )
-        cards_str = "\\n".join(cards_info) if cards_info else "No tienes tarjetas registradas."
-        return f"Tu deuda total de tarjetas de crédito es de ${data.get('total_estimated_credit_card_debt', '0.00')}.\\nDetalle:\\n{cards_str}"
+        cards_str = "\n".join(cards_info) if cards_info else "No tienes tarjetas registradas."
+        total_debt_summary = (
+            data.get("total_debt")
+            if data.get("total_debt") is not None
+            else data.get("total_estimated_credit_card_debt", "0.00")
+        )
+        return f"Tu deuda total de tarjetas de crédito es de ${total_debt_summary}.\nDetalle:\n{cards_str}"
     elif intent == "ask_cashflow":
         return (
             f"Resumen de flujo de caja del mes:\n"

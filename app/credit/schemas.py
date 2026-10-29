@@ -43,26 +43,80 @@ class CreditCardUpdate(BaseModel):
 class CreditCardRead(CreditCardBase):
     id: uuid.UUID
     is_active: bool
-    current_debt: Decimal = Decimal("0.00")
-    total_debt: Decimal = Decimal("0.00")
-    available_credit: Decimal = Decimal("0.00")
-    billed_debt: Decimal = Decimal("0.00")
-    unbilled_debt: Decimal = Decimal("0.00")
-    payment_required: Decimal = Decimal("0.00")
-    minimum_payment: Decimal | None = None
-    next_payment_estimate: Decimal = Decimal("0.00")
-    statement_balance: Decimal | None = None
-    data_quality: dict[str, str] = Field(default_factory=dict)
+    current_debt: Decimal = Field(
+        default=Decimal("0.00"),
+        description="Legacy compatibility alias for total_debt (booked card currency).",
+        json_schema_extra={"deprecated": True},
+    )
+    total_debt: Decimal = Field(
+        default=Decimal("0.00"),
+        description="Total posted debt across canonical and legacy partitions in card currency.",
+    )
+    available_credit: Decimal = Field(
+        default=Decimal("0.00"),
+        description="Available credit line (limit - total_debt; Nexum-modeled estimate unless issuer fact).",
+    )
+    billed_debt: Decimal = Field(
+        default=Decimal("0.00"),
+        description="Current amount due from closed billing statements.",
+    )
+    unbilled_debt: Decimal = Field(
+        default=Decimal("0.00"),
+        description="Unbilled debt from current open cycle and future installment principal.",
+    )
+    payment_required: Decimal = Field(
+        default=Decimal("0.00"),
+        description="Total required payment for current cycle (equals billed_debt).",
+    )
+    minimum_payment: Decimal | None = Field(
+        default=None,
+        description="Authoritative minimum payment from issuer statement; null/unknown when no issuer fact exists.",
+    )
+    next_payment_estimate: Decimal = Field(
+        default=Decimal("0.00"),
+        description="Nexum-modeled estimated upcoming payment.",
+    )
+    statement_balance: Decimal | None = Field(
+        default=None,
+        description="Immutable snapshot balance of the most recent closed statement; null if no closed statement exists.",
+    )
+    data_quality: dict[str, str] = Field(
+        default_factory=dict,
+        description="Metadata dictionary tracking provenance and estimation sources for computed credit fields.",
+    )
     # Canonical lifecycle and provenance
-    canonical_mode: bool = False
-    canonical_activated_at: datetime | None = None
-    provenance: str | None = None
-    lifecycle_status: str | None = None
+    canonical_mode: bool = Field(
+        default=False,
+        description="Whether this card operates under canonical closure and immutable statements.",
+    )
+    canonical_activated_at: datetime | None = Field(
+        default=None,
+        description="Timestamp when canonical mode was activated for this card.",
+    )
+    provenance: str | None = Field(
+        default=None,
+        description="Source provenance of card facts (e.g. manual_input, issuer_authoritative).",
+    )
+    lifecycle_status: str | None = Field(
+        default=None,
+        description="Lifecycle status of the card entity.",
+    )
     # Deprecated aliases kept temporarily for frontend compatibility.
-    estimated_current_debt: Decimal = Decimal("0.00")
-    monthly_cc_payment: Decimal = Decimal("0.00")
+    estimated_current_debt: Decimal = Field(
+        default=Decimal("0.00"),
+        description="Deprecated compatibility alias for total_debt.",
+        json_schema_extra={"deprecated": True},
+    )
+    monthly_cc_payment: Decimal = Field(
+        default=Decimal("0.00"),
+        description="Deprecated compatibility alias for next_payment_estimate.",
+        json_schema_extra={"deprecated": True},
+    )
 
-    @computed_field
+    @computed_field(
+        description="Deprecated compatibility alias for available_credit.",
+        json_schema_extra={"deprecated": True},
+    )
     @property
     def estimated_available_credit(self) -> Decimal:
         return self.available_credit
@@ -71,19 +125,53 @@ class CreditCardRead(CreditCardBase):
 
 
 class CreditCardPurchaseCreate(BaseModel):
-    amount: Decimal | None = Field(default=None, gt=0)
-    category_id: uuid.UUID | None = None
-    description: str | None = None
-    installments_total: int = Field(default=1, ge=1)
-    source_message_id: uuid.UUID | None = None
-    raw_message: str | None = None
+    amount: Decimal | None = Field(
+        default=None,
+        gt=0,
+        description="Booked amount in card currency (legacy compatibility alias). Prefer original_amount/original_currency.",
+        json_schema_extra={"deprecated": True},
+    )
+    category_id: uuid.UUID | None = Field(default=None, description="Category identifier.")
+    description: str | None = Field(
+        default=None, description="Purchase description or commercial label."
+    )
+    installments_total: int = Field(
+        default=1, ge=1, description="Total number of installments (1 for revolving)."
+    )
+    source_message_id: uuid.UUID | None = Field(
+        default=None, description="Source message ID for conversational traceability."
+    )
+    raw_message: str | None = Field(
+        default=None, description="Original unparsed conversational message text."
+    )
     # Multi-currency and canonical lifecycle
-    original_amount: Decimal | None = Field(default=None, gt=0)
-    original_currency: str | None = Field(default=None, min_length=3, max_length=3)
-    currency: str | None = Field(default=None, min_length=3, max_length=3)
-    fx_quote_id: uuid.UUID | None = None
-    lifecycle_status: str | None = Field(default="posted", pattern=r"^(pending|posted)$")
-    occurred_at: datetime | None = None
+    original_amount: Decimal | None = Field(
+        default=None,
+        gt=0,
+        description="Original purchase amount in transaction currency.",
+    )
+    original_currency: str | None = Field(
+        default=None,
+        min_length=3,
+        max_length=3,
+        description="Original currency of the transaction (e.g. USD, EUR).",
+    )
+    currency: str | None = Field(
+        default=None,
+        min_length=3,
+        max_length=3,
+        description="Booked card currency (must match card currency if provided).",
+    )
+    fx_quote_id: uuid.UUID | None = Field(default=None, description="FX rate quote identifier.")
+    lifecycle_status: str | None = Field(
+        default="posted",
+        pattern=r"^(pending|posted)$",
+        description="Lifecycle status: 'posted' (commits debt/installments) or 'pending' (pre-authorization hold).",
+    )
+    occurred_at: datetime | None = Field(
+        default=None,
+        description="Effective purchase timestamp (defaults to current financial time in Bogota).",
+    )
 
     @model_validator(mode="after")
     def validate_amount_presence(self) -> "CreditCardPurchaseCreate":
@@ -93,105 +181,182 @@ class CreditCardPurchaseCreate(BaseModel):
 
 
 class CreditCardPurchaseResult(BaseModel):
-    status: str
-    event_id: uuid.UUID | None = None
-    transaction_id: uuid.UUID | None = None
-    amount: Decimal
-    current_debt: Decimal
-    available_credit: Decimal
-    estimated_current_debt: Decimal
-    estimated_available_credit: Decimal
+    status: str = Field(description="Execution result: 'success' or 'idempotent_retry'.")
+    event_id: uuid.UUID | None = Field(default=None, description="Linked Ledger event identifier.")
+    transaction_id: uuid.UUID | None = Field(
+        default=None, description="Created credit card transaction identifier."
+    )
+    amount: Decimal = Field(description="Booked purchase amount in card currency.")
+    current_debt: Decimal = Field(description="Total posted debt after purchase in card currency.")
+    available_credit: Decimal = Field(
+        description="Available credit after purchase in card currency."
+    )
+    estimated_current_debt: Decimal = Field(
+        description="Deprecated alias for current_debt.",
+        json_schema_extra={"deprecated": True},
+    )
+    estimated_available_credit: Decimal = Field(
+        description="Deprecated alias for available_credit.",
+        json_schema_extra={"deprecated": True},
+    )
     # Explicit cycle, multi-currency, FX evidence and partition
-    cycle_id: uuid.UUID | None = None
-    billing_period: str | None = None
-    original_amount: Decimal | None = None
-    original_currency: str | None = None
-    booked_amount: Decimal | None = None
-    booked_currency: str | None = None
-    fx_rate: Decimal | None = None
-    fx_rate_snapshot_id: uuid.UUID | None = None
-    lifecycle_status: str | None = None
-    debt_partition: str | None = None
-    provenance: str | None = None
+    cycle_id: uuid.UUID | None = Field(
+        default=None, description="Assigned canonical billing cycle identifier."
+    )
+    billing_period: str | None = Field(
+        default=None, description="Assigned billing cycle period (YYYY-MM)."
+    )
+    original_amount: Decimal | None = Field(
+        default=None, description="Original purchase amount in merchant currency."
+    )
+    original_currency: str | None = Field(default=None, description="Original purchase currency.")
+    booked_amount: Decimal | None = Field(
+        default=None, description="Booked purchase amount in card currency."
+    )
+    booked_currency: str | None = Field(
+        default=None, description="Card currency in which purchase is booked."
+    )
+    fx_rate: Decimal | None = Field(
+        default=None, description="Exchange rate applied for currency conversion."
+    )
+    fx_rate_snapshot_id: uuid.UUID | None = Field(
+        default=None, description="Immutable FX rate snapshot evidence identifier."
+    )
+    lifecycle_status: str | None = Field(
+        default=None, description="Lifecycle status ('pending' or 'posted')."
+    )
+    debt_partition: str | None = Field(
+        default=None, description="Debt partition ('canonical' or 'legacy')."
+    )
+    provenance: str | None = Field(
+        default=None, description="Fact provenance (e.g. 'nexum_modeled', 'manual_input')."
+    )
 
 
 class CreditCardPaymentCreate(BaseModel):
-    account_id: uuid.UUID
-    amount: Decimal = Field(..., gt=0)
-    source_message_id: uuid.UUID | None = None
-    raw_message: str | None = None
+    account_id: uuid.UUID = Field(description="Funding account identifier.")
+    amount: Decimal = Field(..., gt=0, description="Payment amount in funding account currency.")
+    source_message_id: uuid.UUID | None = Field(
+        default=None, description="Source message ID for conversational traceability."
+    )
+    raw_message: str | None = Field(
+        default=None, description="Original unparsed conversational message text."
+    )
 
 
 class CreditCardPaymentResult(BaseModel):
-    status: str
-    event_id: uuid.UUID | None = None
-    transaction_id: uuid.UUID | None = None
-    amount: Decimal
-    current_debt: Decimal
-    available_credit: Decimal
-    estimated_current_debt: Decimal
-    account_balance: Decimal
+    status: str = Field(description="Execution result: 'success' or 'idempotent_retry'.")
+    event_id: uuid.UUID | None = Field(default=None, description="Linked Ledger event identifier.")
+    transaction_id: uuid.UUID | None = Field(
+        default=None, description="Created payment transaction identifier."
+    )
+    amount: Decimal = Field(description="Payment amount booked to card in card currency.")
+    current_debt: Decimal = Field(
+        description="Remaining total posted debt after payment in card currency."
+    )
+    available_credit: Decimal = Field(description="Available credit line after payment.")
+    estimated_current_debt: Decimal = Field(
+        description="Deprecated alias for current_debt.",
+        json_schema_extra={"deprecated": True},
+    )
+    account_balance: Decimal = Field(
+        description="Remaining funding account balance in account currency."
+    )
 
 
 class CreditCardEarlyPaymentCreate(BaseModel):
-    account_id: uuid.UUID
-    amount: Decimal | None = Field(None, gt=0)
-    allocation_mode: str = "reduce_installment_amount"
-    source_message_id: uuid.UUID | None = None
-    raw_message: str | None = None
+    account_id: uuid.UUID = Field(description="Funding account identifier.")
+    amount: Decimal | None = Field(
+        None, gt=0, description="Prepayment amount in funding account currency."
+    )
+    allocation_mode: str = Field(
+        default="reduce_installment_amount",
+        description="Allocation strategy for prepayment ('reduce_installment_amount').",
+    )
+    source_message_id: uuid.UUID | None = Field(
+        default=None, description="Source message ID for traceability."
+    )
+    raw_message: str | None = Field(default=None, description="Original unparsed message text.")
 
 
 class CreditCardEarlyPaymentResult(BaseModel):
-    status: str
-    event_id: uuid.UUID | None = None
-    early_payment_id: uuid.UUID | None = None
-    amount: Decimal
-    current_debt: Decimal
-    available_credit: Decimal
-    account_balance: Decimal
+    status: str = Field(description="Execution result: 'success' or 'idempotent_retry'.")
+    event_id: uuid.UUID | None = Field(default=None, description="Linked Ledger event identifier.")
+    early_payment_id: uuid.UUID | None = Field(
+        default=None, description="Early payment record identifier."
+    )
+    amount: Decimal = Field(description="Prepayment amount applied.")
+    current_debt: Decimal = Field(description="Remaining total debt.")
+    available_credit: Decimal = Field(description="Remaining available credit.")
+    account_balance: Decimal = Field(description="Remaining funding account balance.")
 
 
 class CreditCardEarlyPaymentPreviewCreate(BaseModel):
-    account_id: uuid.UUID
-    amount: Decimal | None = Field(None, gt=0)
+    account_id: uuid.UUID = Field(description="Funding account identifier.")
+    amount: Decimal | None = Field(None, gt=0, description="Preview prepayment amount.")
 
 
 class PaymentPreviewResult(BaseModel):
-    source_amount: Decimal
-    source_currency: str
-    target_amount: Decimal
-    target_currency: str
-    fx_rate: Decimal
-    rate_source: str
-    is_estimated: bool
+    source_amount: Decimal = Field(description="Amount in funding account currency.")
+    source_currency: str = Field(description="Funding account currency.")
+    target_amount: Decimal = Field(description="Calculated amount in card currency.")
+    target_currency: str = Field(description="Card currency.")
+    fx_rate: Decimal = Field(description="Exchange rate applied.")
+    rate_source: str = Field(description="FX rate source provider.")
+    is_estimated: bool = Field(description="Whether the exchange rate is an estimate.")
 
 
 class CreditCardStatusRead(BaseModel):
-    card_id: uuid.UUID
-    name: str
-    credit_limit: Decimal
-    management_fee: Decimal = Decimal("0.00")
-    monthly_interest_rate: Decimal = Decimal("0.00")
-    annual_interest_rate: Decimal = Decimal("0.00")
-    network: str | None = None
-    franchise: str | None = None
-    currency: str = "COP"
-    current_debt: Decimal = Decimal("0.00")
-    total_debt: Decimal
-    billed_debt: Decimal
-    unbilled_debt: Decimal
-    available_credit: Decimal
-    payment_required: Decimal = Decimal("0.00")
-    minimum_payment: Decimal | None = None
-    next_payment_estimate: Decimal = Decimal("0.00")
-    statement_balance: Decimal | None = None
-    monthly_cc_payment: Decimal
-    cutoff_day: int
-    payment_due_day: int
-    next_payment_due_date: str
-    purchases_count: int
-    payments_count: int
-    data_quality: dict[str, str] = Field(default_factory=dict)
+    card_id: uuid.UUID = Field(description="Card identifier.")
+    name: str = Field(description="Card label/name.")
+    credit_limit: Decimal = Field(description="Card credit limit in card currency.")
+    management_fee: Decimal = Field(default=Decimal("0.00"), description="Monthly management fee.")
+    monthly_interest_rate: Decimal = Field(
+        default=Decimal("0.00"), description="Monthly interest rate percentage."
+    )
+    annual_interest_rate: Decimal = Field(
+        default=Decimal("0.00"), description="Annual interest rate percentage."
+    )
+    network: str | None = Field(default=None, description="Card network.")
+    franchise: str | None = Field(default=None, description="Card franchise.")
+    currency: str = Field(default="COP", description="Card currency.")
+    current_debt: Decimal = Field(
+        default=Decimal("0.00"),
+        description="Legacy compatibility alias for total_debt.",
+        json_schema_extra={"deprecated": True},
+    )
+    total_debt: Decimal = Field(
+        description="Total posted debt across canonical and legacy partitions."
+    )
+    billed_debt: Decimal = Field(description="Billed debt due in the current cycle.")
+    unbilled_debt: Decimal = Field(description="Unbilled debt for future cycles.")
+    available_credit: Decimal = Field(
+        description="Available credit (credit_limit - total_debt; Nexum-modeled estimate)."
+    )
+    payment_required: Decimal = Field(
+        default=Decimal("0.00"), description="Payment required for current cycle (billed_debt)."
+    )
+    minimum_payment: Decimal | None = Field(
+        default=None, description="Authoritative minimum payment from issuer (null if unknown)."
+    )
+    next_payment_estimate: Decimal = Field(
+        default=Decimal("0.00"), description="Nexum-modeled estimate for upcoming payment."
+    )
+    statement_balance: Decimal | None = Field(
+        default=None, description="Balance of last closed statement snapshot."
+    )
+    monthly_cc_payment: Decimal = Field(
+        description="Compatibility alias for next_payment_estimate.",
+        json_schema_extra={"deprecated": True},
+    )
+    cutoff_day: int = Field(description="Cutoff day of month.")
+    payment_due_day: int = Field(description="Payment due day of month.")
+    next_payment_due_date: str = Field(description="Computed due date in ISO format.")
+    purchases_count: int = Field(description="Count of purchases in current cycle.")
+    payments_count: int = Field(description="Count of payments in current cycle.")
+    data_quality: dict[str, str] = Field(
+        default_factory=dict, description="Metadata dictionary tracking data provenance."
+    )
 
 
 class CreditSummaryRead(BaseModel):
@@ -377,11 +542,19 @@ class CreditCardPaymentRead(BaseModel):
     command_fingerprint: str | None = None
     created_at: datetime
 
+    @computed_field(
+        description="Compatibility alias for booked_amount (deprecated).",
+        json_schema_extra={"deprecated": True},
+    )
     @property
     def amount(self) -> Decimal:
         """Compatibility alias for booked_amount."""
         return self.booked_amount
 
+    @computed_field(
+        description="Compatibility alias for booked_currency (deprecated).",
+        json_schema_extra={"deprecated": True},
+    )
     @property
     def currency(self) -> str:
         """Compatibility alias for booked_currency."""
@@ -436,11 +609,19 @@ class CreditCardAdjustmentRead(BaseModel):
     occurred_at: datetime
     created_at: datetime
 
+    @computed_field(
+        description="Compatibility alias for booked_amount (deprecated).",
+        json_schema_extra={"deprecated": True},
+    )
     @property
     def amount(self) -> Decimal:
         """Compatibility alias for booked_amount."""
         return self.booked_amount
 
+    @computed_field(
+        description="Compatibility alias for booked_currency (deprecated).",
+        json_schema_extra={"deprecated": True},
+    )
     @property
     def currency(self) -> str:
         """Compatibility alias for booked_currency."""
