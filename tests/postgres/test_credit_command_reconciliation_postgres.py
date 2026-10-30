@@ -231,7 +231,7 @@ async def test_pg_reconcile_concurrent_uncommitted_post_yields_unknown(
     session_factory: sessionmaker, static_fx: StaticFxRateProvider
 ):
     """Verifies physical PostgreSQL concurrency isolation:
-    
+
     1. Transaction 1 executes a purchase mutation with command_id under an uncommitted transaction.
     2. Concurrent Session 2 reconciles the command_id. Under PostgreSQL READ COMMITTED,
        the uncommitted FinancialEvent is invisible, yielding status='unknown'.
