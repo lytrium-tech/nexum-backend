@@ -22,6 +22,7 @@ from app.credit.schemas import (
     CreditCardStatementRead,
     CreditCardStatusRead,
     CreditCardUpdate,
+    CreditCommandReconciliationRead,
     CreditSummaryRead,
     PaymentPreviewResult,
 )
@@ -247,3 +248,13 @@ async def get_statement(
     if not statement:
         raise NotFoundError(message="Statement not found")
     return statement
+
+
+@router.get("/commands/{command_id}", response_model=CreditCommandReconciliationRead)
+async def reconcile_command(
+    command_id: uuid.UUID,
+    current_profile: CurrentUserProfile,
+    service: CreditCardService = Depends(get_credit_service),
+) -> CreditCommandReconciliationRead:
+    user_id = current_profile.id
+    return await service.reconcile_command(user_id=user_id, command_id=command_id)

@@ -3,7 +3,7 @@
 > [!IMPORTANT]
 > **Operational Status & Scope Notice:**
 > - **Frontend Status:** The frontend codebase remains **completely unchanged**; frontend QA, client component migration, and UI updates have **not yet begun**.
-> - **Backend Status:** Implementation and physical PostgreSQL 17 verification are complete and the final evidence report is available at `docs/agent/reports/credit-domain-goal2-physical-release-gate-report.md`. This is a backend handoff contract; Founder GO/NO-GO for Frontend Sync + QA is still pending. Do not begin frontend work before that decision.
+> - **Backend Status:** Credit Canonical V2 remains the certified base. The separate command-reconciliation extension is implemented and physically tested, but is **awaiting Founder review** and is not independently certified or authorized for frontend sync/QA. Do not begin frontend work before explicit approval.
 > - **API Path:** The canonical path is strictly `/api/v1/credit`. There is **no `/v2` API version prefix**; canonical closure is an internal architectural closure under the established `/api/v1/credit` route tree.
 > - **Scope:** Revolving credit cards only. Fixed-schedule loans and obligations are governed strictly by `/api/v1.7/obligations`.
 > - **Alpha Environment Reality:** In Alpha, external bank integrations do not exist. All credit cards in the database are user-created (`provenance: "manual"` or `"manual_input"`). All credit limits, transaction records, and payments originate from manual input; statement generation, cycle cutoffs, and waterfall allocations are Nexum-modeled projections (`provenance: "nexum_modeled"`). Bank-authoritative facts (`provenance: "issuer_authoritative"`) are architected into the data model and schema contracts but are not claimed as existing in Alpha.
@@ -353,6 +353,79 @@ Returns `list[CreditCardInstallmentRead]`:
 
 ---
 
+### 2.8 Credit Command Reconciliation
+
+#### `GET /api/v1/credit/commands/{command_id}`
+Narrow, authenticated, read-only reconciliation endpoint to verify the execution and committed outcome of client commands (`Idempotency-Key`).
+
+- **Path Parameter:** `command_id` (`UUID`, format validated)
+- **Authentication:** `CurrentUserProfile` (authenticated user scope strictly enforced)
+- **Execution Rules:** Strictly read-only query. Executes without `UnitOfWork` transactions, without row-level locks (`SELECT FOR UPDATE`), without autoflush writes, and without schema migration.
+- **HTTP Outcomes:** `200` for both `confirmed` and `unknown`; malformed UUID follows the common `422` validation envelope; authentication failures follow platform auth behavior. A command owned by another user returns the identical `unknown` body used for an unresolved command.
+
+#### Exact Status Outcomes: `confirmed` vs `unknown`
+The endpoint exposes **only two provable statuses**: `confirmed` and `unknown`.
+It strictly does **NOT** expose `in_progress`, `failed`, or `not_found`, as current durable data cannot prove them without an external distributed state machine.
+
+1. **`confirmed`**:
+   Authoritatively proves that a committed `FinancialEvent` with this `command_id` exists, is owned by the authenticated user, and links to an existing canonical Credit resource:
+   - `purchase`: maps to `CreditCardTransaction.id` (`transaction_id`).
+   - `payment` (standard payment): maps to `CreditCardPayment.id` (`payment_id`).
+   - `pay_early` (targeted early payment): maps to `CreditCardEarlyPayment.id` (`early_payment_id`).
+   - `adjustment` (refund/reversal/adjustment): maps to `CreditCardAdjustment.id` (`adjustment_id`).
+   - Always includes `event_id` and canonical `resource_id`.
+
+2. **`unknown`**:
+   Returned for **any case** where a committed, owner-visible canonical Credit resource cannot be proven:
+   - Command never issued or not yet committed (in-flight concurrent POST).
+   - Transaction rolled back due to error.
+   - Command issued by a different user (`foreign-owner`; foreign-owner and unknown results are 100% indistinguishable to prevent user enumeration).
+   - Command issued in a non-Credit domain (e.g. cash transfers, goal contributions).
+   - Incomplete or corrupted resource link.
+   - **Crucial Invariant:** `unknown` is **strictly NOT authoritative absence** and **NEVER means safe to issue/reissue a financial operation**.
+
+#### Concurrency & Race Semantics
+Under standard PostgreSQL `READ COMMITTED` isolation, a concurrent uncommitted POST holding a command in-flight is invisible to a concurrent reconciliation query. In this window, the query returns `status: "unknown"`.
+Once the mutating POST commits, subsequent queries return `status: "confirmed"`.
+The PostgreSQL race test exercised the endpoint while a purchase transaction was still uncommitted, then queried again after commit. `unknown` is never authoritative absence and never authorizes replay or a replacement POST with the same command ID.
+
+#### Retention & Lifecycle (No TTL)
+Command reconciliation records do not expire via artificial TTL. The authoritative link persists indefinitely as long as the underlying `financial_events` and credit rows are retained. Deleting a user cascades and removes all associated events and credit resources.
+
+#### Client Contract Boundary
+`unknown` does not prove absence and does not authorize reissuing the same command. The endpoint reports backend facts only; whether to retain an intent or create a distinct new user command remains a client/product decision.
+
+#### Response Schema: `CreditCommandReconciliationRead`
+```json
+{
+  "command_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "status": "confirmed",
+  "operation_type": "purchase",
+  "event_id": "11111111-2222-3333-4444-555555555555",
+  "resource_id": "22222222-3333-4444-5555-666666666666",
+  "transaction_id": "22222222-3333-4444-5555-666666666666",
+  "payment_id": null,
+  "early_payment_id": null,
+  "adjustment_id": null
+}
+```
+When `status: "unknown"`:
+```json
+{
+  "command_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "status": "unknown",
+  "operation_type": null,
+  "event_id": null,
+  "resource_id": null,
+  "transaction_id": null,
+  "payment_id": null,
+  "early_payment_id": null,
+  "adjustment_id": null
+}
+```
+
+---
+
 ## 3. Stable Domain Error Codes Reference
 
 All credit endpoints route exceptions through FastAPI's global `nexum_error_handler`, returning a structured JSON envelope:
@@ -395,7 +468,7 @@ The table below lists the exact HTTP status codes, machine-readable `error_code`
 ## 4. Frontend Migration Checklist
 
 When frontend development and QA begin:
-1. [ ] Update TypeScript API client models from `openapi.json` (SHA-256: `988BC0B7DDFC9796DE6F925DB46E84FCB9D4E86EBAB266FDBC239EFC50EA08C1`).
+1. [ ] Update TypeScript API client models from `openapi.json` (SHA-256: `E7B808A0D86484EB8E2A4884D2DF57847B6F545E943823D79DE9F19E129889DD`; previous certified hash: `988BC0B7DDFC9796DE6F925DB46E84FCB9D4E86EBAB266FDBC239EFC50EA08C1`).
 2. [ ] Map primary card balance card to `total_debt` (replace references to deprecated `current_debt`).
 3. [ ] Label available credit clearly as estimated (`Cupo disponible (estimado Nexum)`).
 4. [ ] Handle `minimum_payment === null` gracefully in the UI (e.g. display *"Sin información del banco"* or *"No requerido"* instead of defaulting to `$0.00`).

@@ -208,6 +208,21 @@ class CreditCardRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_payment_by_event_for_user(
+        self, event_id: uuid.UUID, user_id: uuid.UUID
+    ) -> CreditCardPayment | None:
+        result = await self.session.execute(
+            select(CreditCardPayment)
+            .join(CreditCard, CreditCard.id == CreditCardPayment.credit_card_id)
+            .where(
+                CreditCardPayment.event_id == event_id,
+                CreditCardPayment.user_id == user_id,
+                CreditCard.user_id == user_id,
+            )
+            .execution_options(autoflush=False)
+        )
+        return result.scalar_one_or_none()
+
     async def list_adjustments_for_transaction(
         self, transaction_id: uuid.UUID
     ) -> list[CreditCardAdjustment]:
@@ -221,6 +236,21 @@ class CreditCardRepository:
     async def get_adjustment_by_event(self, event_id: uuid.UUID) -> CreditCardAdjustment | None:
         result = await self.session.execute(
             select(CreditCardAdjustment).where(CreditCardAdjustment.event_id == event_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_adjustment_by_event_for_user(
+        self, event_id: uuid.UUID, user_id: uuid.UUID
+    ) -> CreditCardAdjustment | None:
+        result = await self.session.execute(
+            select(CreditCardAdjustment)
+            .join(CreditCard, CreditCard.id == CreditCardAdjustment.credit_card_id)
+            .where(
+                CreditCardAdjustment.event_id == event_id,
+                CreditCardAdjustment.user_id == user_id,
+            )
+            .where(CreditCard.user_id == user_id)
+            .execution_options(autoflush=False)
         )
         return result.scalar_one_or_none()
 
@@ -286,6 +316,21 @@ class CreditCardRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_transaction_by_event_for_user(
+        self, event_id: uuid.UUID, user_id: uuid.UUID
+    ) -> CreditCardTransaction | None:
+        result = await self.session.execute(
+            select(CreditCardTransaction)
+            .join(CreditCard, CreditCard.id == CreditCardTransaction.credit_card_id)
+            .where(
+                CreditCardTransaction.event_id == event_id,
+                CreditCardTransaction.user_id == user_id,
+                CreditCard.user_id == user_id,
+            )
+            .execution_options(autoflush=False)
+        )
+        return result.scalar_one_or_none()
+
     async def get_transaction_by_id(
         self, transaction_id: uuid.UUID
     ) -> CreditCardTransaction | None:
@@ -311,6 +356,23 @@ class CreditCardRepository:
 
         result = await self.session.execute(
             select(CreditCardEarlyPayment).where(CreditCardEarlyPayment.event_id == event_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_early_payment_by_event_for_user(
+        self, event_id: uuid.UUID, user_id: uuid.UUID
+    ):
+        from app.credit.models import CreditCardEarlyPayment
+
+        result = await self.session.execute(
+            select(CreditCardEarlyPayment)
+            .join(CreditCard, CreditCard.id == CreditCardEarlyPayment.credit_card_id)
+            .where(
+                CreditCardEarlyPayment.event_id == event_id,
+                CreditCardEarlyPayment.user_id == user_id,
+                CreditCard.user_id == user_id,
+            )
+            .execution_options(autoflush=False)
         )
         return result.scalar_one_or_none()
 

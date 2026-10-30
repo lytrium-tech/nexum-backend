@@ -73,6 +73,16 @@ class LedgerRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_command_id_for_user(
+        self, command_id: UUID, user_id: UUID
+    ) -> FinancialEvent | None:
+        stmt = select(FinancialEvent).where(
+            FinancialEvent.command_id == command_id,
+            FinancialEvent.user_id == user_id,
+        ).execution_options(autoflush=False)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def get_event_for_update(self, event_id: UUID, user_id: UUID) -> FinancialEvent | None:
         """Obtiene un evento bloqueándolo para actualización."""
         stmt = (

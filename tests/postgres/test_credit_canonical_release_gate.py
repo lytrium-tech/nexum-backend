@@ -639,10 +639,52 @@ async def test_pg04a_standard_partial_and_generic_prepayment_conservation(
 
 
 @pytest.mark.asyncio(loop_scope="session")
+async def test_pay_early_reconciliation_http(session, fixture, static_fx):
+    from httpx import ASGITransport, AsyncClient
+    from app.main import app
+    from app.credit.router import get_credit_service
+    from app.users.dependencies import get_current_user_profile_dep
+    from app.users.schemas import UserRead
+
+    card = await fixture.add_credit_card(currency="COP", credit_limit=Decimal("5000000.00"))
+    fixture.account.balance = Decimal("1000000.00")
+    fixture.account.currency = "COP"
+    await session.commit()
+    service = CreditCardService(session, fx_provider=static_fx)
+    purchase = await service.create_purchase(fixture.user_id, card.id, CreditCardPurchaseCreate(amount=Decimal("600000.00"), description="HTTP reconciliation", installments_total=6), command_id=uuid.uuid4())
+    await session.commit()
+    command_id = uuid.uuid4()
+    result = await service.create_early_payment(fixture.user_id, card.id, purchase.transaction_id, CreditCardEarlyPaymentCreate(account_id=fixture.account.id, amount=Decimal("100000.00")), command_id=command_id)
+    await session.commit()
+    profile = UserRead(id=fixture.user_id, name="Gate Test", email="gate@example.test", timezone="America/Bogota", currency="COP", status="active")
+    app.dependency_overrides[get_credit_service] = lambda: service
+    app.dependency_overrides[get_current_user_profile_dep] = lambda: profile
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(f"/api/v1/credit/commands/{command_id}")
+        print("HTTP_PAY_EARLY_RESPONSE", response.status_code, response.text)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["status"] == "confirmed"
+        assert body["operation_type"] == "pay_early"
+        assert body["command_id"] == str(command_id)
+        assert body["event_id"] == str(result.event_id)
+        assert body["resource_id"] == body["early_payment_id"] == str(result.early_payment_id)
+    finally:
+        app.dependency_overrides.pop(get_credit_service, None)
+        app.dependency_overrides.pop(get_current_user_profile_dep, None)
+
+
+@pytest.mark.asyncio(loop_scope="session")
 async def test_pg04b_targeted_early_payment_records_prepayment_transaction(
     session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
 ):
-    """Targeted early payment creates credit_card_early_payments record AND credit_card_transactions record (F-08)."""
+    """Targeted early payment creates credit_card_early_payments record AND credit_card_transactions record (F-08).
+
+    Also verifies post-commit command reconciliation (confirmed with matching IDs),
+    exact idempotent retry, incompatible reuse rejection (CreditIdempotencyConflictError),
+    and strictly read-only zero-write reconciliation.
+    """
     card = await fixture.add_credit_card(currency="COP", credit_limit=Decimal("5000000.00"))
     fixture.account.balance = Decimal("1000000.00")
     fixture.account.currency = "COP"
@@ -672,6 +714,8 @@ async def test_pg04b_targeted_early_payment_records_prepayment_transaction(
     await session.commit()
 
     assert ep_res.status == "success"
+    assert ep_res.early_payment_id is not None
+    assert ep_res.event_id is not None
 
     # Verify F-08: credit_card_transactions row MUST exist for prepayment
     txs = (
@@ -687,6 +731,135 @@ async def test_pg04b_targeted_early_payment_records_prepayment_transaction(
         .all()
     )
     assert len(txs) >= 1
+
+    # 1. Reconciliación sin escrituras y reconcile_command confirmed con IDs correctos
+    recon_tables = (
+        "financial_events",
+        "accounts",
+        "credit_card_transactions",
+        "credit_card_installments",
+        "credit_card_payments",
+        "credit_card_payment_allocations",
+        "credit_card_early_payments",
+        "credit_card_adjustments",
+    )
+    counts_before = {
+        tbl: (await session.execute(text(f"SELECT COUNT(*) FROM {tbl}"))).scalar_one()
+        for tbl in recon_tables
+    }
+
+    recon = await service.reconcile_command(user_id=fixture.user_id, command_id=cmd_ep)
+
+    # Reconciliación sin escrituras: cero mutaciones físicas ni en la sesión
+    counts_after = {
+        tbl: (await session.execute(text(f"SELECT COUNT(*) FROM {tbl}"))).scalar_one()
+        for tbl in recon_tables
+    }
+    assert counts_before == counts_after
+    assert len(session.dirty) == 0
+    assert len(session.new) == 0
+    assert len(session.deleted) == 0
+
+    # reconcile_command confirmed con IDs correctos
+    assert recon.status == "confirmed"
+    assert recon.operation_type == "pay_early"
+    assert recon.command_id == cmd_ep
+    assert recon.event_id == ep_res.event_id
+    assert recon.resource_id == ep_res.early_payment_id
+    assert recon.early_payment_id == ep_res.early_payment_id
+    assert recon.transaction_id is None
+    assert recon.payment_id is None
+    assert recon.adjustment_id is None
+
+    # Reconciliación sin escrituras con comando desconocido
+    recon_unknown = await service.reconcile_command(
+        user_id=fixture.user_id, command_id=uuid.uuid4()
+    )
+    assert recon_unknown.status == "unknown"
+    assert recon_unknown.operation_type is None
+    assert recon_unknown.event_id is None
+    assert recon_unknown.resource_id is None
+    assert recon_unknown.early_payment_id is None
+    assert len(session.dirty) == 0
+    assert len(session.new) == 0
+    assert len(session.deleted) == 0
+
+    # 2. Replay idéntico idempotent_retry
+    ep_replay = await service.create_early_payment(
+        fixture.user_id,
+        card.id,
+        p_res.transaction_id,
+        ep_payload,
+        command_id=cmd_ep,
+    )
+    assert ep_replay.status == "idempotent_retry"
+    assert ep_replay.event_id == ep_res.event_id
+    assert ep_replay.early_payment_id == ep_res.early_payment_id
+    assert ep_replay.amount == ep_payload.amount
+
+    # Verificar que el balance de la cuenta no sufrió doble débito
+    acc = await session.get(Account, fixture.account.id)
+    assert acc is not None
+    assert acc.balance == Decimal("900000.00")
+
+    # Verificar que no se duplicaron registros de pago anticipado ni transacciones
+    early_pay_count = (
+        await session.execute(
+            text("SELECT COUNT(*) FROM credit_card_early_payments WHERE credit_card_id = :cid"),
+            {"cid": card.id},
+        )
+    ).scalar_one()
+    assert early_pay_count == 1
+
+    payment_tx_count = (
+        await session.execute(
+            text(
+                "SELECT COUNT(*) FROM credit_card_transactions "
+                "WHERE credit_card_id = :cid AND type = 'payment'"
+            ),
+            {"cid": card.id},
+        )
+    ).scalar_one()
+    assert payment_tx_count == 1
+
+    # 3. Reutilización incompatible CreditIdempotencyConflictError
+    # 3a. Conflicto por monto diferente
+    conflicting_amount = CreditCardEarlyPaymentCreate(
+        account_id=fixture.account.id,
+        amount=Decimal("50000.00"),
+    )
+    with pytest.raises(CreditIdempotencyConflictError):
+        await service.create_early_payment(
+            fixture.user_id,
+            card.id,
+            p_res.transaction_id,
+            conflicting_amount,
+            command_id=cmd_ep,
+        )
+
+    # 3b. Conflicto por compra objetivo diferente
+    conflicting_target = CreditCardEarlyPaymentCreate(
+        account_id=fixture.account.id,
+        amount=Decimal("100000.00"),
+    )
+    with pytest.raises(CreditIdempotencyConflictError):
+        await service.create_early_payment(
+            fixture.user_id,
+            card.id,
+            uuid.uuid4(),
+            conflicting_target,
+            command_id=cmd_ep,
+        )
+
+    # Reconciliación final confirma que el comando permanece intacto con cero mutaciones
+    recon_after_conflicts = await service.reconcile_command(
+        user_id=fixture.user_id, command_id=cmd_ep
+    )
+    assert recon_after_conflicts.status == "confirmed"
+    assert recon_after_conflicts.resource_id == ep_res.early_payment_id
+    assert len(session.dirty) == 0
+    assert len(session.new) == 0
+    assert len(session.deleted) == 0
 
 
 @pytest.mark.asyncio(loop_scope="session")

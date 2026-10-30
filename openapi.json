@@ -3326,6 +3326,54 @@
         }
       }
     },
+    "/api/v1/credit/commands/{command_id}": {
+      "get": {
+        "tags": [
+          "Credit"
+        ],
+        "summary": "Reconcile Command",
+        "operationId": "reconcile_command_api_v1_credit_commands__command_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "command_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Command Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditCommandReconciliationRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/ledger/events": {
       "get": {
         "tags": [
@@ -9109,6 +9157,128 @@
         "additionalProperties": false,
         "type": "object",
         "title": "CreditCardUpdate"
+      },
+      "CreditCommandReconciliationRead": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Command Id",
+            "description": "Business command identifier (idempotency key) submitted by the client."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "unknown"
+            ],
+            "title": "Status",
+            "description": "Reconciliation outcome: 'confirmed' if committed and provable; 'unknown' otherwise."
+          },
+          "operation_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "purchase",
+                  "payment",
+                  "pay_early",
+                  "adjustment"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Type",
+            "description": "Specific Credit mutation family for confirmed commands ('purchase', 'payment', 'pay_early', 'adjustment'). Strictly null when unknown."
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id",
+            "description": "Authoritative FinancialEvent identifier. Strictly null when unknown."
+          },
+          "resource_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Id",
+            "description": "Canonical Credit resource identifier matching the operation type. Strictly null when unknown."
+          },
+          "transaction_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transaction Id",
+            "description": "Persisted CreditCardTransaction identifier for purchase operations. Strictly null otherwise."
+          },
+          "payment_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Id",
+            "description": "Persisted CreditCardPayment identifier for standard payment operations. Strictly null otherwise."
+          },
+          "early_payment_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Early Payment Id",
+            "description": "Persisted CreditCardEarlyPayment identifier for targeted pay_early operations. Strictly null otherwise."
+          },
+          "adjustment_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adjustment Id",
+            "description": "Persisted CreditCardAdjustment identifier for adjustment operations. Strictly null otherwise."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "command_id",
+          "status"
+        ],
+        "title": "CreditCommandReconciliationRead"
       },
       "CreditSummaryRead": {
         "properties": {

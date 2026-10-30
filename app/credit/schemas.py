@@ -722,3 +722,123 @@ class CreditCardAdjustmentResult(BaseModel):
     direction: str
     provenance: str = "manual"
     allocation_source: str = "nexum_modeled"
+
+
+# ── Credit Command Reconciliation Schemas ────────────────────────────────────
+
+CreditCommandStatus = Literal["confirmed", "unknown"]
+CreditCommandOperationType = Literal[
+    "purchase",
+    "payment",
+    "pay_early",
+    "adjustment",
+]
+
+
+class CreditCommandReconciliationRead(BaseModel):
+    command_id: uuid.UUID = Field(
+        description="Business command identifier (idempotency key) submitted by the client."
+    )
+    status: CreditCommandStatus = Field(
+        description="Reconciliation outcome: 'confirmed' if committed and provable; 'unknown' otherwise."
+    )
+    operation_type: CreditCommandOperationType | None = Field(
+        default=None,
+        description="Specific Credit mutation family for confirmed commands ('purchase', 'payment', 'pay_early', 'adjustment'). Strictly null when unknown.",
+    )
+    event_id: uuid.UUID | None = Field(
+        default=None,
+        description="Authoritative FinancialEvent identifier. Strictly null when unknown.",
+    )
+    resource_id: uuid.UUID | None = Field(
+        default=None,
+        description="Canonical Credit resource identifier matching the operation type. Strictly null when unknown.",
+    )
+    transaction_id: uuid.UUID | None = Field(
+        default=None,
+        description="Persisted CreditCardTransaction identifier for purchase operations. Strictly null otherwise.",
+    )
+    payment_id: uuid.UUID | None = Field(
+        default=None,
+        description="Persisted CreditCardPayment identifier for standard payment operations. Strictly null otherwise.",
+    )
+    early_payment_id: uuid.UUID | None = Field(
+        default=None,
+        description="Persisted CreditCardEarlyPayment identifier for targeted pay_early operations. Strictly null otherwise.",
+    )
+    adjustment_id: uuid.UUID | None = Field(
+        default=None,
+        description="Persisted CreditCardAdjustment identifier for adjustment operations. Strictly null otherwise.",
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_reconciliation_consistency(self) -> "CreditCommandReconciliationRead":
+        if self.status == "unknown":
+            if self.operation_type is not None:
+                raise ValueError("operation_type must be null when status is unknown")
+            if self.event_id is not None:
+                raise ValueError("event_id must be null when status is unknown")
+            if self.resource_id is not None:
+                raise ValueError("resource_id must be null when status is unknown")
+            if self.transaction_id is not None:
+                raise ValueError("transaction_id must be null when status is unknown")
+            if self.payment_id is not None:
+                raise ValueError("payment_id must be null when status is unknown")
+            if self.early_payment_id is not None:
+                raise ValueError("early_payment_id must be null when status is unknown")
+            if self.adjustment_id is not None:
+                raise ValueError("adjustment_id must be null when status is unknown")
+        elif self.status == "confirmed":
+            if self.operation_type is None:
+                raise ValueError("operation_type is required when status is confirmed")
+            if self.event_id is None:
+                raise ValueError("event_id is required when status is confirmed")
+            if self.resource_id is None:
+                raise ValueError("resource_id is required when status is confirmed")
+            if self.operation_type == "purchase":
+                if self.transaction_id is None or self.transaction_id != self.resource_id:
+                    raise ValueError(
+                        "transaction_id must match resource_id for confirmed purchase"
+                    )
+                if (
+                    self.payment_id is not None
+                    or self.early_payment_id is not None
+                    or self.adjustment_id is not None
+                ):
+                    raise ValueError("Other operation IDs must be null for purchase")
+            elif self.operation_type == "payment":
+                if self.payment_id is None or self.payment_id != self.resource_id:
+                    raise ValueError(
+                        "payment_id must match resource_id for confirmed payment"
+                    )
+                if (
+                    self.transaction_id is not None
+                    or self.early_payment_id is not None
+                    or self.adjustment_id is not None
+                ):
+                    raise ValueError("Other operation IDs must be null for payment")
+            elif self.operation_type == "pay_early":
+                if self.early_payment_id is None or self.early_payment_id != self.resource_id:
+                    raise ValueError(
+                        "early_payment_id must match resource_id for confirmed pay_early"
+                    )
+                if (
+                    self.transaction_id is not None
+                    or self.payment_id is not None
+                    or self.adjustment_id is not None
+                ):
+                    raise ValueError("Other operation IDs must be null for pay_early")
+            elif self.operation_type == "adjustment":
+                if self.adjustment_id is None or self.adjustment_id != self.resource_id:
+                    raise ValueError(
+                        "adjustment_id must match resource_id for confirmed adjustment"
+                    )
+                if (
+                    self.transaction_id is not None
+                    or self.payment_id is not None
+                    or self.early_payment_id is not None
+                ):
+                    raise ValueError("Other operation IDs must be null for adjustment")
+        return self

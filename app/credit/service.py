@@ -68,6 +68,7 @@ from app.credit.schemas import (
     CreditCardStatementRead,
     CreditCardStatusRead,
     CreditCardUpdate,
+    CreditCommandReconciliationRead,
     CreditSummaryRead,
     PaymentPreviewResult,
 )
@@ -2859,3 +2860,158 @@ class CreditCardService:
             as_of_date=as_of_date,
             max_cycles_per_card=max_cycles_per_card,
         )
+
+    async def reconcile_command(
+        self, user_id: uuid.UUID, command_id: uuid.UUID
+    ) -> CreditCommandReconciliationRead:
+        """Narrow, authenticated, read-only Credit command reconciliation.
+
+        Authoritatively resolves the status of a client command_id against
+        financial_events and its linked canonical Credit resource.
+
+        Guarantees:
+        - Query-only: strictly zero mutations, no UnitOfWork, no FOR UPDATE, no autoflush writes.
+        - Owner-scoped: authenticated user scope; foreign-owner commands return indistinguishable unknown.
+        - Two provable outcomes only:
+          * 'confirmed': visible committed FinancialEvent owned by user AND matching canonical Credit resource.
+          * 'unknown': command cannot be proven as committed and owner-visible (never issued, in-flight,
+            rolled back, foreign owner, non-Credit operation, or incomplete/corrupt resource link).
+        - 'unknown' is NEVER authoritative absence and NEVER means safe to reissue.
+        """
+        unknown_result = CreditCommandReconciliationRead(
+            command_id=command_id,
+            status="unknown",
+            operation_type=None,
+            event_id=None,
+            resource_id=None,
+            transaction_id=None,
+            payment_id=None,
+            early_payment_id=None,
+            adjustment_id=None,
+        )
+
+        ledger_repo = getattr(self.ledger_service, "repository", None) or getattr(self, "ledger_repo", None)
+        if ledger_repo is None:
+            return unknown_result
+
+        # Missing rows are deliberately ambiguous: the command may still be uncommitted.
+        event = await ledger_repo.get_by_command_id_for_user(command_id, user_id)
+        if not event or str(getattr(event, "user_id", None)) != str(user_id):
+            return unknown_result
+        event_type = getattr(event, "event_type", None)
+        event_type = getattr(event_type, "value", event_type)
+        event_id = getattr(event, "id", None)
+        if not event_type or not event_id:
+            return unknown_result
+        meta = getattr(event, "metadata_", None) or {}
+        card_id = meta.get("credit_card_id")
+
+        # Map only a committed event and its complete, owner-scoped canonical resource.
+        if event_type == "credit_card_purchase":
+            tx = await self.repo.get_transaction_by_event_for_user(event_id, user_id)
+            if (
+                tx is not None
+                and str(tx.user_id) == str(user_id)
+                and getattr(tx, "type", None) == "purchase"
+                and card_id is not None
+                and str(tx.credit_card_id) == str(card_id)
+            ):
+                return CreditCommandReconciliationRead(
+                    command_id=command_id,
+                    status="confirmed",
+                    operation_type="purchase",
+                    event_id=event_id,
+                    resource_id=tx.id,
+                    transaction_id=tx.id,
+                    payment_id=None,
+                    early_payment_id=None,
+                    adjustment_id=None,
+                )
+            return unknown_result
+
+        if event_type == EventType.CREDIT_CARD_PAYMENT.value:
+            operation_type = meta.get("operation_type")
+            payment = await self.repo.get_payment_by_event_for_user(event_id, user_id)
+            if (
+                payment is None
+                or str(payment.user_id) != str(user_id)
+                or card_id is None
+                or str(payment.credit_card_id) != str(card_id)
+            ):
+                return unknown_result
+            payment_tx = await self.repo.get_transaction_by_event_for_user(event_id, user_id)
+            if (
+                payment_tx is None
+                or str(payment_tx.user_id) != str(user_id)
+                or payment_tx.type != "payment"
+                or payment_tx.id != payment.payment_transaction_id
+                or payment_tx.credit_card_id != payment.credit_card_id
+            ):
+                return unknown_result
+            if operation_type == "credit_card_pay_early":
+                early_pay = await self.repo.get_early_payment_by_event_for_user(event_id, user_id)
+                if (
+                    early_pay is not None
+                    and str(early_pay.user_id) == str(user_id)
+                    and early_pay.credit_card_id == payment.credit_card_id
+                    and str(payment.command_id) == str(command_id)
+                    and early_pay.payment_transaction_id == payment_tx.id
+                    and early_pay.purchase_transaction_id is not None
+                    and str(early_pay.purchase_transaction_id)
+                    == str(meta.get("purchase_transaction_id"))
+                ):
+                    return CreditCommandReconciliationRead(
+                        command_id=command_id,
+                        status="confirmed",
+                        operation_type="pay_early",
+                        event_id=event_id,
+                        resource_id=early_pay.id,
+                        transaction_id=None,
+                        payment_id=None,
+                        early_payment_id=early_pay.id,
+                        adjustment_id=None,
+                    )
+                return unknown_result
+            if await self.repo.get_early_payment_by_event_for_user(event_id, user_id) is not None:
+                return unknown_result
+            if operation_type == "credit_card_payment" and str(payment.credit_card_id) == str(card_id):
+                if str(payment.command_id) == str(command_id):
+                    return CreditCommandReconciliationRead(
+                        command_id=command_id,
+                        status="confirmed",
+                        operation_type="payment",
+                        event_id=event_id,
+                        resource_id=payment.id,
+                        transaction_id=None,
+                        payment_id=payment.id,
+                        early_payment_id=None,
+                        adjustment_id=None,
+                    )
+            return unknown_result
+
+        if event_type == EventType.MANUAL_ADJUSTMENT.value:
+            if meta.get("operation_type") == "credit_card_adjustment":
+                adj = await self.repo.get_adjustment_by_event_for_user(event_id, user_id)
+                if (
+                    adj is not None
+                    and str(adj.user_id) == str(user_id)
+                    and card_id is not None
+                    and str(adj.credit_card_id) == str(card_id)
+                    and adj.adjustment_type == meta.get("adjustment_type")
+                    and str(adj.command_id) == str(command_id)
+                ):
+                    return CreditCommandReconciliationRead(
+                        command_id=command_id,
+                        status="confirmed",
+                        operation_type="adjustment",
+                        event_id=event_id,
+                        resource_id=adj.id,
+                        transaction_id=None,
+                        payment_id=None,
+                        early_payment_id=None,
+                        adjustment_id=adj.id,
+                    )
+            return unknown_result
+
+        # Non-credit event or unrecognized mapping
+        return unknown_result
