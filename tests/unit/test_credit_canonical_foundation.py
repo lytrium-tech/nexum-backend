@@ -78,31 +78,34 @@ def get_script_directory() -> ScriptDirectory:
 
 
 def test_alembic_linear_head():
-    """Verify Alembic lineage forms a single linear DAG ending at credit_v2_refund_type."""
+    """Verify Alembic lineage forms a single linear DAG ending at Credit Alpha closure."""
     script_dir = get_script_directory()
     heads = script_dir.get_heads()
     assert len(heads) == 1
-    assert heads[0] == "credit_v2_refund_type"
+    assert heads[0] == "credit_alpha_interest_opening"
 
 
 def test_alembic_upgrade_path_from_empty_database():
     """Verify that a fresh database (current_rev=None) resolves the complete chain
 
-    starting with v1_5_baseline and ending with credit_v2_refund_type.
+    starting with v1_5_baseline and ending with credit_alpha_interest_opening.
     """
     script_dir = get_script_directory()
     steps = script_dir._upgrade_revs(destination="head", current_rev=None)
     all_revisions = [step.revision.revision for step in steps]
 
     assert all_revisions[0] == "v1_5_baseline"
-    assert all_revisions[-4] == "credit_v2_canonical_schema"
-    assert all_revisions[-3] == "credit_v2_canonical_check"
-    assert all_revisions[-2] == "credit_v2_canonical_closure"
-    assert all_revisions[-1] == "credit_v2_refund_type"
+    assert all_revisions[-5:] == [
+        "credit_v2_canonical_schema",
+        "credit_v2_canonical_check",
+        "credit_v2_canonical_closure",
+        "credit_v2_refund_type",
+        "credit_alpha_interest_opening",
+    ]
     assert "obligations_v1_7_auto_payments" in all_revisions
 
-    # Exactly 14 revisions in linear chain
-    assert len(all_revisions) == 14
+    # Exactly 15 revisions in linear chain
+    assert len(all_revisions) == 15
 
 
 def test_alembic_upgrade_path_from_prior_head():
@@ -121,6 +124,7 @@ def test_alembic_upgrade_path_from_prior_head():
         "credit_v2_canonical_check",
         "credit_v2_canonical_closure",
         "credit_v2_refund_type",
+        "credit_alpha_interest_opening",
     ]
 
 
@@ -130,6 +134,7 @@ def test_alembic_revision_identifier_lengths():
     assert len("credit_v2_canonical_check") <= 32
     assert len("credit_v2_canonical_closure") <= 32
     assert len("credit_v2_refund_type") <= 32
+    assert len("credit_alpha_interest_opening") <= 32
 
 
 # ── 2. Additive Migration Contract & Execution via Recorder ──────────────────
@@ -315,6 +320,50 @@ def test_credit_v2_refund_type_adds_supported_transaction_type(monkeypatch):
     assert "'purchase'::text" in mod._LEGACY_TYPES
     assert "'payment'::text" in mod._LEGACY_TYPES
     assert "'refund'::text" not in mod._LEGACY_TYPES
+
+
+def test_credit_alpha_interest_opening_migration_and_safe_downgrade(monkeypatch):
+    mod = _load_migration("credit_alpha_interest_opening", "credit_alpha_interest_opening.py")
+    recorder = MigrationRecorder()
+    monkeypatch.setattr(mod, "op", recorder)
+
+    mod.upgrade()
+
+    assert ("credit_card_transactions", "zero_interest") in recorder.added_columns
+    assert ("credit_card_installments", "opening_balance_amount") in recorder.added_columns
+    assert ("credit_card_installments", "interest_estimator_version") in recorder.added_columns
+    assert not (set(recorder.added_columns) & set(recorder.dropped_columns))
+    assert "ix_cc_installments_card_due_active" in recorder.created_indexes
+    assert recorder.dropped_constraints == [
+        "credit_card_installments_principal_check",
+        "credit_card_transactions_type_check",
+    ]
+    assert "'opening_balance'::text" in inspect.getsource(mod.upgrade)
+
+    class ExistingFacts:
+        def execute(self, _statement):
+            return self
+
+        def scalar_one(self):
+            return True
+
+    recorder.get_bind = lambda: ExistingFacts()
+    with pytest.raises(RuntimeError, match="Cannot downgrade"):
+        mod.downgrade()
+
+    class ReversalFacts:
+        def execute(self, statement):
+            self.is_reversal = "reversal_of_adjustment_id IS NOT NULL" in str(statement)
+            return self
+
+        def scalar_one(self):
+            return self.is_reversal
+
+    recorder.get_bind = lambda: ReversalFacts()
+    recorder.dropped_columns.clear()
+    with pytest.raises(RuntimeError, match="reversal-link"):
+        mod.downgrade()
+    assert not recorder.dropped_columns
 
 
 # ── 3. Legacy Semantics & Ambiguous Legacy Rows Preservation ─────────────────

@@ -85,6 +85,15 @@ def make_test_repo(card: CreditCard | None = None) -> AsyncMock:
         "total_debt": Decimal("0.00"),
         "monthly_cc_payment": Decimal("0.00"),
     }
+
+    async def financial_state(card_arg):
+        debt = (await repo.get_card_debt_partitioned(card_arg.id))["total_debt"]
+        return {
+            "modeled_debt": debt,
+            "available_credit": card_arg.credit_limit - debt,
+        }
+
+    repo.get_card_financial_state.side_effect = financial_state
     repo.get_billing_cycle_by_period_for_update.return_value = None
     return repo
 
@@ -98,9 +107,7 @@ def test_cutoff_cycle_attribution_before_cutoff():
     cutoff_day = 15
     due_day = 5
 
-    period, start_d, cutoff_d, due_d = determine_cycle_for_date(
-        target_date, cutoff_day, due_day
-    )
+    period, start_d, cutoff_d, due_d = determine_cycle_for_date(target_date, cutoff_day, due_day)
 
     assert period == "2026-10"
     assert start_d == date(2026, 9, 16)
@@ -115,9 +122,7 @@ def test_cutoff_cycle_attribution_on_cutoff():
     cutoff_day = 15
     due_day = 5
 
-    period, start_d, cutoff_d, due_d = determine_cycle_for_date(
-        target_date, cutoff_day, due_day
-    )
+    period, start_d, cutoff_d, due_d = determine_cycle_for_date(target_date, cutoff_day, due_day)
 
     assert period == "2026-10"
     assert cutoff_d == date(2026, 10, 15)
@@ -131,9 +136,7 @@ def test_cutoff_cycle_attribution_after_cutoff_moves_to_next_cycle():
     cutoff_day = 15
     due_day = 5
 
-    period, start_d, cutoff_d, due_d = determine_cycle_for_date(
-        target_date, cutoff_day, due_day
-    )
+    period, start_d, cutoff_d, due_d = determine_cycle_for_date(target_date, cutoff_day, due_day)
 
     assert period == "2026-11"
     assert start_d == date(2026, 10, 16)
@@ -148,9 +151,7 @@ def test_cutoff_cycle_attribution_year_boundary():
     cutoff_day = 15
     due_day = 5
 
-    period, start_d, cutoff_d, due_d = determine_cycle_for_date(
-        target_date, cutoff_day, due_day
-    )
+    period, start_d, cutoff_d, due_d = determine_cycle_for_date(target_date, cutoff_day, due_day)
 
     assert period == "2027-01"
     assert start_d == date(2026, 12, 16)
@@ -167,9 +168,7 @@ def test_short_month_february_non_leap_year():
     cutoff_day = 31
     due_day = 15
 
-    period, start_d, cutoff_d, due_d = determine_cycle_for_date(
-        target_date, cutoff_day, due_day
-    )
+    period, start_d, cutoff_d, due_d = determine_cycle_for_date(target_date, cutoff_day, due_day)
 
     assert period == "2027-02"
     assert cutoff_d == date(2027, 2, 28)
@@ -182,9 +181,7 @@ def test_short_month_february_leap_year():
     cutoff_day = 31
     due_day = 15
 
-    period, start_d, cutoff_d, due_d = determine_cycle_for_date(
-        target_date, cutoff_day, due_day
-    )
+    period, start_d, cutoff_d, due_d = determine_cycle_for_date(target_date, cutoff_day, due_day)
 
     assert period == "2028-02"
     assert cutoff_d == date(2028, 2, 29)
@@ -197,9 +194,7 @@ def test_short_month_thirty_day_month_april():
     cutoff_day = 31
     due_day = 10
 
-    period, start_d, cutoff_d, due_d = determine_cycle_for_date(
-        target_date, cutoff_day, due_day
-    )
+    period, start_d, cutoff_d, due_d = determine_cycle_for_date(target_date, cutoff_day, due_day)
 
     assert period == "2026-04"
     assert cutoff_d == date(2026, 4, 30)
@@ -220,7 +215,9 @@ def test_short_month_due_day_clamping():
 def test_bogota_date_governance_across_utc_midnight():
     """Validates financial_date() pins time to America/Bogota across UTC midnight."""
     # 2026-10-15T23:30:00-05:00 is 2026-10-16T04:30:00Z in UTC.
-    bogota_evening = datetime(2026, 10, 15, 23, 30, 0, tzinfo=UTC)  # will be converted by financial_date
+    bogota_evening = datetime(
+        2026, 10, 15, 23, 30, 0, tzinfo=UTC
+    )  # will be converted by financial_date
     bogota_date = financial_date(bogota_evening)
     assert bogota_date == date(2026, 10, 15)
 
@@ -432,8 +429,8 @@ async def test_installment_schedule_exact_principal_conservation():
 
 
 @pytest.mark.asyncio
-async def test_single_installment_purchase_never_incurs_interest():
-    """Single-installment purchase has zero assessed and zero estimated interest."""
+async def test_single_installment_purchase_is_interest_bearing_by_default():
+    """A single installment does not imply a zero-interest promotion."""
     service = CreditCardService(AsyncMock())
     card = CreditCard(
         id=uuid.uuid4(),
@@ -462,15 +459,51 @@ async def test_single_installment_purchase_never_incurs_interest():
         amount=Decimal("500000.00"),
         installments_total=1,
         cycle=cycle,
+        zero_interest=False,
     )
 
     assert len(installments) == 1
     inst = installments[0]
     assert inst.principal_amount == Decimal("500000.00")
     assert inst.assessed_interest_amount == Decimal("0.00")
-    assert inst.estimated_interest_amount == Decimal("0.00")
+    assert inst.estimated_interest_amount > Decimal("0.00")
     assert inst.interest_amount == Decimal("0.00")
     assert inst.total_amount == Decimal("500000.00")
+
+
+@pytest.mark.asyncio
+async def test_explicit_zero_interest_excludes_single_and_multi_installment_projection():
+    service = CreditCardService(AsyncMock())
+    card = CreditCard(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        cutoff_day=15,
+        due_day=5,
+        currency="COP",
+        monthly_interest_rate=Decimal("2.5"),
+    )
+    cycle = CreditCardBillingCycle(
+        id=uuid.uuid4(),
+        user_id=card.user_id,
+        credit_card_id=card.id,
+        billing_period="2026-10",
+        start_date=date(2026, 9, 16),
+        cutoff_date=date(2026, 10, 15),
+        due_date=date(2026, 11, 5),
+        status="open",
+        provenance=PROVENANCE_NEXUM_MODELED,
+    )
+    for count in (1, 3):
+        installments = await service._build_installments(
+            user_id=card.user_id,
+            card=card,
+            transaction_id=uuid.uuid4(),
+            amount=Decimal("300000.00"),
+            installments_total=count,
+            cycle=cycle,
+            zero_interest=True,
+        )
+        assert all(i.estimated_interest_amount == Decimal("0.00") for i in installments)
 
 
 @pytest.mark.asyncio
@@ -721,26 +754,15 @@ def test_partition_disjointness_and_non_double_counting():
     ]
 
     canonical_debt = sum(
-        (
-            i.principal_amount
-            + (i.assessed_interest_amount or Decimal("0.00"))
-            - i.paid_amount
-        )
+        (i.principal_amount + (i.assessed_interest_amount or Decimal("0.00")) - i.paid_amount)
         for i in all_installments
         if i.debt_partition == DEBT_PARTITION_CANONICAL and i.status != "paid"
     )
 
     legacy_debt = sum(
-        (
-            i.principal_amount
-            + (i.interest_amount or Decimal("0.00"))
-            - i.paid_amount
-        )
+        (i.principal_amount + (i.interest_amount or Decimal("0.00")) - i.paid_amount)
         for i in all_installments
-        if (
-            i.debt_partition == DEBT_PARTITION_LEGACY
-            or i.debt_partition is None
-        )
+        if (i.debt_partition == DEBT_PARTITION_LEGACY or i.debt_partition is None)
         and i.status != "paid"
     )
 
@@ -752,10 +774,7 @@ def test_partition_disjointness_and_non_double_counting():
 
     for i in all_installments:
         is_canonical = i.debt_partition == DEBT_PARTITION_CANONICAL
-        is_legacy = (
-            i.debt_partition == DEBT_PARTITION_LEGACY
-            or i.debt_partition is None
-        )
+        is_legacy = i.debt_partition == DEBT_PARTITION_LEGACY or i.debt_partition is None
         assert (is_canonical ^ is_legacy) is True
 
 
@@ -775,6 +794,10 @@ async def test_card_status_minimum_payment_is_none_without_invented_formula():
         "total_payments": Decimal("0.00"),
     }
     service.repo.get_next_payment_estimate.return_value = Decimal("250000.00")
+    service.repo.get_card_financial_state.return_value = {
+        "modeled_debt": Decimal("600000.00"),
+        "available_credit": Decimal("1400000.00"),
+    }
 
     card = CreditCard(
         id=uuid.uuid4(),
@@ -791,13 +814,8 @@ async def test_card_status_minimum_payment_is_none_without_invented_formula():
     status = await service._calculate_card_status(card)
 
     assert status.minimum_payment is None
-    assert (
-        status.data_quality["minimum_payment"] == "unknown_unless_issuer_fact"
-    )
-    assert (
-        status.data_quality["available_credit"]
-        == "estimated_from_limit_minus_debt"
-    )
+    assert status.data_quality["minimum_payment"] == "unknown_unless_issuer_fact"
+    assert status.data_quality["available_credit"] == "estimated_from_limit_minus_debt"
     assert status.statement_balance == Decimal("500000.00")
 
 
@@ -836,9 +854,7 @@ async def test_create_purchase_tampered_idempotency_retry_rejected():
     }
 
     mock_event = AsyncMock(id=uuid.uuid4(), amount=Decimal("200000.00"))
-    ledger.record_event.return_value = AsyncMock(
-        event=mock_event, idempotent=True
-    )
+    ledger.record_event.return_value = AsyncMock(event=mock_event, idempotent=True)
 
     existing_tx = CreditCardTransaction(
         id=uuid.uuid4(),
@@ -884,6 +900,10 @@ async def test_new_cards_canonical_by_policy_without_client_switch():
         "total_payments": Decimal("0.00"),
     }
     repo.get_next_payment_estimate.return_value = Decimal("0.00")
+    repo.get_card_financial_state.return_value = {
+        "modeled_debt": Decimal("0.00"),
+        "available_credit": Decimal("5000000.00"),
+    }
 
     result = await service.create_card(user_id, payload)
 
@@ -1340,6 +1360,10 @@ async def test_negative_available_credit_not_clamped_and_rejects_purchase():
         "total_payments": Decimal("0.00"),
     }
     repo.get_next_payment_estimate.return_value = Decimal("0.00")
+    repo.get_card_financial_state.return_value = {
+        "modeled_debt": Decimal("1200.00"),
+        "available_credit": Decimal("-200.00"),
+    }
 
     # Status must expose exact negative available credit (-200.00), NOT max(0, -200) = 0!
     status = await service._calculate_card_status(card)
@@ -1397,7 +1421,9 @@ async def test_fx_provider_errors_mapped_and_programming_errors_propagate():
     # 1. ValidationError from FX maps to stable CreditDomainError(error_code="fx_rate_unavailable")
     service1 = CreditCardService(
         session,
-        fx_provider=FailingFxProvider(NexumValidationError("Rate unavailable", error_code="fx_rate_unavailable")),
+        fx_provider=FailingFxProvider(
+            NexumValidationError("Rate unavailable", error_code="fx_rate_unavailable")
+        ),
     )
     service1.repo = repo
     with pytest.raises(CreditDomainError) as exc_info:

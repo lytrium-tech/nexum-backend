@@ -42,7 +42,7 @@ from scripts.dev.run_physical_gate import (  # noqa: E402
     validate_gate_guards,
 )
 
-FINAL_LINEAR_HEAD = "credit_v2_refund_type"
+FINAL_LINEAR_HEAD = "credit_alpha_interest_opening"
 PRIOR_PRODUCTION_HEAD = "obligations_v1_7_auto_payments"
 
 # Representative Legacy Dataset IDs
@@ -545,6 +545,52 @@ def run_scenario_c(db_url: str, cfg: Config) -> None:
     )
 
 
+async def alpha_snapshot(db_url: str, upgraded: bool) -> tuple:
+    engine = create_async_engine(to_async_url(db_url))
+    try:
+        async with engine.connect() as conn:
+            values = (
+                await conn.execute(
+                    text(
+                        "SELECT c.current_debt, c.monthly_interest_rate, t.amount, i.principal_amount, "
+                        "i.interest_amount, i.paid_amount FROM credit_cards c "
+                        "JOIN credit_card_transactions t ON t.credit_card_id = c.id "
+                        "JOIN credit_card_installments i ON i.purchase_transaction_id = t.id "
+                        "WHERE c.id = :id"
+                    ),
+                    {"id": LEGACY_CARD_ID},
+                )
+            ).one()
+            if upgraded:
+                cols = (
+                    await conn.execute(
+                        text(
+                            "SELECT t.zero_interest, i.opening_balance_amount, i.interest_estimator_version "
+                            "FROM credit_card_transactions t JOIN credit_card_installments i "
+                            "ON i.purchase_transaction_id = t.id WHERE t.id = :id"
+                        ),
+                        {"id": LEGACY_TX_ID},
+                    )
+                ).one()
+                assert tuple(cols) == (False, None, None)
+            return tuple(values)
+    finally:
+        await engine.dispose()
+
+
+def run_alpha_upgrade(db_url: str, cfg: Config) -> None:
+    asyncio.run(reset_public_schema(db_url))
+    command.upgrade(cfg, PRIOR_PRODUCTION_HEAD)
+    asyncio.run(insert_legacy_seed_dataset(db_url))
+    command.upgrade(cfg, "credit_v2_refund_type")
+    before = asyncio.run(alpha_snapshot(db_url, False))
+    command.upgrade(cfg, "head")
+    assert asyncio.run(get_current_alembic_revision(db_url)) == FINAL_LINEAR_HEAD
+    assert asyncio.run(alpha_snapshot(db_url, True)) == before
+    asyncio.run(verify_triggers_and_table_state(db_url))
+    print("[Scenario Alpha] PASS: baseline data preserved across Alpha upgrade.")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run all 3 physical Alembic migration scenarios against guarded test database."""
     print("=== Nexum Alembic Physical Migration Scenarios ===")
@@ -562,6 +608,7 @@ def main(argv: list[str] | None = None) -> int:
         run_scenario_a(db_url, cfg)
         run_scenario_b(db_url, cfg)
         run_scenario_c(db_url, cfg)
+        run_alpha_upgrade(db_url, cfg)
 
         # Final step: restore clean HEAD schema for subsequent physical tests
         print("\n[Finalizing] Restoring clean empty schema at linear HEAD for test runner...")

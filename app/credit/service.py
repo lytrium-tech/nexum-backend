@@ -3,6 +3,7 @@ import logging
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal, InvalidOperation
+from zoneinfo import ZoneInfo
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.accounts.repository import AccountRepository
 from app.core.currency import round_to_minimum_unit
 from app.core.errors import ValidationError
-from app.core.financial_time import financial_date
+from app.core.financial_time import financial_date, financial_day_start
 from app.credit.exceptions import (
     CreditActivationBoundaryError,
     CreditAmbiguousAmountError,
@@ -29,6 +30,7 @@ from app.credit.fingerprint import (
     build_credit_fingerprint,
     hash_credit_fingerprint,
 )
+from app.credit.interest import ESTIMATOR_VERSION, PrincipalChange, estimate_interest
 from app.credit.models import (
     ALLOCATION_SOURCE_NEXUM_MODELED,
     ALLOCATION_SOURCE_USER_DIRECTED,
@@ -60,6 +62,8 @@ from app.credit.schemas import (
     CreditCardEarlyPaymentPreviewCreate,
     CreditCardEarlyPaymentResult,
     CreditCardInstallmentRead,
+    CreditCardOpeningBalanceCreate,
+    CreditCardOpeningBalanceResult,
     CreditCardPaymentCreate,
     CreditCardPaymentResult,
     CreditCardPurchaseCreate,
@@ -179,6 +183,8 @@ class CreditCardService:
         booked_currency: str | None = None,
         provenance: str = PROVENANCE_MANUAL,
         debt_partition: str = DEBT_PARTITION_CANONICAL,
+        zero_interest: bool = False,
+        purchase_date: date | None = None,
     ) -> list[CreditCardInstallment]:
         amounts = self._installment_amounts(amount, installments_total)
         if original_amount is not None and original_amount != amount:
@@ -223,17 +229,41 @@ class CreditCardService:
             interest_legacy = Decimal("0.00")
             total_amount = principal
 
-            # Projected interest estimate for informational/modeling purposes only on multi-installment purchases
-            if (
-                installments_total > 1
-                and card.monthly_interest_rate
-                and card.monthly_interest_rate > 0
-            ):
-                estimated_interest = (
-                    principal * (card.monthly_interest_rate / Decimal("100"))
-                ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-            else:
-                estimated_interest = Decimal("0.00")
+            purchase_date = purchase_date or self._get_financial_date()
+            prior_due = (
+                get_cycle_dates_for_period(
+                    target_year, target_month, card.cutoff_day, card.due_day
+                )[2]
+                if index == 1
+                else get_cycle_dates_for_period(
+                    inst_year - (1 if inst_month == 1 else 0),
+                    12 if inst_month == 1 else inst_month - 1,
+                    card.cutoff_day,
+                    card.due_day,
+                )[2]
+            )
+            projection_start = purchase_date if index == 1 else prior_due
+            changes = [
+                PrincipalChange(
+                    effective_date=purchase_date,
+                    amount=amount,
+                    zero_interest=zero_interest,
+                    event_type="purchase",
+                    order_priority=20,
+                    identifier=str(transaction_id),
+                )
+            ]
+            monthly_rate_pct = card.monthly_interest_rate or Decimal("0.00")
+            estimated_interest = (
+                estimate_interest(
+                    changes,
+                    monthly_rate_pct,
+                    projection_start,
+                    inst_due,
+                )
+                if monthly_rate_pct > 0 and inst_due > projection_start
+                else Decimal("0.00")
+            )
 
             installments.append(
                 CreditCardInstallment(
@@ -256,6 +286,9 @@ class CreditCardService:
                     cycle_id=inst_cycle_id,
                     assessed_interest_amount=assessed_interest,
                     estimated_interest_amount=estimated_interest,
+                    interest_estimator_version=(
+                        ESTIMATOR_VERSION if estimated_interest > 0 else None
+                    ),
                     lifecycle_status="active",
                     provenance=provenance,
                     debt_partition=debt_partition,
@@ -442,7 +475,9 @@ class CreditCardService:
                     },
                 )
         if operation_type == "credit_card_adjustment" and target_id is not None:
-            if meta.get("target_transaction_id") != str(target_id):
+            if (meta.get("target_adjustment_id") or meta.get("target_transaction_id")) != str(
+                target_id
+            ):
                 raise CreditIdempotencyConflictError(
                     message="Idempotency key collision across different target transactions",
                     detail={
@@ -638,6 +673,9 @@ class CreditCardService:
                 inst_adj_credits[i.id] = sum(a.allocated_amount for a in adj_allocs)
 
         def _get_principal(inst: CreditCardInstallment) -> Decimal:
+            opening_balance = getattr(inst, "opening_balance_amount", None)
+            if opening_balance is not None:
+                return opening_balance
             val = getattr(inst, "principal_amount", None)
             if val is not None:
                 return val
@@ -882,7 +920,7 @@ class CreditCardService:
             cutoff_day=payload.cutoff_day,
             due_day=payload.due_day,
             management_fee=payload.management_fee,
-            monthly_interest_rate=payload.monthly_interest_rate,
+            monthly_interest_rate=payload.monthly_interest_rate_pct,
             annual_interest_rate=payload.annual_interest_rate,
             network=payload.network,
             franchise=payload.franchise,
@@ -924,6 +962,8 @@ class CreditCardService:
         }
         for key, value in payload.model_dump(exclude_unset=True).items():
             if key not in disallowed_keys:
+                if key == "monthly_interest_rate_pct":
+                    key = "monthly_interest_rate"
                 setattr(card, key, value)
 
         await self.session.flush()
@@ -935,6 +975,177 @@ class CreditCardService:
             raise CreditCardNotFoundError()
         card.is_active = False
         await self.session.flush()
+
+    async def create_opening_balance(
+        self,
+        user_id: uuid.UUID,
+        card_id: uuid.UUID,
+        payload: CreditCardOpeningBalanceCreate,
+        command_id: uuid.UUID | str,
+    ) -> CreditCardOpeningBalanceResult:
+        card = await self.repo.get_by_id_for_update(card_id)
+        if not card or card.user_id != user_id:
+            raise CreditCardNotFoundError()
+        if not card.is_active:
+            raise CreditCardInactiveError()
+        if payload.currency.upper() != (card.currency or "COP").upper():
+            raise CreditDomainError("Opening balance currency must match the card currency")
+        today = self._get_financial_date()
+        if payload.effective_date > today:
+            raise CreditDomainError("Opening balance effective_date cannot be in the future")
+        _, _, due_date = calculate_credit_card_dates(today, card.cutoff_day, card.due_day)
+        due_period = due_date.strftime("%Y-%m")
+
+        event_payload = LedgerEventCreate(
+            user_id=user_id,
+            event_type="opening_balance",
+            direction="neutral",
+            amount=payload.amount,
+            currency=card.currency,
+            description="Credit card opening balance",
+            occurred_at=datetime.combine(
+                payload.effective_date,
+                datetime.min.time(),
+                tzinfo=ZoneInfo("America/Bogota"),
+            ),
+            metadata={
+                "credit_card_id": str(card.id),
+                "provenance": "manual_input",
+                "composition_known": payload.composition_known,
+                "composition": "known" if payload.composition_known else "unknown",
+                "principal_amount": str(payload.principal_amount)
+                if payload.composition_known
+                else None,
+                "assessed_interest_amount": str(payload.assessed_interest_amount)
+                if payload.composition_known
+                else None,
+            },
+            command_id=self._normalize_command_id(command_id),
+        )
+        result = await self.ledger_service.record_event(event_payload)
+        event = result.event
+        if result.idempotent:
+            existing = await self.repo.get_transaction_by_event(event.id)
+            if (
+                not existing
+                or existing.type != "opening_balance"
+                or existing.credit_card_id != card.id
+                or existing.amount != payload.amount
+                or existing.booked_currency != payload.currency.upper()
+                or existing.period != due_period
+                or bool((existing.metadata_ or {}).get("composition_known"))
+                != payload.composition_known
+            ):
+                raise CreditIdempotencyConflictError(
+                    message="Opening balance idempotency key conflicts with existing command"
+                )
+            state = await self.repo.get_card_financial_state(card)
+            return CreditCardOpeningBalanceResult(
+                status="idempotent_retry",
+                event_id=event.id,
+                transaction_id=existing.id,
+                amount=payload.amount,
+                current_debt=state["modeled_debt"],
+                available_credit=state["available_credit"],
+            )
+
+        transaction = CreditCardTransaction(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            credit_card_id=card.id,
+            type="opening_balance",
+            amount=payload.amount,
+            installments_total=1,
+            monthly_amount=payload.amount,
+            event_id=event.id,
+            occurred_at=event_payload.occurred_at,
+            period=due_period,
+            booked_amount=payload.amount,
+            booked_currency=card.currency,
+            lifecycle_status="posted",
+            provenance=PROVENANCE_MANUAL,
+            debt_partition=DEBT_PARTITION_CANONICAL,
+            metadata_={
+                "provenance": "manual_input",
+                "composition_known": payload.composition_known,
+                "principal_amount": str(payload.principal_amount)
+                if payload.composition_known
+                else None,
+                "assessed_interest_amount": str(payload.assessed_interest_amount)
+                if payload.composition_known
+                else None,
+                "interest_projection_assumption": (
+                    "opening_balance_treated_as_interest_bearing_principal"
+                    if not payload.composition_known
+                    else None
+                ),
+            },
+        )
+        await self.repo.add_transaction(transaction)
+        installment = CreditCardInstallment(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            credit_card_id=card.id,
+            purchase_transaction_id=transaction.id,
+            installment_number=1,
+            installments_total=1,
+            principal_amount=(
+                payload.principal_amount if payload.composition_known else Decimal("0.00")
+            ),
+            opening_balance_amount=None if payload.composition_known else payload.amount,
+            scheduled_period=due_period,
+            status="pending",
+            paid_amount=Decimal("0.00"),
+            interest_amount=Decimal("0.00"),
+            total_amount=payload.amount,
+            scheduled_due_date=due_date,
+            original_amount=None,
+            original_currency=card.currency,
+            booked_amount=payload.amount,
+            booked_currency=card.currency,
+            assessed_interest_amount=(
+                payload.assessed_interest_amount if payload.composition_known else Decimal("0.00")
+            ),
+            estimated_interest_amount=(
+                estimate_interest(
+                    [
+                        PrincipalChange(
+                            payload.effective_date,
+                            payload.amount
+                            if not payload.composition_known
+                            else payload.principal_amount,
+                        )
+                    ],
+                    card.monthly_interest_rate or Decimal("0.00"),
+                    today,
+                    due_date + timedelta(days=1),
+                )
+                if not payload.composition_known
+                and (card.monthly_interest_rate or Decimal("0.00")) > 0
+                and payload.effective_date <= today
+                else None
+            ),
+            interest_estimator_version=(
+                ESTIMATOR_VERSION
+                if not payload.composition_known
+                and (card.monthly_interest_rate or Decimal("0.00")) > 0
+                and payload.effective_date <= today
+                else None
+            ),
+            lifecycle_status="active",
+            provenance=PROVENANCE_MANUAL,
+            debt_partition=DEBT_PARTITION_CANONICAL,
+        )
+        await self.repo.add_installments([installment])
+        state = await self.repo.get_card_financial_state(card)
+        return CreditCardOpeningBalanceResult(
+            status="success",
+            event_id=event.id,
+            transaction_id=transaction.id,
+            amount=payload.amount,
+            current_debt=state["modeled_debt"],
+            available_credit=state["available_credit"],
+        )
 
     async def create_purchase(
         self,
@@ -1129,6 +1340,7 @@ class CreditCardService:
                     if fx_rate_snapshot_id
                     else None,
                     "debt_partition": debt_partition,
+                    "zero_interest": payload.zero_interest,
                 },
             )
 
@@ -1140,7 +1352,12 @@ class CreditCardService:
                 transaction = await self.repo.get_transaction_by_event(event.id)
                 if transaction:
                     # Deep idempotency check against parameter tampering
-                    if transaction.amount != booked_amount or transaction.credit_card_id != card.id:
+                    if (
+                        transaction.amount != booked_amount
+                        or transaction.credit_card_id != card.id
+                        or bool(getattr(transaction, "zero_interest", False))
+                        != payload.zero_interest
+                    ):
                         raise CreditIdempotencyConflictError(
                             message="Idempotency key collision with conflicting parameters",
                             detail={
@@ -1256,6 +1473,7 @@ class CreditCardService:
                 lifecycle_status=lifecycle_status,
                 provenance=provenance,
                 debt_partition=debt_partition,
+                zero_interest=payload.zero_interest,
             )
             await self.repo.add_transaction(transaction)
 
@@ -1272,6 +1490,8 @@ class CreditCardService:
                     booked_currency=booked_currency,
                     provenance=provenance,
                     debt_partition=debt_partition,
+                    zero_interest=payload.zero_interest,
+                    purchase_date=purchase_date,
                 )
                 await self.repo.add_installments(installments)
                 transaction.monthly_amount = installments[0].principal_amount
@@ -1367,9 +1587,7 @@ class CreditCardService:
         acc_curr = source_currency
         card_curr = getattr(temp_card, "currency", None)
         if isinstance(acc_curr, str) and isinstance(card_curr, str) and acc_curr != card_curr:
-            pre_fx_info = await self._get_fx_info(
-                acc_curr, card_curr, persist_snapshot=True
-            )
+            pre_fx_info = await self._get_fx_info(acc_curr, card_curr, persist_snapshot=True)
 
         # 3. GLOBAL LOCK ORDER: Account -> CreditCard -> Debt components (F-14)
         account = await self.account_repo.get_by_id_for_update(payload.account_id)
@@ -1457,7 +1675,11 @@ class CreditCardService:
             inst_p = getattr(inst, "scheduled_period", "") or ""
             inst_princ = max(
                 Decimal("0.00"),
-                (getattr(inst, "principal_amount", Decimal("0.00")) or Decimal("0.00"))
+                (
+                    getattr(inst, "opening_balance_amount", None)
+                    if getattr(inst, "opening_balance_amount", None) is not None
+                    else (getattr(inst, "principal_amount", Decimal("0.00")) or Decimal("0.00"))
+                )
                 - inst_adj_credits.get(inst.id, Decimal("0.00")),
             )
             inst_paid = getattr(inst, "paid_amount", Decimal("0.00")) or Decimal("0.00")
@@ -1543,7 +1765,7 @@ class CreditCardService:
             amount=applied_amount,
             account_id=payload.account_id,
             event_id=event.id,
-            occurred_at=self._get_financial_date(),
+            occurred_at=financial_day_start(self._get_financial_date()),
             fx_rate=fx_rate if is_estimated else None,
             fx_rate_snapshot_id=fx_rate_snapshot_id if is_estimated else None,
             lifecycle_status="posted",
@@ -1557,9 +1779,7 @@ class CreditCardService:
                 "fx_rate": str(fx_rate),
                 "rate_source": rate_source,
                 "rate_timestamp": rate_timestamp.isoformat() if rate_timestamp else None,
-                "fx_rate_snapshot_id": str(fx_rate_snapshot_id)
-                if is_estimated
-                else None,
+                "fx_rate_snapshot_id": str(fx_rate_snapshot_id) if is_estimated else None,
                 "is_estimated": is_estimated,
             },
         )
@@ -1701,9 +1921,7 @@ class CreditCardService:
         acc_curr = source_currency
         card_curr = getattr(temp_card, "currency", None)
         if isinstance(acc_curr, str) and isinstance(card_curr, str) and acc_curr != card_curr:
-            pre_fx_info = await self._get_fx_info(
-                acc_curr, card_curr, persist_snapshot=True
-            )
+            pre_fx_info = await self._get_fx_info(acc_curr, card_curr, persist_snapshot=True)
 
         # 3. GLOBAL LOCK ORDER: Account -> CreditCard -> Target installments (F-14)
         account = await self.account_repo.get_by_id_for_update(payload.account_id)
@@ -1876,7 +2094,7 @@ class CreditCardService:
             amount=applied_amount,
             account_id=payload.account_id,
             event_id=event.id,
-            occurred_at=self._get_financial_date(),
+            occurred_at=financial_day_start(self._get_financial_date()),
             fx_rate=fx_rate if is_estimated else None,
             fx_rate_snapshot_id=fx_rate_snapshot_id if is_estimated else None,
             lifecycle_status="posted",
@@ -1891,9 +2109,7 @@ class CreditCardService:
                 "fx_rate": str(fx_rate),
                 "rate_source": rate_source,
                 "rate_timestamp": rate_timestamp.isoformat() if rate_timestamp else None,
-                "fx_rate_snapshot_id": str(fx_rate_snapshot_id)
-                if is_estimated
-                else None,
+                "fx_rate_snapshot_id": str(fx_rate_snapshot_id) if is_estimated else None,
                 "is_estimated": is_estimated,
             },
         )
@@ -2145,10 +2361,20 @@ class CreditCardService:
 
         # 1. Read-only transaction check to determine target semantics and account association
         preview_tx = await self.repo.get_transaction_by_id(payload.original_transaction_id)
-        if not preview_tx or preview_tx.credit_card_id != card_id:
-            raise CreditDomainError(
-                "Original transaction not found or does not belong to this card"
-            )
+        preview_adj = None
+        if not preview_tx:
+            # Check if original_transaction_id points to an existing adjustment for reversal
+            target_adj = await self.repo.get_adjustment_by_id(payload.original_transaction_id)
+            if target_adj and target_adj.credit_card_id == card_id:
+                preview_adj = target_adj
+                if target_adj.original_transaction_id:
+                    preview_tx = await self.repo.get_transaction_by_id(
+                        target_adj.original_transaction_id
+                    )
+            else:
+                raise CreditDomainError(
+                    "Original transaction not found or does not belong to this card"
+                )
 
         temp_card = await self.repo.get_by_id(card_id)
         if not temp_card or temp_card.user_id != user_id:
@@ -2161,7 +2387,32 @@ class CreditCardService:
         target_account_id = None
         payment_info = None
 
-        if preview_tx.type == "payment":
+        if preview_adj is not None:
+            if payload.adjustment_type != "reversal":
+                raise CreditLifecycleInvalidityError(
+                    f"Adjustment target only supports adjustment_type='reversal', got '{payload.adjustment_type}'"
+                )
+            if payload.direction != "debit":
+                raise CreditLifecycleInvalidityError(
+                    f"Adjustment reversal requires direction='debit', got '{payload.direction}'"
+                )
+            if preview_adj.direction != "credit":
+                raise CreditLifecycleInvalidityError(
+                    "Only credit adjustments can be reversed with debit"
+                )
+            if payload.amount != preview_adj.booked_amount:
+                raise InvalidPaymentAmountError(
+                    message=f"Refund reversal must be exact full amount ({preview_adj.booked_amount}), got {payload.amount}",
+                    detail={
+                        "adjustment_booked_amount": str(preview_adj.booked_amount),
+                        "reversal_requested_amount": str(payload.amount),
+                    },
+                )
+            target_account_id = None
+            source_amount = payload.amount
+            source_currency = card_currency
+
+        elif preview_tx.type == "payment":
             if payload.adjustment_type != "reversal":
                 raise CreditLifecycleInvalidityError(
                     f"Payment target only supports adjustment_type='reversal', got '{payload.adjustment_type}'"
@@ -2196,7 +2447,7 @@ class CreditCardService:
             source_amount = payment_info.source_amount or payment_info.booked_amount
             source_currency = payment_info.source_currency or card_currency
 
-        elif preview_tx.type == "purchase":
+        elif preview_tx.type in ("purchase", "opening_balance"):
             if payload.adjustment_type not in ("refund", "chargeback", "reversal"):
                 raise CreditLifecycleInvalidityError(
                     f"Purchase target does not support adjustment_type='{payload.adjustment_type}'"
@@ -2252,19 +2503,24 @@ class CreditCardService:
             )
 
         # 3. Lifecycle Status Validation for NEW command
-        if preview_tx.type == "payment":
+        if preview_adj is not None:
+            if preview_adj.status == "reversed":
+                raise CreditLifecycleInvalidityError("Adjustment has already been reversed")
+        elif preview_tx.type == "payment":
             if payment_info.status == "reversed" or preview_tx.lifecycle_status == "reversed":
                 raise CreditLifecycleInvalidityError(
                     "Payment transaction has already been reversed"
                 )
-        elif preview_tx.type == "purchase":
+        elif preview_tx.type in ("purchase", "opening_balance"):
             if preview_tx.lifecycle_status == "reversed":
                 raise CreditLifecycleInvalidityError(
                     "Purchase transaction has already been reversed"
                 )
 
         # 4. Strict global lock hierarchy (F-14): Account -> Card -> components
-        if preview_tx.type == "payment":
+        if preview_adj is not None:
+            account = None
+        elif preview_tx.type == "payment":
             # Strict global lock hierarchy: Lock Account FIRST!
             account = await self.account_repo.get_by_id_for_update(target_account_id)
             if not account:
@@ -2290,17 +2546,32 @@ class CreditCardService:
         if not card.is_active:
             raise CreditCardInactiveError()
 
-        # Lock original transaction FOR UPDATE
-        original_tx = await self.repo.get_transaction_by_id_for_update(
-            payload.original_transaction_id
-        )
-        if not original_tx or original_tx.credit_card_id != card.id:
-            raise CreditDomainError(
-                "Original transaction not found or does not belong to this card"
+        # Lock original transaction FOR UPDATE if exists
+        original_tx = None
+        if preview_adj is not None:
+            locked_adj = await self.repo.get_adjustment_for_update(preview_adj.id)
+            if not locked_adj:
+                raise CreditLifecycleInvalidityError("Target adjustment missing under lock")
+            if locked_adj.status == "reversed":
+                raise CreditLifecycleInvalidityError("Adjustment has already been reversed")
+            if locked_adj.original_transaction_id:
+                original_tx = await self.repo.get_transaction_by_id_for_update(
+                    locked_adj.original_transaction_id
+                )
+        else:
+            original_tx = await self.repo.get_transaction_by_id_for_update(
+                payload.original_transaction_id
             )
+            if not original_tx or original_tx.credit_card_id != card.id:
+                raise CreditDomainError(
+                    "Original transaction not found or does not belong to this card"
+                )
 
-        # Under locks: revalidate that locked payment still points to that exact same Account and lifecycle hasn't drifted
-        if original_tx.type == "payment":
+        # Under locks: revalidate lifecycle hasn't drifted
+        if preview_adj is not None:
+            if locked_adj.status == "reversed":
+                raise CreditLifecycleInvalidityError("Adjustment has already been reversed")
+        elif original_tx.type == "payment":
             if original_tx.lifecycle_status == "reversed":
                 raise CreditLifecycleInvalidityError(
                     "Payment transaction has already been reversed"
@@ -2314,7 +2585,7 @@ class CreditCardService:
                 raise CreditDomainError(
                     "Payment associated account changed between preview and write lock"
                 )
-        elif original_tx.type == "purchase":
+        elif original_tx.type in ("purchase", "opening_balance"):
             if original_tx.lifecycle_status == "reversed":
                 raise CreditLifecycleInvalidityError(
                     "Purchase transaction has already been reversed"
@@ -2324,7 +2595,7 @@ class CreditCardService:
             user_id=user_id,
             operation_type="credit_card_adjustment",
             credit_card_id=card.id,
-            target_id=original_tx.id,
+            target_id=payload.original_transaction_id,
             booked_amount=payload.amount,
             booked_currency=card.currency,
             original_amount=source_amount,
@@ -2333,11 +2604,104 @@ class CreditCardService:
         )
         fp_hash = hash_credit_fingerprint(fp)
 
-        # 3. Handle by original transaction type
-        if original_tx.type == "purchase":
+        # 5. Handle by target type
+        if preview_adj is not None:
+            # Reverse existing refund adjustment
+            event_payload = LedgerEventCreate(
+                user_id=user_id,
+                account_id=None,
+                category_id=None,
+                event_type=EventType.MANUAL_ADJUSTMENT,
+                direction=Direction.NEUTRAL,
+                amount=payload.amount,
+                currency=card.currency,
+                description=payload.reason or "Refund reversal",
+                source="credit_adjustment",
+                source_message_id=payload.source_message_id,
+                occurred_at=datetime.now(UTC),
+                metadata={
+                    "operation_type": "credit_card_adjustment",
+                    "command_id": str(cmd_uuid),
+                    "command_fingerprint": fp_hash,
+                    "credit_card_id": str(card.id),
+                    "target_adjustment_id": str(locked_adj.id),
+                    "target_transaction_id": str(locked_adj.original_transaction_id)
+                    if locked_adj.original_transaction_id
+                    else None,
+                    "adjustment_type": "reversal",
+                    "direction": "debit",
+                    "provenance": payload.provenance,
+                    "allocation_source": payload.allocation_source,
+                    "applied_amount": str(payload.amount),
+                    "applied_currency": card.currency,
+                },
+            )
+            event_payload.command_id = cmd_uuid
+            ledger_result = await self.ledger_service.record_event(event_payload)
+            event = ledger_result.event
+
+            adjustment = CreditCardAdjustment(
+                id=uuid.uuid4(),
+                user_id=user_id,
+                credit_card_id=card.id,
+                original_transaction_id=locked_adj.original_transaction_id,
+                reversal_of_adjustment_id=locked_adj.id,
+                event_id=event.id,
+                adjustment_type="reversal",
+                direction="debit",
+                booked_amount=payload.amount,
+                booked_currency=card.currency,
+                original_amount=payload.amount,
+                original_currency=card.currency,
+                status="posted",
+                provenance=payload.provenance,
+                allocation_source=payload.allocation_source,
+                command_id=cmd_uuid,
+                command_fingerprint=fp_hash,
+                reason=payload.reason,
+                occurred_at=financial_day_start(self._get_financial_date()),
+            )
+            await self.repo.add_adjustment(adjustment)
+            locked_adj.status = "reversed"
+
+            orig_allocs = await self.repo.list_allocations_for_adjustment(locked_adj.id)
+            comp_allocs = []
+            for oa in orig_allocs:
+                ca = CreditCardAdjustmentAllocation(
+                    id=uuid.uuid4(),
+                    user_id=user_id,
+                    credit_card_id=card.id,
+                    adjustment_id=adjustment.id,
+                    target_installment_id=oa.target_installment_id,
+                    target_transaction_id=oa.target_transaction_id,
+                    target_charge_id=oa.target_charge_id,
+                    allocated_amount=oa.allocated_amount,
+                    allocated_principal=oa.allocated_principal,
+                    allocated_interest=oa.allocated_interest,
+                    allocated_fees=oa.allocated_fees,
+                    allocation_order=oa.allocation_order,
+                    allocation_source=payload.allocation_source,
+                    provenance=payload.provenance,
+                )
+                comp_allocs.append(ca)
+                if oa.target_installment_id:
+                    inst = await self.repo.get_installment_by_id_for_update(
+                        oa.target_installment_id
+                    )
+                    if inst:
+                        if (inst.paid_amount or Decimal("0.00")) > Decimal("0.00"):
+                            inst.status = "partial"
+                        else:
+                            inst.status = "pending"
+            if comp_allocs:
+                await self.repo.add_adjustment_allocations(comp_allocs)
+
+            if original_tx and original_tx.lifecycle_status == "reversed":
+                original_tx.lifecycle_status = "posted"
+        elif original_tx.type in ("purchase", "opening_balance"):
             if original_tx.lifecycle_status == "reversed":
                 raise CreditLifecycleInvalidityError(
-                    "Purchase transaction has already been reversed"
+                    "Credit obligation transaction has already been reversed"
                 )
             existing_adjustments = await self.repo.list_adjustments_for_transaction(original_tx.id)
             total_prior_refunds = sum(
@@ -2404,7 +2768,7 @@ class CreditCardService:
                 command_id=cmd_uuid,
                 command_fingerprint=fp_hash,
                 reason=payload.reason,
-                occurred_at=self._get_financial_date(),
+                occurred_at=financial_day_start(self._get_financial_date()),
             )
             await self.repo.add_adjustment(adjustment)
 
@@ -2425,7 +2789,13 @@ class CreditCardService:
                 prior_adj = sum(a.allocated_amount for a in prior_adj_allocs)
                 unpaid_inst = max(
                     Decimal("0.00"),
-                    inst.principal_amount - (inst.paid_amount or Decimal("0.00")) - prior_adj,
+                    (
+                        inst.opening_balance_amount
+                        if inst.opening_balance_amount is not None
+                        else inst.principal_amount
+                    )
+                    - (inst.paid_amount or Decimal("0.00"))
+                    - prior_adj,
                 )
                 if unpaid_inst > Decimal("0.00"):
                     reduce_amt = min(rem_refund, unpaid_inst)
@@ -2450,9 +2820,11 @@ class CreditCardService:
                     rem_refund -= reduce_amt
 
                     # Item 10: Completion based on full payable total (principal + assessed real interest)
-                    inst_full_payable = inst.principal_amount + (
-                        inst.assessed_interest_amount or Decimal("0.00")
-                    )
+                    inst_full_payable = (
+                        inst.opening_balance_amount
+                        if inst.opening_balance_amount is not None
+                        else inst.principal_amount
+                    ) + (inst.assessed_interest_amount or Decimal("0.00"))
                     total_settled = (inst.paid_amount or Decimal("0.00")) + prior_adj + reduce_amt
                     if total_settled >= inst_full_payable:
                         inst.status = (
@@ -2496,7 +2868,7 @@ class CreditCardService:
                     amount=rem_refund,
                     booked_amount=rem_refund,
                     booked_currency=card.currency,
-                    occurred_at=self._get_financial_date(),
+                    occurred_at=financial_day_start(self._get_financial_date()),
                     lifecycle_status="posted",
                     provenance=payload.provenance,
                     debt_partition=DEBT_PARTITION_CANONICAL,
@@ -2619,7 +2991,7 @@ class CreditCardService:
                 command_id=cmd_uuid,
                 command_fingerprint=fp_hash,
                 reason=payload.reason,
-                occurred_at=self._get_financial_date(),
+                occurred_at=financial_day_start(self._get_financial_date()),
             )
             await self.repo.add_adjustment(adjustment)
         else:
@@ -2654,7 +3026,13 @@ class CreditCardService:
 
         last_cutoff = cycle_start - timedelta(days=1)
         status_data = await self.repo.get_card_status_data(card.id, last_cutoff)
-        next_payment_estimate = await self.repo.get_next_payment_estimate(card.id)
+        next_payment = await self.repo.get_next_payment_projection(card.id)
+        if isinstance(next_payment, dict):
+            next_payment_estimate = next_payment["estimated_total"]
+            next_due = next_payment["due_date"]
+        else:
+            next_payment = None
+            next_payment_estimate = await self.repo.get_next_payment_estimate(card.id)
 
         billed_purchases = status_data["billed_purchases"]
         unbilled_purchases = status_data["unbilled_purchases"]
@@ -2668,8 +3046,9 @@ class CreditCardService:
         else:
             unbilled_debt = unbilled_purchases
 
-        total_debt = billed_debt + unbilled_debt
-        available_credit = card.credit_limit - total_debt
+        financial_state = await self.repo.get_card_financial_state(card)
+        total_debt = financial_state["modeled_debt"]
+        available_credit = financial_state["available_credit"]
 
         statement_balance = billed_debt
         payment_required = statement_balance
@@ -2687,7 +3066,7 @@ class CreditCardService:
             name=card.name,
             credit_limit=card.credit_limit,
             management_fee=card.management_fee or Decimal("0.00"),
-            monthly_interest_rate=card.monthly_interest_rate or Decimal("0.00"),
+            monthly_interest_rate_pct=card.monthly_interest_rate or Decimal("0.00"),
             annual_interest_rate=card.annual_interest_rate or Decimal("0.00"),
             network=card.network,
             franchise=card.franchise,
@@ -2700,6 +3079,7 @@ class CreditCardService:
             payment_required=payment_required,
             minimum_payment=minimum_payment,
             next_payment_estimate=next_payment_estimate,
+            next_payment=next_payment,
             statement_balance=statement_balance,
             monthly_cc_payment=next_payment_estimate,
             cutoff_day=card.cutoff_day,
@@ -2742,6 +3122,106 @@ class CreditCardService:
             cards=statuses,
         )
 
+    async def get_installment_projection(
+        self, user_id: uuid.UUID, card_id: uuid.UUID, installment_id: uuid.UUID
+    ) -> dict:
+        card = await self.repo.get_by_id(card_id)
+        if not card or card.user_id != user_id:
+            raise CreditCardNotFoundError()
+        installment = await self.repo.get_installment_by_id(installment_id)
+        if not installment or installment.credit_card_id != card_id:
+            from app.core.errors import NotFoundError
+
+            raise NotFoundError(message="Installment not found")
+
+        rate = card.monthly_interest_rate or Decimal("0.00")
+        (
+            principal_paid,
+            interest_paid,
+            principal_credit,
+        ) = await self.repo.get_installment_settlement(installment.id)
+        rem_principal = max(
+            Decimal("0.00"),
+            (
+                installment.opening_balance_amount
+                if installment.opening_balance_amount is not None
+                else installment.principal_amount
+            )
+            - principal_paid
+            - principal_credit,
+        )
+        assessed = max(
+            Decimal("0.00"),
+            (installment.assessed_interest_amount or Decimal("0.00")) - interest_paid,
+        )
+
+        # Check target transaction for zero-interest or unassumed opening balance
+        tx = await self.repo.get_transaction_by_id(installment.purchase_transaction_id)
+        is_zero_interest = bool(tx and tx.zero_interest)
+        is_unknown_opening = False
+        if tx and tx.type == "opening_balance":
+            meta = tx.metadata_ if isinstance(tx.metadata_, dict) else {}
+            assumption = meta.get("interest_projection_assumption")
+            if meta.get("composition_known") is not True and assumption not in (
+                "unknown_composition_treated_as_interest_bearing",
+                "opening_balance_treated_as_interest_bearing_principal",
+            ):
+                is_unknown_opening = True
+
+        if (
+            rate <= Decimal("0.00")
+            or installment.status in ("paid", "cancelled")
+            or is_zero_interest
+            or is_unknown_opening
+            or rem_principal <= Decimal("0.00")
+        ):
+            return {
+                "installment_id": installment.id,
+                "due_date": installment.scheduled_due_date,
+                "scheduled_principal": rem_principal,
+                "assessed_interest": assessed,
+                "estimated_interest": Decimal("0.00"),
+                "estimated_total": rem_principal + assessed,
+                "status": installment.status,
+                "estimator_version": ESTIMATOR_VERSION,
+            }
+
+        inst_due = installment.scheduled_due_date
+        inst_year, inst_month = map(int, installment.scheduled_period.split("-"))
+        if installment.installment_number == 1:
+            period_start = (
+                financial_date(tx.occurred_at)
+                if tx and tx.occurred_at
+                else inst_due - timedelta(days=30)
+            )
+        else:
+            prior_year = inst_year - (1 if inst_month == 1 else 0)
+            prior_month = 12 if inst_month == 1 else inst_month - 1
+            _, _, prior_due = get_cycle_dates_for_period(
+                prior_year, prior_month, card.cutoff_day, card.due_day
+            )
+            period_start = prior_due
+
+        period_end = inst_due
+        if period_end < period_start:
+            period_start = period_end
+
+        changes = await self.repo.get_card_principal_changes(
+            card.id, transaction_id=installment.purchase_transaction_id
+        )
+        estimated_interest = estimate_interest(changes, rate, period_start, period_end)
+
+        return {
+            "installment_id": installment.id,
+            "due_date": installment.scheduled_due_date,
+            "scheduled_principal": rem_principal,
+            "assessed_interest": assessed,
+            "estimated_interest": estimated_interest,
+            "estimated_total": rem_principal + assessed + estimated_interest,
+            "status": installment.status,
+            "estimator_version": ESTIMATOR_VERSION,
+        }
+
     async def list_installments(
         self, user_id: uuid.UUID, card_id: uuid.UUID
     ) -> list[CreditCardInstallmentRead]:
@@ -2749,7 +3229,66 @@ class CreditCardService:
         if not card or card.user_id != user_id or not card.is_active:
             raise CreditCardNotFoundError()
         installments = await self.repo.list_installments(card_id, user_id)
-        return [CreditCardInstallmentRead.model_validate(i) for i in installments]
+        rate = card.monthly_interest_rate or Decimal("0.00")
+
+        # Pre-fetch transactions to check zero-interest or unknown opening balance
+        tx_ids = {i.purchase_transaction_id for i in installments if i.purchase_transaction_id}
+        tx_map = {}
+        for tid in tx_ids:
+            tx = await self.repo.get_transaction_by_id(tid)
+            if tx:
+                tx_map[tid] = tx
+
+        reads = []
+        for i in installments:
+            item_read = CreditCardInstallmentRead.model_validate(i)
+            tx = tx_map.get(i.purchase_transaction_id)
+            is_zero_interest = bool(tx and tx.zero_interest)
+            is_unknown_opening = False
+            if tx and tx.type == "opening_balance":
+                meta = tx.metadata_ if isinstance(tx.metadata_, dict) else {}
+                assumption = meta.get("interest_projection_assumption")
+                if meta.get("composition_known") is not True and assumption not in (
+                    "unknown_composition_treated_as_interest_bearing",
+                    "opening_balance_treated_as_interest_bearing_principal",
+                ):
+                    is_unknown_opening = True
+
+            if (
+                i.status not in ("paid", "cancelled")
+                and not is_zero_interest
+                and not is_unknown_opening
+                and rate > Decimal("0.00")
+                and i.scheduled_due_date
+                and i.scheduled_period
+            ):
+                inst_year, inst_month = map(int, i.scheduled_period.split("-"))
+                if i.installment_number == 1:
+                    c_start, _, _ = get_cycle_dates_for_period(
+                        inst_year, inst_month, card.cutoff_day, card.due_day
+                    )
+                    period_start = c_start
+                else:
+                    prior_year = inst_year - (1 if inst_month == 1 else 0)
+                    prior_month = 12 if inst_month == 1 else inst_month - 1
+                    _, _, prior_due = get_cycle_dates_for_period(
+                        prior_year, prior_month, card.cutoff_day, card.due_day
+                    )
+                    period_start = prior_due
+                period_end = i.scheduled_due_date
+                if period_end > period_start:
+                    changes = await self.repo.get_card_principal_changes(
+                        card.id, transaction_id=i.purchase_transaction_id
+                    )
+                    item_read.estimated_interest_amount = estimate_interest(
+                        changes, rate, period_start, period_end
+                    )
+                    item_read.interest_estimator_version = ESTIMATOR_VERSION
+            else:
+                item_read.estimated_interest_amount = Decimal("0.00")
+                item_read.interest_estimator_version = None
+            reads.append(item_read)
+        return reads
 
     async def list_statements(
         self, user_id: uuid.UUID, card_id: uuid.UUID, auto_catchup: bool = False
@@ -2890,7 +3429,9 @@ class CreditCardService:
             adjustment_id=None,
         )
 
-        ledger_repo = getattr(self.ledger_service, "repository", None) or getattr(self, "ledger_repo", None)
+        ledger_repo = getattr(self.ledger_service, "repository", None) or getattr(
+            self, "ledger_repo", None
+        )
         if ledger_repo is None:
             return unknown_result
 
@@ -2974,7 +3515,9 @@ class CreditCardService:
                 return unknown_result
             if await self.repo.get_early_payment_by_event_for_user(event_id, user_id) is not None:
                 return unknown_result
-            if operation_type == "credit_card_payment" and str(payment.credit_card_id) == str(card_id):
+            if operation_type == "credit_card_payment" and str(payment.credit_card_id) == str(
+                card_id
+            ):
                 if str(payment.command_id) == str(command_id):
                     return CreditCommandReconciliationRead(
                         command_id=command_id,

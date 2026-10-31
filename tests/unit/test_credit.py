@@ -36,6 +36,12 @@ def mock_credit_repo():
         "legacy_debt": Decimal("0.00"),
         "total_debt": Decimal("0.00"),
     }
+
+    async def financial_state(card):
+        debt = (await repo.get_card_debt_partitioned(card.id))["total_debt"]
+        return {"modeled_debt": debt, "available_credit": card.credit_limit - debt}
+
+    repo.get_card_financial_state.side_effect = financial_state
     return repo
 
 
@@ -307,6 +313,11 @@ async def test_card_status_ignores_persisted_current_debt(credit_service, mock_c
         "billed_purchases": Decimal("400"),
         "unbilled_purchases": Decimal("300"),
         "total_payments": Decimal("100"),
+    }
+    mock_credit_repo.get_card_debt_partitioned.return_value = {
+        "canonical_debt": Decimal("600"),
+        "legacy_debt": Decimal("0"),
+        "total_debt": Decimal("600"),
     }
     mock_credit_repo.get_next_payment_estimate.return_value = Decimal("250")
 

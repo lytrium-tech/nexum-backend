@@ -19,7 +19,14 @@ def credit_service():
 @pytest.mark.asyncio
 async def test_calculate_card_status_no_debt(credit_service):
     card = CreditCard(
-        id=uuid.uuid4(), user_id=uuid.uuid4(), name="Test Card", bank="Bank", credit_limit=Decimal("5000"), currency="COP", cutoff_day=15, due_day=30
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        name="Test Card",
+        bank="Bank",
+        credit_limit=Decimal("5000"),
+        currency="COP",
+        cutoff_day=15,
+        due_day=30,
     )
     credit_service.repo.get_card_status_data.return_value = {
         "purchases_count": 0,
@@ -29,6 +36,10 @@ async def test_calculate_card_status_no_debt(credit_service):
         "total_payments": Decimal("0.00"),
     }
     credit_service.repo.get_next_payment_estimate.return_value = Decimal("0.00")
+    credit_service.repo.get_card_financial_state.return_value = {
+        "modeled_debt": Decimal("0.00"),
+        "available_credit": Decimal("5000.00"),
+    }
 
     status = await credit_service._calculate_card_status(card)
     assert status.current_debt == Decimal("0.00")
@@ -39,7 +50,14 @@ async def test_calculate_card_status_no_debt(credit_service):
 @pytest.mark.asyncio
 async def test_calculate_card_status_pay_early(credit_service):
     card = CreditCard(
-        id=uuid.uuid4(), user_id=uuid.uuid4(), name="Test Card", bank="Bank", credit_limit=Decimal("5000"), currency="COP", cutoff_day=15, due_day=30
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        name="Test Card",
+        bank="Bank",
+        credit_limit=Decimal("5000"),
+        currency="COP",
+        cutoff_day=15,
+        due_day=30,
     )
     credit_service.repo.get_card_status_data.return_value = {
         "purchases_count": 1,
@@ -49,6 +67,10 @@ async def test_calculate_card_status_pay_early(credit_service):
         "total_payments": Decimal("0.00"),
     }
     credit_service.repo.get_next_payment_estimate.return_value = Decimal("600.00")
+    credit_service.repo.get_card_financial_state.return_value = {
+        "modeled_debt": Decimal("600.00"),
+        "available_credit": Decimal("4400.00"),
+    }
 
     status = await credit_service._calculate_card_status(card)
     assert status.current_debt == Decimal("600.00")

@@ -19,9 +19,10 @@ import asyncio
 import os
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import UTC, date, datetime
-from decimal import Decimal
+from datetime import UTC, date, datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
@@ -34,15 +35,23 @@ from sqlalchemy.orm import sessionmaker
 
 from app.accounts.models import Account
 from app.accounts.repository import AccountRepository
+from app.core.financial_time import financial_date
 from app.credit.closure_service import CreditCycleClosureService
 from app.credit.exceptions import (
     CreditGoalReservationBreachError,
     CreditIdempotencyConflictError,
+    CreditLifecycleInvalidityError,
     CreditLimitExceededError,
     InvalidPaymentAmountError,
 )
+from app.credit.interest import (
+    build_interest_bearing_principal_timeline,
+    daily_interest_rate,
+    estimate_interest,
+)
 from app.credit.models import (
     CreditCard,
+    CreditCardAdjustment,
     CreditCardBillingCycle,
     CreditCardInstallment,
     CreditCardPayment,
@@ -55,6 +64,7 @@ from app.credit.models import (
 from app.credit.schemas import (
     CreditCardAdjustmentCreate,
     CreditCardEarlyPaymentCreate,
+    CreditCardOpeningBalanceCreate,
     CreditCardPaymentCreate,
     CreditCardPurchaseCreate,
 )
@@ -74,6 +84,7 @@ EXPECTED_USER = "nexum_release_gate_test"
 SAFE_TUNNEL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 EXPECTED_TUNNEL_PORT = 5433
 GATE_OPT_IN = "NEXUM_ALLOW_DESTRUCTIVE_TEST_DB"
+
 
 def get_db_url() -> str:
     """Return verified test database URL or skip if absent."""
@@ -173,13 +184,13 @@ def static_fx() -> StaticFxRateProvider:
 
 
 def test_pg01_alembic_linear_head_graph():
-    """Verify linear Alembic migration graph ending at final head credit_v2_refund_type."""
+    """Verify linear Alembic migration graph ending at the Credit Alpha head."""
     cfg = Config("alembic.ini")
     script = ScriptDirectory.from_config(cfg)
     heads = script.get_heads()
 
     assert len(heads) == 1, f"Expected single linear migration HEAD, found multiple: {heads}"
-    assert heads[0] == "credit_v2_refund_type", f"Unexpected migration head: {heads[0]}"
+    assert heads[0] == "credit_alpha_interest_opening", f"Unexpected migration head: {heads[0]}"
 
     revisions = list(script.walk_revisions(base="base", head="heads"))
     rev_map = {r.revision: r for r in revisions}
@@ -189,6 +200,7 @@ def test_pg01_alembic_linear_head_graph():
     assert "credit_v2_canonical_check" in rev_map
     assert "credit_v2_canonical_closure" in rev_map
     assert "credit_v2_refund_type" in rev_map
+    assert rev_map["credit_alpha_interest_opening"].down_revision == "credit_v2_refund_type"
 
     assert rev_map["credit_v2_canonical_closure"].down_revision == "credit_v2_canonical_check"
     assert rev_map["credit_v2_refund_type"].down_revision == "credit_v2_canonical_closure"
@@ -641,8 +653,9 @@ async def test_pg04a_standard_partial_and_generic_prepayment_conservation(
 @pytest.mark.asyncio(loop_scope="session")
 async def test_pay_early_reconciliation_http(session, fixture, static_fx):
     from httpx import ASGITransport, AsyncClient
-    from app.main import app
+
     from app.credit.router import get_credit_service
+    from app.main import app
     from app.users.dependencies import get_current_user_profile_dep
     from app.users.schemas import UserRead
 
@@ -651,12 +664,32 @@ async def test_pay_early_reconciliation_http(session, fixture, static_fx):
     fixture.account.currency = "COP"
     await session.commit()
     service = CreditCardService(session, fx_provider=static_fx)
-    purchase = await service.create_purchase(fixture.user_id, card.id, CreditCardPurchaseCreate(amount=Decimal("600000.00"), description="HTTP reconciliation", installments_total=6), command_id=uuid.uuid4())
+    purchase = await service.create_purchase(
+        fixture.user_id,
+        card.id,
+        CreditCardPurchaseCreate(
+            amount=Decimal("600000.00"), description="HTTP reconciliation", installments_total=6
+        ),
+        command_id=uuid.uuid4(),
+    )
     await session.commit()
     command_id = uuid.uuid4()
-    result = await service.create_early_payment(fixture.user_id, card.id, purchase.transaction_id, CreditCardEarlyPaymentCreate(account_id=fixture.account.id, amount=Decimal("100000.00")), command_id=command_id)
+    result = await service.create_early_payment(
+        fixture.user_id,
+        card.id,
+        purchase.transaction_id,
+        CreditCardEarlyPaymentCreate(account_id=fixture.account.id, amount=Decimal("100000.00")),
+        command_id=command_id,
+    )
     await session.commit()
-    profile = UserRead(id=fixture.user_id, name="Gate Test", email="gate@example.test", timezone="America/Bogota", currency="COP", status="active")
+    profile = UserRead(
+        id=fixture.user_id,
+        name="Gate Test",
+        email="gate@example.test",
+        timezone="America/Bogota",
+        currency="COP",
+        status="active",
+    )
     app.dependency_overrides[get_credit_service] = lambda: service
     app.dependency_overrides[get_current_user_profile_dep] = lambda: profile
     try:
@@ -922,23 +955,32 @@ async def test_pg04c_voluntary_overpayment_rejection(
     assert len(payments) == 0
 
     payment_transactions = (
-        await session.execute(
-            select(CreditCardTransaction).where(
-                CreditCardTransaction.credit_card_id == card_id,
-                CreditCardTransaction.type == "payment",
+        (
+            await session.execute(
+                select(CreditCardTransaction).where(
+                    CreditCardTransaction.credit_card_id == card_id,
+                    CreditCardTransaction.type == "payment",
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(payment_transactions) == 0
 
     allocations = (
-        await session.execute(
-            select(CreditCardPaymentAllocation).where(
-                CreditCardPaymentAllocation.credit_card_id == card_id
+        (
+            await session.execute(
+                select(CreditCardPaymentAllocation).where(
+                    CreditCardPaymentAllocation.credit_card_id == card_id
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(allocations) == 0
+
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_pg04d_payment_reversal_full_amount_conservation(
@@ -1094,22 +1136,30 @@ async def test_pg05_f13_goal_reservation_enforced_under_lock_zero_mutation(
     assert len(payments) == 0
 
     payment_transactions = (
-        await session.execute(
-            select(CreditCardTransaction).where(
-                CreditCardTransaction.credit_card_id == card_id,
-                CreditCardTransaction.type == "payment",
+        (
+            await session.execute(
+                select(CreditCardTransaction).where(
+                    CreditCardTransaction.credit_card_id == card_id,
+                    CreditCardTransaction.type == "payment",
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(payment_transactions) == 0
 
     allocations = (
-        await session.execute(
-            select(CreditCardPaymentAllocation).where(
-                CreditCardPaymentAllocation.credit_card_id == card_id
+        (
+            await session.execute(
+                select(CreditCardPaymentAllocation).where(
+                    CreditCardPaymentAllocation.credit_card_id == card_id
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(allocations) == 0
 
     allocations = (
@@ -1656,9 +1706,7 @@ async def test_pg08f_deterministic_waterfall_physical_allocation_order(
         select(CreditCardPayment).where(CreditCardPayment.credit_card_id == card.id)
     )
     assert payment is not None
-    assert payment.principal_applied == sum(
-        allocation.allocated_principal for allocation in allocs
-    )
+    assert payment.principal_applied == sum(allocation.allocated_principal for allocation in allocs)
     assert payment.booked_amount == sum(allocation.allocated_amount for allocation in allocs)
     # First allocation went to overdue installment
     assert allocs[0].target_installment_id == inst_past.id
@@ -1740,22 +1788,30 @@ async def test_pg09a_atomic_rollback_on_ledger_failure(
     assert len(payments) == 0
 
     payment_transactions = (
-        await session.execute(
-            select(CreditCardTransaction).where(
-                CreditCardTransaction.credit_card_id == card_id,
-                CreditCardTransaction.type == "payment",
+        (
+            await session.execute(
+                select(CreditCardTransaction).where(
+                    CreditCardTransaction.credit_card_id == card_id,
+                    CreditCardTransaction.type == "payment",
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(payment_transactions) == 0
 
     allocations = (
-        await session.execute(
-            select(CreditCardPaymentAllocation).where(
-                CreditCardPaymentAllocation.credit_card_id == card_id
+        (
+            await session.execute(
+                select(CreditCardPaymentAllocation).where(
+                    CreditCardPaymentAllocation.credit_card_id == card_id
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(allocations) == 0
 
 
@@ -1831,20 +1887,24 @@ async def test_pg09b_atomic_rollback_on_allocation_failure(
     assert len(allocs) == 0
 
     payment_transactions = (
-        await session.execute(
-            select(CreditCardTransaction).where(
-                CreditCardTransaction.credit_card_id == card_id,
-                CreditCardTransaction.type == "payment",
+        (
+            await session.execute(
+                select(CreditCardTransaction).where(
+                    CreditCardTransaction.credit_card_id == card_id,
+                    CreditCardTransaction.type == "payment",
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(payment_transactions) == 0
 
     ledger_events = (
-        await session.execute(
-            select(FinancialEvent).where(FinancialEvent.command_id == cmd_pmt)
-        )
-    ).scalars().all()
+        (await session.execute(select(FinancialEvent).where(FinancialEvent.command_id == cmd_pmt)))
+        .scalars()
+        .all()
+    )
     assert len(ledger_events) == 0
 
 
@@ -2080,3 +2140,974 @@ async def test_pg12_harness_cleanup_and_residue_verification(
     # Verify statement triggers are enabled fail-closed
     await verify_statement_triggers_enabled(session)
     # Global cleanup run will clear fixture and assert 0 rows across all tables
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_alpha_payment_updates_future_interest_estimate(session, fixture, static_fx):
+    card = await fixture.add_credit_card(currency="COP")
+    card.monthly_interest_rate = Decimal("2.11")
+    fixture.account.currency = "COP"
+    fixture.account.balance = Decimal("1000000")
+    await session.commit()
+    service = CreditCardService(session, fx_provider=static_fx)
+    purchase = await service.create_purchase(
+        fixture.user_id,
+        card.id,
+        CreditCardPurchaseCreate(amount=Decimal("300000"), installments_total=3),
+        command_id=uuid.uuid4(),
+    )
+    await session.commit()
+    query = select(CreditCardInstallment).where(
+        CreditCardInstallment.purchase_transaction_id == purchase.transaction_id,
+        CreditCardInstallment.installment_number == 3,
+    )
+    installment = (await session.execute(query)).scalar_one()
+    before_proj = await service.get_installment_projection(fixture.user_id, card.id, installment.id)
+    before = before_proj["estimated_interest"]
+    assert before > 0
+    await service.create_payment(
+        fixture.user_id,
+        card.id,
+        CreditCardPaymentCreate(account_id=fixture.account.id, amount=Decimal("150000")),
+        command_id=uuid.uuid4(),
+    )
+    await session.commit()
+    after_proj = await service.get_installment_projection(fixture.user_id, card.id, installment.id)
+    assert after_proj["estimated_interest"] < before
+    expected_half = (before / Decimal("2")).quantize(Decimal("0.01"))
+    assert after_proj["estimated_interest"] == expected_half or abs(
+        after_proj["estimated_interest"] - expected_half
+    ) <= Decimal("0.01")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_alpha_refund_updates_future_interest_estimate(session, fixture, static_fx):
+    card = await fixture.add_credit_card(currency="COP")
+    card.monthly_interest_rate = Decimal("2.11")
+    await session.commit()
+    service = CreditCardService(session, fx_provider=static_fx)
+    purchase = await service.create_purchase(
+        fixture.user_id,
+        card.id,
+        CreditCardPurchaseCreate(amount=Decimal("300000"), installments_total=3),
+        command_id=uuid.uuid4(),
+    )
+    await session.commit()
+    installment = (
+        await session.execute(
+            select(CreditCardInstallment).where(
+                CreditCardInstallment.purchase_transaction_id == purchase.transaction_id,
+                CreditCardInstallment.installment_number == 3,
+            )
+        )
+    ).scalar_one()
+    before_proj = await service.get_installment_projection(fixture.user_id, card.id, installment.id)
+    before = before_proj["estimated_interest"]
+    assert before > 0
+    await service.create_adjustment(
+        fixture.user_id,
+        card.id,
+        CreditCardAdjustmentCreate(
+            original_transaction_id=purchase.transaction_id,
+            amount=Decimal("50000"),
+            adjustment_type="refund",
+            direction="credit",
+        ),
+        command_id=uuid.uuid4(),
+    )
+    await session.commit()
+    after_proj = await service.get_installment_projection(fixture.user_id, card.id, installment.id)
+    assert after_proj["estimated_interest"] < before
+    expected = (before * Decimal("250000") / Decimal("300000")).quantize(Decimal("0.01"))
+    assert after_proj["estimated_interest"] == expected or abs(
+        after_proj["estimated_interest"] - expected
+    ) <= Decimal("0.01")
+
+
+# ==============================================================================
+# AC 13: CREDIT ALPHA PHYSICAL RELEASE GATE SCENARIOS
+# ==============================================================================
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_alpha_pg01_dated_purchase_payment_refund_timeline_math(
+    session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
+):
+    """Dated purchase, payment, and refund with clock injection and exact interest timeline math."""
+    card = await fixture.add_credit_card(currency="COP", cutoff_day=15, due_day=5)
+    card.canonical_activated_at = datetime(2026, 1, 1, tzinfo=UTC)
+    card.monthly_interest_rate = Decimal("2.11")
+    fixture.account.currency = "COP"
+    fixture.account.balance = Decimal("2000000.00")
+    await session.commit()
+
+    service = CreditCardService(session, fx_provider=static_fx)
+
+    d_start = date(2026, 10, 5)
+    d_pay = date(2026, 10, 15)
+    d_refund = date(2026, 10, 25)
+    d_end = date(2026, 11, 5)
+
+    # 1. Dated purchase on 2026-10-05 (1 installment, 300,000 COP)
+    service._get_financial_date = lambda as_of=None: d_start
+    dt_start = datetime(2026, 10, 5, 12, 0, tzinfo=ZoneInfo("America/Bogota"))
+    purchase = await service.create_purchase(
+        fixture.user_id,
+        card.id,
+        CreditCardPurchaseCreate(
+            amount=Decimal("300000.00"),
+            installments_total=1,
+            occurred_at=dt_start,
+        ),
+        command_id=uuid.uuid4(),
+    )
+    await session.commit()
+
+    # 2. Dated payment on 2026-10-15 (100,000 COP)
+    service._get_financial_date = lambda as_of=None: d_pay
+    await service.create_payment(
+        fixture.user_id,
+        card.id,
+        CreditCardPaymentCreate(account_id=fixture.account.id, amount=Decimal("100000.00")),
+        command_id=uuid.uuid4(),
+    )
+    await session.commit()
+
+    # 3. Dated refund on 2026-10-25 (50,000 COP)
+    service._get_financial_date = lambda as_of=None: d_refund
+    await service.create_adjustment(
+        fixture.user_id,
+        card.id,
+        CreditCardAdjustmentCreate(
+            original_transaction_id=purchase.transaction_id,
+            amount=Decimal("50000.00"),
+            adjustment_type="refund",
+            direction="credit",
+        ),
+        command_id=uuid.uuid4(),
+    )
+    await session.commit()
+
+    # Verify extracted physical facts
+    changes = await service.repo.get_card_principal_changes(
+        card.id, transaction_id=purchase.transaction_id
+    )
+    assert len(changes) == 3
+    change_map = {c.event_type: (c.effective_date, c.amount) for c in changes}
+    assert change_map["purchase"] == (d_start, Decimal("300000.00"))
+    assert change_map["payment"] == (d_pay, Decimal("-100000.00"))
+    assert change_map["refund"] == (d_refund, Decimal("-50000.00"))
+
+    # Daily compounding timeline calculation:
+    # 2026-10-05 to 2026-10-15: 10 days at 300,000
+    # 2026-10-15 to 2026-10-25: 10 days at 200,000
+    # 2026-10-25 to 2026-11-05: 11 days at 150,000
+    daily_rate = daily_interest_rate(Decimal("2.11"))
+    expected_interest = (
+        Decimal("300000.00") * 10 * daily_rate
+        + Decimal("200000.00") * 10 * daily_rate
+        + Decimal("150000.00") * 11 * daily_rate
+    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    actual_interest = estimate_interest(changes, Decimal("2.11"), d_start, d_end)
+    assert actual_interest == expected_interest
+
+    inst = (
+        await session.execute(
+            select(CreditCardInstallment).where(
+                CreditCardInstallment.purchase_transaction_id == purchase.transaction_id
+            )
+        )
+    ).scalar_one()
+
+    proj = await service.get_installment_projection(fixture.user_id, card.id, inst.id)
+    assert proj["estimated_interest"] == expected_interest
+    assert proj["scheduled_principal"] == Decimal("150000.00")
+    assert proj["estimated_total"] == Decimal("150000.00") + expected_interest
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_alpha_pg02_payment_reversal_restoration_physical(
+    session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
+):
+    """Payment reversal physically restores installment pending status and principal timeline."""
+    card = await fixture.add_credit_card(currency="COP", cutoff_day=15, due_day=5)
+    card.canonical_activated_at = datetime(2026, 1, 1, tzinfo=UTC)
+    card.monthly_interest_rate = Decimal("2.11")
+    fixture.account.currency = "COP"
+    fixture.account.balance = Decimal("1000000.00")
+    await session.commit()
+
+    service = CreditCardService(session, fx_provider=static_fx)
+
+    d1 = date(2026, 10, 5)
+    d5 = date(2026, 10, 10)
+    d10 = date(2026, 10, 15)
+
+    # Day 1: Purchase 100,000 COP
+    service._get_financial_date = lambda as_of=None: d1
+    purchase = await service.create_purchase(
+        fixture.user_id,
+        card.id,
+        CreditCardPurchaseCreate(
+            amount=Decimal("100000.00"),
+            installments_total=1,
+            occurred_at=datetime(2026, 10, 5, 12, 0, tzinfo=ZoneInfo("America/Bogota")),
+        ),
+        command_id=uuid.uuid4(),
+    )
+    await session.commit()
+
+    # Day 5: Payment 100,000 COP
+    service._get_financial_date = lambda as_of=None: d5
+    pay_res = await service.create_payment(
+        fixture.user_id,
+        card.id,
+        CreditCardPaymentCreate(account_id=fixture.account.id, amount=Decimal("100000.00")),
+        command_id=uuid.uuid4(),
+    )
+    await session.commit()
+
+    # Verify payment paid installment in full
+    inst_query = select(CreditCardInstallment).where(
+        CreditCardInstallment.purchase_transaction_id == purchase.transaction_id
+    )
+    inst_after_pay = (await session.execute(inst_query)).scalar_one()
+    assert inst_after_pay.status == "paid"
+    assert inst_after_pay.paid_amount == Decimal("100000.00")
+
+    # Day 10: Reverse the payment
+    service._get_financial_date = lambda as_of=None: d10
+    rev_res = await service.create_adjustment(
+        fixture.user_id,
+        card.id,
+        CreditCardAdjustmentCreate(
+            original_transaction_id=pay_res.transaction_id,
+            amount=Decimal("100000.00"),
+            adjustment_type="reversal",
+            direction="debit",
+        ),
+        command_id=uuid.uuid4(),
+    )
+    await session.commit()
+    assert rev_res.status == "success"
+
+    # Physical DB assertions
+    payment_row = await service.repo.get_payment_by_transaction_id(pay_res.transaction_id)
+    assert payment_row.status == "reversed"
+
+    inst_after_rev = (await session.execute(inst_query)).scalar_one()
+    assert inst_after_rev.status == "pending"
+    assert inst_after_rev.paid_amount == Decimal("0.00")
+
+    debt = await service.repo.get_card_debt_partitioned(card.id)
+    assert debt["total_debt"] == Decimal("100000.00")
+
+    changes = await service.repo.get_card_principal_changes(
+        card.id, transaction_id=purchase.transaction_id
+    )
+    timeline = build_interest_bearing_principal_timeline(changes, d1, date(2026, 10, 20))
+    timeline_dict = dict(timeline)
+    assert timeline_dict[d1] == Decimal("100000.00")
+    assert timeline_dict[d5] == Decimal("0.00")
+    assert timeline_dict[date(2026, 10, 14)] == Decimal("0.00")
+    assert timeline_dict[d10] == Decimal("100000.00")
+    assert timeline_dict[date(2026, 10, 19)] == Decimal("100000.00")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_alpha_pg03_refund_reversal_exact_linkage_physical(
+    session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
+):
+    """Refund reversal requires exact linkage via reversal_of_adjustment_id and blocks double reversals."""
+    card = await fixture.add_credit_card(currency="COP", cutoff_day=15, due_day=5)
+    card.canonical_activated_at = datetime(2026, 1, 1, tzinfo=UTC)
+    card.monthly_interest_rate = Decimal("2.11")
+    await session.commit()
+
+    service = CreditCardService(session, fx_provider=static_fx)
+
+    d1 = date(2026, 10, 5)
+    d5 = date(2026, 10, 10)
+    d8 = date(2026, 10, 13)
+    d12 = date(2026, 10, 17)
+
+    # Purchase: 200,000 COP (2 installments of 100,000)
+    service._get_financial_date = lambda as_of=None: d1
+    purchase = await service.create_purchase(
+        fixture.user_id,
+        card.id,
+        CreditCardPurchaseCreate(
+            amount=Decimal("200000.00"),
+            installments_total=2,
+            occurred_at=datetime(2026, 10, 5, 12, 0, tzinfo=ZoneInfo("America/Bogota")),
+        ),
+        command_id=uuid.uuid4(),
+    )
+    await session.commit()
+
+    # Refund 1 on Day 5: 50,000 COP
+    service._get_financial_date = lambda as_of=None: d5
+    ref1_cmd = uuid.uuid4()
+    ref1 = await service.create_adjustment(
+        fixture.user_id,
+        card.id,
+        CreditCardAdjustmentCreate(
+            original_transaction_id=purchase.transaction_id,
+            amount=Decimal("50000.00"),
+            adjustment_type="refund",
+            direction="credit",
+        ),
+        command_id=ref1_cmd,
+    )
+    await session.commit()
+
+    # Refund 2 on Day 8: 30,000 COP
+    service._get_financial_date = lambda as_of=None: d8
+    ref2 = await service.create_adjustment(
+        fixture.user_id,
+        card.id,
+        CreditCardAdjustmentCreate(
+            original_transaction_id=purchase.transaction_id,
+            amount=Decimal("30000.00"),
+            adjustment_type="refund",
+            direction="credit",
+        ),
+        command_id=uuid.uuid4(),
+    )
+    await session.commit()
+
+    adj1_record = (
+        await session.execute(
+            select(CreditCardAdjustment).where(CreditCardAdjustment.id == ref1.adjustment_id)
+        )
+    ).scalar_one()
+
+    # Non-exact reversal attempt on Refund 1 fails closed
+    service._get_financial_date = lambda as_of=None: d12
+    with pytest.raises(InvalidPaymentAmountError):
+        await service.create_adjustment(
+            fixture.user_id,
+            card.id,
+            CreditCardAdjustmentCreate(
+                original_transaction_id=adj1_record.id,
+                amount=Decimal("40000.00"),
+                adjustment_type="reversal",
+                direction="debit",
+            ),
+            command_id=uuid.uuid4(),
+        )
+
+    # Exact reversal of Refund 1
+    rev_cmd = uuid.uuid4()
+    rev_res = await service.create_adjustment(
+        fixture.user_id,
+        card.id,
+        CreditCardAdjustmentCreate(
+            original_transaction_id=adj1_record.id,
+            amount=Decimal("50000.00"),
+            adjustment_type="reversal",
+            direction="debit",
+        ),
+        command_id=rev_cmd,
+    )
+    await session.commit()
+    assert rev_res.status == "success"
+
+    # Physical link assertion
+    rev_record = (
+        await session.execute(
+            select(CreditCardAdjustment).where(CreditCardAdjustment.id == rev_res.adjustment_id)
+        )
+    ).scalar_one()
+    assert rev_record.reversal_of_adjustment_id == adj1_record.id
+
+    # Double reversal of Refund 1 is blocked
+    with pytest.raises(CreditLifecycleInvalidityError):
+        await service.create_adjustment(
+            fixture.user_id,
+            card.id,
+            CreditCardAdjustmentCreate(
+                original_transaction_id=adj1_record.id,
+                amount=Decimal("50000.00"),
+                adjustment_type="reversal",
+                direction="debit",
+            ),
+            command_id=uuid.uuid4(),
+        )
+
+    # Idempotent retry of reversal returns idempotent_retry
+    retry_rev = await service.create_adjustment(
+        fixture.user_id,
+        card.id,
+        CreditCardAdjustmentCreate(
+            original_transaction_id=adj1_record.id,
+            amount=Decimal("50000.00"),
+            adjustment_type="reversal",
+            direction="debit",
+        ),
+        command_id=rev_cmd,
+    )
+    assert retry_rev.status == "idempotent_retry"
+    assert retry_rev.adjustment_id == rev_res.adjustment_id
+
+    # Verify Refund 2 (30,000) is untouched
+    adj2_record = (
+        await session.execute(
+            select(CreditCardAdjustment).where(CreditCardAdjustment.id == ref2.adjustment_id)
+        )
+    ).scalar_one()
+    assert adj2_record.status == "posted"
+
+    # Principal changes: Purchase (+200k), Ref1 (-50k), Ref2 (-30k), Rev1 (+50k)
+    changes = await service.repo.get_card_principal_changes(
+        card.id, transaction_id=purchase.transaction_id
+    )
+    timeline = dict(build_interest_bearing_principal_timeline(changes, d1, date(2026, 10, 20)))
+    assert timeline[d1] == Decimal("200000.00")
+    assert timeline[d5] == Decimal("150000.00")
+    assert timeline[d8] == Decimal("120000.00")
+    assert timeline[d12] == Decimal("170000.00")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_alpha_pg04_zero_interest_mixed_purchases_physical(
+    session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
+):
+    """Zero-interest purchases are excluded from projections and isolated from payments."""
+    card = await fixture.add_credit_card(currency="COP", cutoff_day=15, due_day=5)
+    card.canonical_activated_at = datetime(2026, 1, 1, tzinfo=UTC)
+    card.monthly_interest_rate = Decimal("2.11")
+    fixture.account.currency = "COP"
+    fixture.account.balance = Decimal("2000000.00")
+    await session.commit()
+
+    service = CreditCardService(session, fx_provider=static_fx)
+
+    d1 = date(2026, 10, 5)
+    service._get_financial_date = lambda as_of=None: d1
+
+    # Purchase A: zero interest, 100,000 COP
+    purchase_a = await service.create_purchase(
+        fixture.user_id,
+        card.id,
+        CreditCardPurchaseCreate(
+            amount=Decimal("100000.00"),
+            installments_total=1,
+            zero_interest=True,
+            occurred_at=datetime(2026, 10, 5, 10, 0, tzinfo=ZoneInfo("America/Bogota")),
+        ),
+        command_id=uuid.uuid4(),
+    )
+
+    await session.commit()
+
+    # Purchase B: interest bearing, 100,000 COP
+    purchase_b = await service.create_purchase(
+        fixture.user_id,
+        card.id,
+        CreditCardPurchaseCreate(
+            amount=Decimal("100000.00"),
+            installments_total=1,
+            zero_interest=False,
+            occurred_at=datetime(2026, 10, 5, 11, 0, tzinfo=ZoneInfo("America/Bogota")),
+        ),
+        command_id=uuid.uuid4(),
+    )
+    await session.commit()
+
+    inst_a = (
+        await session.execute(
+            select(CreditCardInstallment).where(
+                CreditCardInstallment.purchase_transaction_id == purchase_a.transaction_id
+            )
+        )
+    ).scalar_one()
+
+    inst_b = (
+        await session.execute(
+            select(CreditCardInstallment).where(
+                CreditCardInstallment.purchase_transaction_id == purchase_b.transaction_id
+            )
+        )
+    ).scalar_one()
+
+    # Projection for zero-interest installment must be 0
+    proj_a = await service.get_installment_projection(fixture.user_id, card.id, inst_a.id)
+    assert proj_a["estimated_interest"] == Decimal("0.00")
+
+    # Projection for interest-bearing installment must be > 0
+    proj_b = await service.get_installment_projection(fixture.user_id, card.id, inst_b.id)
+    assert proj_b["estimated_interest"] > Decimal("0.00")
+    b_before_interest = proj_b["estimated_interest"]
+
+    # Payment of 100,000 COP allocates to installment A
+    service._get_financial_date = lambda as_of=None: date(2026, 10, 10)
+    await service.create_payment(
+        fixture.user_id,
+        card.id,
+        CreditCardPaymentCreate(account_id=fixture.account.id, amount=Decimal("100000.00")),
+        command_id=uuid.uuid4(),
+    )
+    await session.commit()
+
+    inst_a_after = (
+        await session.execute(
+            select(CreditCardInstallment).where(CreditCardInstallment.id == inst_a.id)
+        )
+    ).scalar_one()
+    assert inst_a_after.paid_amount == Decimal("100000.00")
+
+    # Scoped projection for installment B must NOT be reduced by payment to zero-interest installment A
+    proj_b_after = await service.get_installment_projection(fixture.user_id, card.id, inst_b.id)
+    assert proj_b_after["estimated_interest"] == b_before_interest
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_alpha_pg05_one_installment_normal_physical(
+    session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
+):
+    """Normal single installment revolving purchase calculates full interval interest."""
+    card = await fixture.add_credit_card(currency="COP", cutoff_day=15, due_day=5)
+    card.canonical_activated_at = datetime(2026, 1, 1, tzinfo=UTC)
+    card.monthly_interest_rate = Decimal("2.11")
+    await session.commit()
+
+    service = CreditCardService(session, fx_provider=static_fx)
+    d1 = date(2026, 10, 5)
+    service._get_financial_date = lambda as_of=None: d1
+
+    purchase = await service.create_purchase(
+        fixture.user_id,
+        card.id,
+        CreditCardPurchaseCreate(
+            amount=Decimal("150000.00"),
+            installments_total=1,
+            occurred_at=datetime(2026, 10, 5, 12, 0, tzinfo=ZoneInfo("America/Bogota")),
+        ),
+        command_id=uuid.uuid4(),
+    )
+    await session.commit()
+
+    inst = (
+        await session.execute(
+            select(CreditCardInstallment).where(
+                CreditCardInstallment.purchase_transaction_id == purchase.transaction_id
+            )
+        )
+    ).scalar_one()
+
+    assert inst.installment_number == 1
+    assert inst.installments_total == 1
+    assert inst.principal_amount == Decimal("150000.00")
+    assert inst.status == "pending"
+
+    proj = await service.get_installment_projection(fixture.user_id, card.id, inst.id)
+    assert proj["scheduled_principal"] == Decimal("150000.00")
+    assert proj["assessed_interest"] == Decimal("0.00")
+    assert proj["estimated_interest"] > Decimal("0.00")
+    assert proj["estimated_total"] == proj["scheduled_principal"] + proj["estimated_interest"]
+    assert proj["estimator_version"] == "nexum_interest_v1"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_alpha_pg06_estimated_vs_assessed_no_debt_mutation_on_reads(
+    session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
+):
+    """Read projection methods never mutate physical debt or write phantom assessed interest."""
+    card = await fixture.add_credit_card(currency="COP", cutoff_day=15, due_day=5)
+    card.canonical_activated_at = datetime(2026, 1, 1, tzinfo=UTC)
+    card.monthly_interest_rate = Decimal("2.11")
+    await session.commit()
+
+    service = CreditCardService(session, fx_provider=static_fx)
+    await service.create_purchase(
+        fixture.user_id,
+        card.id,
+        CreditCardPurchaseCreate(
+            amount=Decimal("200000.00"),
+            installments_total=2,
+            occurred_at=datetime(2026, 10, 5, 12, 0, tzinfo=ZoneInfo("America/Bogota")),
+        ),
+        command_id=uuid.uuid4(),
+    )
+    await session.commit()
+
+    debt_before = await service.repo.get_card_debt_partitioned(card.id)
+    total_before = debt_before["total_debt"]
+    assert total_before == Decimal("200000.00")
+
+    inst_list = (
+        (
+            await session.execute(
+                select(CreditCardInstallment).where(CreditCardInstallment.credit_card_id == card.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for inst in inst_list:
+        assert inst.assessed_interest_amount in (None, Decimal("0.00"))
+
+    # Execute all read projection methods repeatedly
+    await service.get_installment_projection(fixture.user_id, card.id, inst_list[0].id)
+    await service.get_installment_projection(fixture.user_id, card.id, inst_list[1].id)
+    await service.get_card_status(fixture.user_id, card.id)
+    await service.list_installments(fixture.user_id, card.id)
+    await service.get_credit_summary(fixture.user_id)
+    await session.commit()
+
+    # Re-verify debt and installment rows
+    debt_after = await service.repo.get_card_debt_partitioned(card.id)
+    assert debt_after["total_debt"] == total_before
+
+    inst_after = (
+        (
+            await session.execute(
+                select(CreditCardInstallment).where(CreditCardInstallment.credit_card_id == card.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for inst in inst_after:
+        assert inst.assessed_interest_amount in (None, Decimal("0.00"))
+        assert inst.paid_amount == Decimal("0.00")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_alpha_pg07_next_payment_projection_tiers_and_fees_physical(
+    session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
+):
+    """Next-payment projection enforces 3-tier chronological selection (overdue, due_today, upcoming) and fee breakdown."""
+    card = await fixture.add_credit_card(currency="COP", cutoff_day=15, due_day=5)
+    await session.commit()
+
+    service = CreditCardService(session, fx_provider=static_fx)
+    today = financial_date()
+    now_utc, now_naive = get_fixture_timestamps()
+
+    tx = CreditCardTransaction(
+        id=uuid.uuid4(),
+        user_id=fixture.user_id,
+        credit_card_id=card.id,
+        type="purchase",
+        amount=Decimal("300000.00"),
+        booked_amount=Decimal("300000.00"),
+        booked_currency="COP",
+        original_amount=Decimal("300000.00"),
+        original_currency="COP",
+        occurred_at=now_utc,
+        debt_partition="canonical",
+        provenance="nexum_modeled",
+        lifecycle_status="posted",
+        created_at=now_naive,
+        updated_at=now_utc,
+    )
+    session.add(tx)
+    await session.flush()
+
+    d_overdue1 = today - timedelta(days=10)
+    d_overdue2 = today - timedelta(days=5)
+    d_today = today
+    d_upcoming1 = today + timedelta(days=10)
+    d_upcoming2 = today + timedelta(days=20)
+
+    # 1. Add overdue installment 1 & 2, and upcoming installment 1
+    inst_od1 = CreditCardInstallment(
+        id=uuid.uuid4(),
+        user_id=fixture.user_id,
+        credit_card_id=card.id,
+        purchase_transaction_id=tx.id,
+        installment_number=1,
+        installments_total=5,
+        principal_amount=Decimal("50000.00"),
+        scheduled_period="2026-08",
+        status="pending",
+        scheduled_due_date=d_overdue1,
+        debt_partition="canonical",
+        provenance="nexum_modeled",
+        lifecycle_status="active",
+        created_at=now_naive,
+        updated_at=now_utc,
+    )
+    inst_od2 = CreditCardInstallment(
+        id=uuid.uuid4(),
+        user_id=fixture.user_id,
+        credit_card_id=card.id,
+        purchase_transaction_id=tx.id,
+        installment_number=2,
+        installments_total=5,
+        principal_amount=Decimal("60000.00"),
+        scheduled_period="2026-09",
+        status="pending",
+        scheduled_due_date=d_overdue2,
+        debt_partition="canonical",
+        provenance="nexum_modeled",
+        lifecycle_status="active",
+        created_at=now_naive,
+        updated_at=now_utc,
+    )
+    inst_up1 = CreditCardInstallment(
+        id=uuid.uuid4(),
+        user_id=fixture.user_id,
+        credit_card_id=card.id,
+        purchase_transaction_id=tx.id,
+        installment_number=3,
+        installments_total=5,
+        principal_amount=Decimal("70000.00"),
+        scheduled_period="2026-11",
+        status="pending",
+        scheduled_due_date=d_upcoming1,
+        debt_partition="canonical",
+        provenance="nexum_modeled",
+        lifecycle_status="active",
+        created_at=now_naive,
+        updated_at=now_utc,
+    )
+    session.add_all([inst_od1, inst_od2, inst_up1])
+    await session.commit()
+
+    # Tier 1: Overdue selection chooses the OLDEST overdue installment
+    proj1 = await service.repo.get_next_payment_projection(card.id)
+    assert proj1 is not None
+    assert proj1["status"] == "overdue"
+    assert proj1["due_date"] == d_overdue1
+    assert proj1["scheduled_principal"] == Decimal("50000.00")
+
+    # Mark both overdue installments paid
+    inst_od1.status = "paid"
+    inst_od2.status = "paid"
+
+    # Tier 2: Add due_today installment
+    inst_today = CreditCardInstallment(
+        id=uuid.uuid4(),
+        user_id=fixture.user_id,
+        credit_card_id=card.id,
+        purchase_transaction_id=tx.id,
+        installment_number=4,
+        installments_total=5,
+        principal_amount=Decimal("80000.00"),
+        scheduled_period="2026-10",
+        status="pending",
+        scheduled_due_date=d_today,
+        debt_partition="canonical",
+        provenance="nexum_modeled",
+        lifecycle_status="active",
+        created_at=now_naive,
+        updated_at=now_utc,
+    )
+    session.add(inst_today)
+    await session.commit()
+
+    proj2 = await service.repo.get_next_payment_projection(card.id)
+    assert proj2 is not None
+    assert proj2["status"] == "due_today"
+    assert proj2["due_date"] == d_today
+    assert proj2["scheduled_principal"] == Decimal("80000.00")
+
+    # Mark due_today paid
+    inst_today.status = "paid"
+
+    # Tier 3: Add upcoming 2 (due in 20 days)
+    inst_up2 = CreditCardInstallment(
+        id=uuid.uuid4(),
+        user_id=fixture.user_id,
+        credit_card_id=card.id,
+        purchase_transaction_id=tx.id,
+        installment_number=5,
+        installments_total=5,
+        principal_amount=Decimal("90000.00"),
+        scheduled_period="2026-12",
+        status="pending",
+        scheduled_due_date=d_upcoming2,
+        debt_partition="canonical",
+        provenance="nexum_modeled",
+        lifecycle_status="active",
+        created_at=now_naive,
+        updated_at=now_utc,
+    )
+    session.add(inst_up2)
+
+    # Breakdown fees: add a statement fee due on upcoming 1 due date
+    stmt = CreditCardStatement(
+        id=uuid.uuid4(),
+        user_id=fixture.user_id,
+        credit_card_id=card.id,
+        billing_period="2026-11",
+        due_date=d_upcoming1,
+        statement_balance=Decimal("15000.00"),
+        status="closed",
+        currency="COP",
+        debt_partition="canonical",
+        provenance="nexum_modeled",
+    )
+    session.add(stmt)
+    await session.flush()
+
+    charge = CreditCardStatementCharge(
+        id=uuid.uuid4(),
+        statement_id=stmt.id,
+        charge_type="fee",
+        amount=Decimal("15000.00"),
+        status="posted",
+    )
+    session.add(charge)
+    await session.commit()
+
+    proj3 = await service.repo.get_next_payment_projection(card.id)
+    assert proj3 is not None
+    assert proj3["status"] == "upcoming"
+    assert proj3["due_date"] == d_upcoming1
+    assert proj3["scheduled_principal"] == Decimal("70000.00")
+    assert proj3["known_charges"] == Decimal("15000.00")
+    assert (
+        proj3["estimated_total"]
+        == proj3["scheduled_principal"]
+        + proj3["assessed_interest"]
+        + proj3["estimated_interest"]
+        + proj3["known_charges"]
+    )
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_alpha_pg08_opening_balance_known_unknown_idempotency_payment_reconciliation(
+    session: AsyncSession, fixture: GateFixture, static_fx: StaticFxRateProvider
+):
+    """Opening balances (known & unknown composition), debt tracking, idempotency, and payment reconciliation."""
+    card1 = await fixture.add_credit_card(currency="COP", cutoff_day=15, due_day=5)
+    card2 = await fixture.add_credit_card(currency="COP", cutoff_day=15, due_day=5)
+    fixture.account.currency = "COP"
+    fixture.account.balance = Decimal("1000000.00")
+    await session.commit()
+
+    service = CreditCardService(session, fx_provider=static_fx)
+    today = financial_date()
+
+    # Part A: Unknown composition opening balance
+    cmd1 = uuid.uuid4()
+    res1 = await service.create_opening_balance(
+        fixture.user_id,
+        card1.id,
+        CreditCardOpeningBalanceCreate(
+            amount=Decimal("150000.00"),
+            currency="COP",
+            effective_date=today,
+            composition_known=False,
+        ),
+        command_id=cmd1,
+    )
+    await session.commit()
+    assert res1.status in ("created", "success")
+
+    tx1 = await service.repo.get_transaction_by_id(res1.transaction_id)
+    assert tx1.type == "opening_balance"
+    assert tx1.metadata_["provenance"] == "manual_input"
+    assert tx1.metadata_["composition_known"] is False
+    assert tx1.metadata_["interest_projection_assumption"] in (
+        "opening_balance_treated_as_interest_bearing_principal",
+        "unknown_composition_treated_as_interest_bearing",
+    )
+
+    inst1 = (
+        await session.execute(
+            select(CreditCardInstallment).where(
+                CreditCardInstallment.purchase_transaction_id == tx1.id
+            )
+        )
+    ).scalar_one()
+    assert inst1.opening_balance_amount == Decimal("150000.00")
+    assert inst1.principal_amount == Decimal("0.00")
+
+    debt1 = await service.repo.get_card_debt_partitioned(card1.id)
+    assert debt1["total_debt"] == Decimal("150000.00")
+
+    # Idempotent retry on opening balance
+    retry1 = await service.create_opening_balance(
+        fixture.user_id,
+        card1.id,
+        CreditCardOpeningBalanceCreate(
+            amount=Decimal("150000.00"),
+            currency="COP",
+            effective_date=today,
+            composition_known=False,
+        ),
+        command_id=cmd1,
+    )
+    assert retry1.status == "idempotent_retry"
+    assert retry1.transaction_id == res1.transaction_id
+
+    # Conflict on reused command_id with different amount
+    with pytest.raises(CreditIdempotencyConflictError):
+        await service.create_opening_balance(
+            fixture.user_id,
+            card1.id,
+            CreditCardOpeningBalanceCreate(
+                amount=Decimal("160000.00"),
+                currency="COP",
+                effective_date=today,
+                composition_known=False,
+            ),
+            command_id=cmd1,
+        )
+
+    # Part B: Known composition opening balance
+    cmd2 = uuid.uuid4()
+    res2 = await service.create_opening_balance(
+        fixture.user_id,
+        card2.id,
+        CreditCardOpeningBalanceCreate(
+            amount=Decimal("200000.00"),
+            currency="COP",
+            effective_date=today,
+            composition_known=True,
+            principal_amount=Decimal("180000.00"),
+            assessed_interest_amount=Decimal("20000.00"),
+        ),
+        command_id=cmd2,
+    )
+    await session.commit()
+
+    tx2 = await service.repo.get_transaction_by_id(res2.transaction_id)
+    assert tx2.type == "opening_balance"
+    assert tx2.metadata_["composition_known"] is True
+
+    inst2 = (
+        await session.execute(
+            select(CreditCardInstallment).where(
+                CreditCardInstallment.purchase_transaction_id == tx2.id
+            )
+        )
+    ).scalar_one()
+    assert inst2.principal_amount == Decimal("180000.00")
+    assert inst2.assessed_interest_amount == Decimal("20000.00")
+    assert inst2.opening_balance_amount is None
+
+    debt2 = await service.repo.get_card_debt_partitioned(card2.id)
+    assert debt2["total_debt"] == Decimal("200000.00")
+
+    # Part C: Payment against opening balance and reconciliation
+    cmd_pay = uuid.uuid4()
+    pay_res = await service.create_payment(
+        fixture.user_id,
+        card1.id,
+        CreditCardPaymentCreate(account_id=fixture.account.id, amount=Decimal("100000.00")),
+        command_id=cmd_pay,
+    )
+    await session.commit()
+    assert pay_res.status in ("success", "posted")
+
+    await session.refresh(inst1)
+    assert inst1.paid_amount == Decimal("100000.00")
+
+    debt1_after = await service.repo.get_card_debt_partitioned(card1.id)
+    assert debt1_after["total_debt"] == Decimal("50000.00")
+
+    pay_retry = await service.create_payment(
+        fixture.user_id,
+        card1.id,
+        CreditCardPaymentCreate(account_id=fixture.account.id, amount=Decimal("100000.00")),
+        command_id=cmd_pay,
+    )
+    assert pay_retry.status == "idempotent_retry"
+    assert pay_retry.transaction_id == pay_res.transaction_id

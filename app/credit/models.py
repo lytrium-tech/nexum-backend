@@ -99,6 +99,9 @@ class CreditCardTransaction(Base):
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     installments_total: Mapped[int] = mapped_column(Integer, default=1)
     installments_paid: Mapped[int] = mapped_column(Integer, default=0)
+    zero_interest: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     monthly_amount: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
     interest_amount: Mapped[Decimal] = mapped_column(Numeric, default=Decimal("0.00"))
     total_with_interest: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
@@ -154,6 +157,14 @@ class CreditCardTransaction(Base):
 
 class CreditCardInstallment(Base):
     __tablename__ = "credit_card_installments"
+    __table_args__ = (
+        Index(
+            "ix_cc_installments_card_due_active",
+            "credit_card_id",
+            "scheduled_due_date",
+            postgresql_where=text("status <> 'paid' AND lifecycle_status = 'active'"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
@@ -195,9 +206,13 @@ class CreditCardInstallment(Base):
     assessed_interest_amount: Mapped[Decimal | None] = mapped_column(
         Numeric(precision=14, scale=2), nullable=True
     )
+    opening_balance_amount: Mapped[Decimal | None] = mapped_column(
+        Numeric(precision=14, scale=2), nullable=True
+    )
     estimated_interest_amount: Mapped[Decimal | None] = mapped_column(
         Numeric(precision=14, scale=2), nullable=True
     )
+    interest_estimator_version: Mapped[str | None] = mapped_column(String, nullable=True)
     lifecycle_status: Mapped[str] = mapped_column(
         String, default="active", server_default=text("'active'::text")
     )
@@ -772,6 +787,11 @@ class CreditCardAdjustment(Base):
     original_transaction_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("credit_card_transactions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    reversal_of_adjustment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("credit_card_adjustments.id", ondelete="RESTRICT"),
         nullable=True,
     )
     event_id: Mapped[uuid.UUID | None] = mapped_column(

@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, computed_field, model_validator
 
 
 class CreditCardBase(BaseModel):
@@ -13,11 +13,21 @@ class CreditCardBase(BaseModel):
     cutoff_day: int = Field(..., ge=1, le=31)
     due_day: int = Field(..., ge=1, le=31)
     management_fee: Decimal = Field(default=Decimal("0.00"), ge=0)
-    monthly_interest_rate: Decimal = Field(default=Decimal("0.00"), ge=0)
+    monthly_interest_rate_pct: Decimal = Field(
+        default=Decimal("0.00"),
+        ge=0,
+        validation_alias=AliasChoices("monthly_interest_rate_pct", "monthly_interest_rate"),
+        serialization_alias="monthly_interest_rate_pct",
+        description="Monthly interest rate in percentage points: 2.11 means 2.11% per month.",
+    )
     annual_interest_rate: Decimal = Field(default=Decimal("0.00"), ge=0)
     network: str | None = None
     franchise: str | None = None
     currency: str = Field(min_length=3, max_length=3)
+
+    @property
+    def monthly_interest_rate(self) -> Decimal:
+        return self.monthly_interest_rate_pct
 
 
 class CreditCardCreate(CreditCardBase):
@@ -31,7 +41,13 @@ class CreditCardUpdate(BaseModel):
     cutoff_day: int | None = Field(None, ge=1, le=31)
     due_day: int | None = Field(None, ge=1, le=31)
     management_fee: Decimal | None = Field(None, ge=0)
-    monthly_interest_rate: Decimal | None = Field(None, ge=0)
+    monthly_interest_rate_pct: Decimal | None = Field(
+        None,
+        ge=0,
+        validation_alias=AliasChoices("monthly_interest_rate_pct", "monthly_interest_rate"),
+        serialization_alias="monthly_interest_rate_pct",
+        description="Monthly interest rate in percentage points: 2.11 means 2.11% per month.",
+    )
     annual_interest_rate: Decimal | None = Field(None, ge=0)
     network: str | None = None
     franchise: str | None = None
@@ -58,11 +74,11 @@ class CreditCardRead(CreditCardBase):
     )
     billed_debt: Decimal = Field(
         default=Decimal("0.00"),
-        description="Current amount due from closed billing statements.",
+        description="Cycle-derived billed debt metadata; not an exhaustive partition of total debt.",
     )
     unbilled_debt: Decimal = Field(
         default=Decimal("0.00"),
-        description="Unbilled debt from current open cycle and future installment principal.",
+        description="Cycle-derived unbilled debt metadata; not an exhaustive partition of total debt.",
     )
     payment_required: Decimal = Field(
         default=Decimal("0.00"),
@@ -138,6 +154,10 @@ class CreditCardPurchaseCreate(BaseModel):
     installments_total: int = Field(
         default=1, ge=1, description="Total number of installments (1 for revolving)."
     )
+    zero_interest: bool = Field(
+        default=False,
+        description="Explicitly excludes this purchase from Nexum interest projections.",
+    )
     source_message_id: uuid.UUID | None = Field(
         default=None, description="Source message ID for conversational traceability."
     )
@@ -199,12 +219,11 @@ class CreditCardPurchaseResult(BaseModel):
         description="Deprecated alias for available_credit.",
         json_schema_extra={"deprecated": True},
     )
-    # Explicit cycle, multi-currency, FX evidence and partition
     cycle_id: uuid.UUID | None = Field(
         default=None, description="Assigned canonical billing cycle identifier."
     )
     billing_period: str | None = Field(
-        default=None, description="Assigned billing cycle period (YYYY-MM)."
+        default=None, description="Assigned billing period (YYYY-MM)."
     )
     original_amount: Decimal | None = Field(
         default=None, description="Original purchase amount in merchant currency."
@@ -214,7 +233,7 @@ class CreditCardPurchaseResult(BaseModel):
         default=None, description="Booked purchase amount in card currency."
     )
     booked_currency: str | None = Field(
-        default=None, description="Card currency in which purchase is booked."
+        default=None, description="Currency in which purchase is booked."
     )
     fx_rate: Decimal | None = Field(
         default=None, description="Exchange rate applied for currency conversion."
@@ -231,6 +250,38 @@ class CreditCardPurchaseResult(BaseModel):
     provenance: str | None = Field(
         default=None, description="Fact provenance (e.g. 'nexum_modeled', 'manual_input')."
     )
+
+
+class CreditCardOpeningBalanceCreate(BaseModel):
+    amount: Decimal = Field(gt=0)
+    currency: str = Field(min_length=3, max_length=3)
+    effective_date: date
+    composition_known: bool = False
+    principal_amount: Decimal | None = Field(default=None, ge=0)
+    assessed_interest_amount: Decimal | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_composition(self):
+        if self.composition_known:
+            if self.principal_amount is None or self.assessed_interest_amount is None:
+                raise ValueError(
+                    "Known composition requires principal and assessed interest amounts"
+                )
+            if self.principal_amount + self.assessed_interest_amount != self.amount:
+                raise ValueError("Known opening balance components must sum to amount")
+        elif self.principal_amount is not None or self.assessed_interest_amount is not None:
+            raise ValueError("Unknown composition cannot provide component amounts")
+        return self
+
+
+class CreditCardOpeningBalanceResult(BaseModel):
+    status: str
+    event_id: uuid.UUID | None = None
+    transaction_id: uuid.UUID | None = None
+    amount: Decimal
+    current_debt: Decimal
+    available_credit: Decimal
+    provenance: str = "manual_input"
 
 
 class CreditCardPaymentCreate(BaseModel):
@@ -311,8 +362,11 @@ class CreditCardStatusRead(BaseModel):
     name: str = Field(description="Card label/name.")
     credit_limit: Decimal = Field(description="Card credit limit in card currency.")
     management_fee: Decimal = Field(default=Decimal("0.00"), description="Monthly management fee.")
-    monthly_interest_rate: Decimal = Field(
-        default=Decimal("0.00"), description="Monthly interest rate percentage."
+    monthly_interest_rate_pct: Decimal = Field(
+        default=Decimal("0.00"),
+        validation_alias=AliasChoices("monthly_interest_rate_pct", "monthly_interest_rate"),
+        serialization_alias="monthly_interest_rate_pct",
+        description="Monthly interest rate in percentage points: 2.11 means 2.11% per month.",
     )
     annual_interest_rate: Decimal = Field(
         default=Decimal("0.00"), description="Annual interest rate percentage."
@@ -328,8 +382,12 @@ class CreditCardStatusRead(BaseModel):
     total_debt: Decimal = Field(
         description="Total posted debt across canonical and legacy partitions."
     )
-    billed_debt: Decimal = Field(description="Billed debt due in the current cycle.")
-    unbilled_debt: Decimal = Field(description="Unbilled debt for future cycles.")
+    billed_debt: Decimal = Field(
+        description="Cycle-derived billed debt metadata; not an exhaustive partition of total debt."
+    )
+    unbilled_debt: Decimal = Field(
+        description="Cycle-derived unbilled debt metadata; not an exhaustive partition of total debt."
+    )
     available_credit: Decimal = Field(
         description="Available credit (credit_limit - total_debt; Nexum-modeled estimate)."
     )
@@ -342,6 +400,7 @@ class CreditCardStatusRead(BaseModel):
     next_payment_estimate: Decimal = Field(
         default=Decimal("0.00"), description="Nexum-modeled estimate for upcoming payment."
     )
+    next_payment: "CreditCardNextPaymentRead | None" = None
     statement_balance: Decimal | None = Field(
         default=None, description="Balance of last closed statement snapshot."
     )
@@ -358,6 +417,10 @@ class CreditCardStatusRead(BaseModel):
         default_factory=dict, description="Metadata dictionary tracking data provenance."
     )
 
+    @property
+    def monthly_interest_rate(self) -> Decimal:
+        return self.monthly_interest_rate_pct
+
 
 class CreditSummaryRead(BaseModel):
     total_credit_limit: Decimal
@@ -367,6 +430,21 @@ class CreditSummaryRead(BaseModel):
     total_payment_required: Decimal = Decimal("0.00")
     total_next_payment_estimate: Decimal = Decimal("0.00")
     cards: list[CreditCardStatusRead]
+
+
+class CreditCardNextPaymentRead(BaseModel):
+    due_date: date
+    status: Literal["overdue", "due_today", "upcoming"]
+    scheduled_principal: Decimal
+    assessed_interest: Decimal
+    estimated_interest: Decimal
+    known_charges: Decimal = Field(
+        description="Charges known to Nexum; zero is not an issuer guarantee."
+    )
+    estimated_total: Decimal
+    provenance: str
+    confidence: str
+    estimator_version: str | None = None
 
 
 class CreditCardInstallmentRead(BaseModel):
@@ -390,7 +468,9 @@ class CreditCardInstallmentRead(BaseModel):
     booked_currency: str | None = None
     cycle_id: uuid.UUID | None = None
     assessed_interest_amount: Decimal | None = None
+    opening_balance_amount: Decimal | None = None
     estimated_interest_amount: Decimal | None = None
+    interest_estimator_version: str | None = None
     lifecycle_status: str | None = None
     provenance: str | None = None
     debt_partition: str | None = None
@@ -399,6 +479,14 @@ class CreditCardInstallmentRead(BaseModel):
     @property
     def remaining_principal(self) -> Decimal:
         return max(Decimal("0.00"), self.principal_amount - self.paid_amount)
+
+    @computed_field
+    @property
+    def remaining_opening_balance(self) -> Decimal:
+        return max(
+            Decimal("0.00"),
+            (self.opening_balance_amount or Decimal("0.00")) - self.paid_amount,
+        )
 
     @computed_field
     @property
@@ -799,9 +887,7 @@ class CreditCommandReconciliationRead(BaseModel):
                 raise ValueError("resource_id is required when status is confirmed")
             if self.operation_type == "purchase":
                 if self.transaction_id is None or self.transaction_id != self.resource_id:
-                    raise ValueError(
-                        "transaction_id must match resource_id for confirmed purchase"
-                    )
+                    raise ValueError("transaction_id must match resource_id for confirmed purchase")
                 if (
                     self.payment_id is not None
                     or self.early_payment_id is not None
@@ -810,9 +896,7 @@ class CreditCommandReconciliationRead(BaseModel):
                     raise ValueError("Other operation IDs must be null for purchase")
             elif self.operation_type == "payment":
                 if self.payment_id is None or self.payment_id != self.resource_id:
-                    raise ValueError(
-                        "payment_id must match resource_id for confirmed payment"
-                    )
+                    raise ValueError("payment_id must match resource_id for confirmed payment")
                 if (
                     self.transaction_id is not None
                     or self.early_payment_id is not None

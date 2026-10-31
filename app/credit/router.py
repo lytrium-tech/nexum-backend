@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db_session
 from app.core.errors import NotFoundError
 from app.core.uow import UnitOfWork
+from app.credit.exceptions import CreditCardInactiveError, CreditCardNotFoundError
 from app.credit.schemas import (
     CreditCardAdjustmentCreate,
     CreditCardAdjustmentResult,
@@ -14,6 +15,8 @@ from app.credit.schemas import (
     CreditCardEarlyPaymentPreviewCreate,
     CreditCardEarlyPaymentResult,
     CreditCardInstallmentRead,
+    CreditCardOpeningBalanceCreate,
+    CreditCardOpeningBalanceResult,
     CreditCardPaymentCreate,
     CreditCardPaymentResult,
     CreditCardPurchaseCreate,
@@ -34,6 +37,34 @@ router = APIRouter()
 
 def get_credit_service(session: AsyncSession = Depends(get_db_session)) -> CreditCardService:
     return CreditCardService(session)
+
+
+@router.post(
+    "/cards/{card_id}/opening-balance",
+    response_model=CreditCardOpeningBalanceResult,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_opening_balance(
+    card_id: uuid.UUID,
+    payload: CreditCardOpeningBalanceCreate,
+    current_profile: CurrentUserProfile,
+    idempotency_key: str = Header(..., alias="Idempotency-Key"),
+    session: AsyncSession = Depends(get_db_session),
+):
+    try:
+        command_id = uuid.UUID(idempotency_key)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid Idempotency-Key format")
+    async with UnitOfWork(session).transaction():
+        service = get_credit_service(session)
+        try:
+            return await service.create_opening_balance(
+                current_profile.id, card_id, payload, command_id
+            )
+        except CreditCardNotFoundError:
+            raise HTTPException(status_code=404, detail="Credit card not found")
+        except CreditCardInactiveError:
+            raise HTTPException(status_code=400, detail="Credit card is inactive")
 
 
 @router.post("/cards", response_model=CreditCardRead, status_code=status.HTTP_201_CREATED)

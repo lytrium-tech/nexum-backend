@@ -348,7 +348,7 @@ class IntelligenceService:
                 historical_net_cashflow=historical_net_cashflow,
             ),
             debt=SnapshotDebt(
-                credit_card_total_debt=billed_debt + unbilled_debt,
+                credit_card_total_debt=credit_summary.total_debt,
                 billed_debt=billed_debt,
                 unbilled_debt=unbilled_debt,
                 payment_required=payment_required,

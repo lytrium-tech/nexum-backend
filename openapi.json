@@ -2528,6 +2528,73 @@
         }
       }
     },
+    "/api/v1/credit/cards/{card_id}/opening-balance": {
+      "post": {
+        "tags": [
+          "Credit"
+        ],
+        "summary": "Create Opening Balance",
+        "operationId": "create_opening_balance_api_v1_credit_cards__card_id__opening_balance_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Card Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreditCardOpeningBalanceCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditCardOpeningBalanceResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/credit/cards": {
       "get": {
         "tags": [
@@ -7125,7 +7192,7 @@
             "title": "Management Fee",
             "default": "0.00"
           },
-          "monthly_interest_rate": {
+          "monthly_interest_rate_pct": {
             "anyOf": [
               {
                 "type": "number",
@@ -7136,7 +7203,8 @@
                 "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
               }
             ],
-            "title": "Monthly Interest Rate",
+            "title": "Monthly Interest Rate Pct",
+            "description": "Monthly interest rate in percentage points: 2.11 means 2.11% per month.",
             "default": "0.00"
           },
           "annual_interest_rate": {
@@ -7499,6 +7567,18 @@
             ],
             "title": "Assessed Interest Amount"
           },
+          "opening_balance_amount": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opening Balance Amount"
+          },
           "estimated_interest_amount": {
             "anyOf": [
               {
@@ -7510,6 +7590,17 @@
               }
             ],
             "title": "Estimated Interest Amount"
+          },
+          "interest_estimator_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interest Estimator Version"
           },
           "lifecycle_status": {
             "anyOf": [
@@ -7550,6 +7641,12 @@
             "title": "Remaining Principal",
             "readOnly": true
           },
+          "remaining_opening_balance": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Remaining Opening Balance",
+            "readOnly": true
+          },
           "is_pay_early_eligible": {
             "type": "boolean",
             "title": "Is Pay Early Eligible",
@@ -7568,9 +7665,218 @@
           "status",
           "paid_amount",
           "remaining_principal",
+          "remaining_opening_balance",
           "is_pay_early_eligible"
         ],
         "title": "CreditCardInstallmentRead"
+      },
+      "CreditCardNextPaymentRead": {
+        "properties": {
+          "due_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Due Date"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "overdue",
+              "due_today",
+              "upcoming"
+            ],
+            "title": "Status"
+          },
+          "scheduled_principal": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Scheduled Principal"
+          },
+          "assessed_interest": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Assessed Interest"
+          },
+          "estimated_interest": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Estimated Interest"
+          },
+          "known_charges": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Known Charges",
+            "description": "Charges known to Nexum; zero is not an issuer guarantee."
+          },
+          "estimated_total": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Estimated Total"
+          },
+          "provenance": {
+            "type": "string",
+            "title": "Provenance"
+          },
+          "confidence": {
+            "type": "string",
+            "title": "Confidence"
+          },
+          "estimator_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimator Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "due_date",
+          "status",
+          "scheduled_principal",
+          "assessed_interest",
+          "estimated_interest",
+          "known_charges",
+          "estimated_total",
+          "provenance",
+          "confidence"
+        ],
+        "title": "CreditCardNextPaymentRead"
+      },
+      "CreditCardOpeningBalanceCreate": {
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              }
+            ],
+            "title": "Amount"
+          },
+          "currency": {
+            "type": "string",
+            "maxLength": 3,
+            "minLength": 3,
+            "title": "Currency"
+          },
+          "effective_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Effective Date"
+          },
+          "composition_known": {
+            "type": "boolean",
+            "title": "Composition Known",
+            "default": false
+          },
+          "principal_amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Principal Amount"
+          },
+          "assessed_interest_amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assessed Interest Amount"
+          }
+        },
+        "type": "object",
+        "required": [
+          "amount",
+          "currency",
+          "effective_date"
+        ],
+        "title": "CreditCardOpeningBalanceCreate"
+      },
+      "CreditCardOpeningBalanceResult": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "transaction_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transaction Id"
+          },
+          "amount": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Amount"
+          },
+          "current_debt": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Current Debt"
+          },
+          "available_credit": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Available Credit"
+          },
+          "provenance": {
+            "type": "string",
+            "title": "Provenance",
+            "default": "manual_input"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "amount",
+          "current_debt",
+          "available_credit"
+        ],
+        "title": "CreditCardOpeningBalanceResult"
       },
       "CreditCardPaymentCreate": {
         "properties": {
@@ -7754,6 +8060,12 @@
             "title": "Installments Total",
             "description": "Total number of installments (1 for revolving).",
             "default": 1
+          },
+          "zero_interest": {
+            "type": "boolean",
+            "title": "Zero Interest",
+            "description": "Explicitly excludes this purchase from Nexum interest projections.",
+            "default": false
           },
           "source_message_id": {
             "anyOf": [
@@ -7957,7 +8269,7 @@
               }
             ],
             "title": "Billing Period",
-            "description": "Assigned billing cycle period (YYYY-MM)."
+            "description": "Assigned billing period (YYYY-MM)."
           },
           "original_amount": {
             "anyOf": [
@@ -8007,7 +8319,7 @@
               }
             ],
             "title": "Booked Currency",
-            "description": "Card currency in which purchase is booked."
+            "description": "Currency in which purchase is booked."
           },
           "fx_rate": {
             "anyOf": [
@@ -8118,10 +8430,11 @@
             "title": "Management Fee",
             "default": "0.00"
           },
-          "monthly_interest_rate": {
+          "monthly_interest_rate_pct": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Monthly Interest Rate",
+            "title": "Monthly Interest Rate Pct",
+            "description": "Monthly interest rate in percentage points: 2.11 means 2.11% per month.",
             "default": "0.00"
           },
           "annual_interest_rate": {
@@ -8193,14 +8506,14 @@
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Billed Debt",
-            "description": "Current amount due from closed billing statements.",
+            "description": "Cycle-derived billed debt metadata; not an exhaustive partition of total debt.",
             "default": "0.00"
           },
           "unbilled_debt": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Unbilled Debt",
-            "description": "Unbilled debt from current open cycle and future installment principal.",
+            "description": "Cycle-derived unbilled debt metadata; not an exhaustive partition of total debt.",
             "default": "0.00"
           },
           "payment_required": {
@@ -8829,11 +9142,11 @@
             "description": "Monthly management fee.",
             "default": "0.00"
           },
-          "monthly_interest_rate": {
+          "monthly_interest_rate_pct": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Monthly Interest Rate",
-            "description": "Monthly interest rate percentage.",
+            "title": "Monthly Interest Rate Pct",
+            "description": "Monthly interest rate in percentage points: 2.11 means 2.11% per month.",
             "default": "0.00"
           },
           "annual_interest_rate": {
@@ -8891,13 +9204,13 @@
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Billed Debt",
-            "description": "Billed debt due in the current cycle."
+            "description": "Cycle-derived billed debt metadata; not an exhaustive partition of total debt."
           },
           "unbilled_debt": {
             "type": "string",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Unbilled Debt",
-            "description": "Unbilled debt for future cycles."
+            "description": "Cycle-derived unbilled debt metadata; not an exhaustive partition of total debt."
           },
           "available_credit": {
             "type": "string",
@@ -8931,6 +9244,16 @@
             "title": "Next Payment Estimate",
             "description": "Nexum-modeled estimate for upcoming payment.",
             "default": "0.00"
+          },
+          "next_payment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CreditCardNextPaymentRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "statement_balance": {
             "anyOf": [
@@ -9088,7 +9411,7 @@
             ],
             "title": "Management Fee"
           },
-          "monthly_interest_rate": {
+          "monthly_interest_rate_pct": {
             "anyOf": [
               {
                 "type": "number",
@@ -9102,7 +9425,8 @@
                 "type": "null"
               }
             ],
-            "title": "Monthly Interest Rate"
+            "title": "Monthly Interest Rate Pct",
+            "description": "Monthly interest rate in percentage points: 2.11 means 2.11% per month."
           },
           "annual_interest_rate": {
             "anyOf": [
